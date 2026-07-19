@@ -16,6 +16,9 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "fuse.js": "^7.5.0",
+    "pocketbase": "^0.27.0",
+    "qrcode.vue": "^3.10.0",
     "vue": "^3.5.38",
     "vue-router": "^5.1.0"
   },
@@ -39,6 +42,7 @@
     "prettier": "3.8.4",
     "typescript": "~6.0.0",
     "vite": "^8.0.16",
+    "vite-plugin-pages": "^0.33.3",
     "vite-plugin-vue-devtools": "^8.1.2",
     "vitest": "^4.1.9",
     "vue-eslint-parser": "^10.4.1",
