@@ -1,0 +1,4 @@
+interface:
+  display_name: "Karaoke Feature Workflow"
+  short_description: "Plan and deliver karaoke features safely"
+  default_prompt: "Use $feature to load, implement, test, review, or complete a karaoke feature."
