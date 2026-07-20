@@ -20,3 +20,14 @@
   injects a throwing stream reader and verifies the service remains alive and retries.
 - **Follow-up:** Rebuild, reinstall, and repeat the approved live command/state validation after a
   separately approved corrective commit and deployment.
+
+### 2026-07-20 — Verify HTTP behavior at the wire boundary
+
+- **Feedback:** An application-interceptor test suggested that the realtime subscription lacked an
+  explicit JSON content-type header, but OkHttp already derives that wire header from the request
+  body's media type. The proposed change was behaviorally redundant.
+- **Improvement:** Test serialized requests at the network boundary or against the pinned PocketBase
+  runtime before treating application-interceptor headers as proof of wire behavior. For live-only
+  delivery failures, add redacted phase telemetry that distinguishes subscription, SSE receipt, and
+  authoritative refetch without logging credentials or payloads.
+- **Follow-up:** Use the diagnostic APK to isolate the first phase that fails on the Fire tablet.

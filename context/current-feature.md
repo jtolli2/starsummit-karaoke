@@ -89,3 +89,9 @@ Complete
   into the existing closed-stream signal; coroutine cancellation and unexpected failures propagate.
   Focused controller tests cover the stream-reset, closed-signal, cancellation, and unexpected-error
   paths. Deployment and renewed live validation are pending this repair's approved delivery.
+- The repaired APK renewed controller session generation 2 without another stream-reset crash, but
+  a live generation-2 `get_now_playing` command expired without refetch or acknowledgement. Local
+  PocketBase 0.39.7 integration still proves authenticated subscription and create/update delivery,
+  so the approved diagnostic build adds attempt-scoped, redacted telemetry for subscription
+  acceptance, SSE event labels, authoritative refetch counts, and sanitized refetch failure classes.
+  It never records auth headers, tokens, command/event payloads, or Lounge material.

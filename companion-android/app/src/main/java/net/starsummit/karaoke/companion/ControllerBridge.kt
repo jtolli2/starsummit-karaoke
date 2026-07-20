@@ -201,6 +201,7 @@ class PocketBaseControllerBridge(
   private val credentials: ControllerCredentials,
   private val sessionStore: SessionStore? = null,
   private val now: () -> Long = { System.currentTimeMillis() },
+  private val diagnostics: ControllerDiagnosticsListener = object : ControllerDiagnosticsListener {},
 ) {
   private var auth: ControllerAuth? = null
   private var session: ControllerSession? = null
@@ -209,6 +210,7 @@ class PocketBaseControllerBridge(
   val stateMachine = ControllerBridgeStateMachine()
 
   suspend fun establish(): List<ControllerCommand> {
+    notifyDiagnostics { diagnostics.attemptStarted() }
     stateMachine.authenticating()
     val authenticated = api.authenticate(credentials)
     auth = authenticated
@@ -242,32 +244,47 @@ class PocketBaseControllerBridge(
     realtimeConnection?.close()
     realtimeConnection = connected
     realtimeClientId = withTimeout(15_000L) { connected.awaitConnectAndSubscribe() }
+    notifyDiagnostics { diagnostics.subscriptionAccepted() }
     stateMachine.connected()
-    return refetch()
+    notifyDiagnostics { diagnostics.established() }
+    val initial = refetch()
+    notifyDiagnostics { diagnostics.initialRefetch(initial.size) }
+    return initial
   }
 
   /** Every reconnect and every realtime hint must call this authoritative HTTPS query. */
   suspend fun refetch(): List<ControllerCommand> {
-    val authenticated = auth ?: throw IOException("controller not authenticated")
-    val active = session ?: throw IOException("controller session unavailable")
-    if (active.expiresAtEpochMs <= now()) {
-      stateMachine.stale()
-      throw IOException("controller session expired")
+    return try {
+      val authenticated = auth ?: throw IOException("controller not authenticated")
+      val active = session ?: throw IOException("controller session unavailable")
+      if (active.expiresAtEpochMs <= now()) {
+        stateMachine.stale()
+        throw IOException("controller session expired")
+      }
+      val progress = store.load()
+      api.fetchCommands(authenticated, active, progress.lastCommandSequence).also { commands ->
+        notifyDiagnostics { diagnostics.refetchSucceeded(commands.size) }
+      }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+      throw cancelled
+    } catch (failure: Throwable) {
+      notifyDiagnostics { diagnostics.refetchFailed(redactDiagnosticError(failure)) }
+      throw failure
     }
-    val progress = store.load()
-    return api.fetchCommands(authenticated, active, progress.lastCommandSequence)
   }
 
   /** Consume SSE notifications; notifications are deliberately reduced to an HTTPS refetch hint. */
   suspend fun listenRealtime(onCommands: suspend (List<ControllerCommand>) -> Unit) {
     val connected = realtimeConnection ?: throw IOException("controller realtime unavailable")
     connected.events.collect { event ->
+      notifyDiagnostics { diagnostics.realtimeEvent(sanitizeControllerRealtimeEventName(event.name)) }
       if (event.name == REALTIME_CLOSED_EVENT) throw IOException("PocketBase realtime stream ended")
       val clientId = parsePocketBaseConnect(event)
       if (clientId != null) {
         if (clientId != realtimeClientId) {
           connected.subscribe(clientId)
           realtimeClientId = clientId
+          notifyDiagnostics { diagnostics.subscriptionAccepted() }
         }
       } else {
         // Never trust event payloads as commands. A reconnect/event loss is expected; refetch is authoritative.
@@ -296,6 +313,11 @@ class PocketBaseControllerBridge(
   }
 
   fun close() { realtimeConnection?.close(); realtimeConnection = null; realtimeClientId = null }
+
+  private inline fun notifyDiagnostics(callback: () -> Unit) {
+    // Diagnostics must never interfere with controller delivery or expose a credential-bearing error.
+    runCatching(callback)
+  }
 }
 
 suspend fun ControllerRealtimeConnection.awaitConnectAndSubscribe(collection: String = "controller_commands/*"): String {

@@ -98,6 +98,15 @@ class CompanionService : Service() {
           store = ControllerStoreProgressAdapter(controllerStore),
           credentials = credentials,
           sessionStore = ControllerStoreSessionAdapter(controllerStore),
+          diagnostics = object : ControllerDiagnosticsListener {
+            override fun attemptStarted() = diagnosticsStore.controllerAttemptStarted()
+            override fun established() = diagnosticsStore.controllerEstablished()
+            override fun initialRefetch(commandCount: Int) = diagnosticsStore.controllerInitialRefetch(commandCount)
+            override fun realtimeEvent(name: String) = diagnosticsStore.controllerRealtimeEvent(name)
+            override fun refetchSucceeded(commandCount: Int) = diagnosticsStore.controllerRefetchSucceeded(commandCount)
+            override fun refetchFailed(errorCode: String) = diagnosticsStore.controllerRefetchFailed(errorCode)
+            override fun subscriptionAccepted() = diagnosticsStore.controllerSubscriptionAccepted()
+          },
         )
         controllerBridge = bridge
         try {

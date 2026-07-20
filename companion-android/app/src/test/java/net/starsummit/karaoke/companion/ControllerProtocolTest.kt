@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -20,6 +21,41 @@ class ControllerProtocolTest {
     diagnostics.error(ControllerHttpException(410), setErrorState = false)
 
     assertEquals("ControllerHttp410", diagnostics.snapshot.value.lastErrorRedacted)
+  }
+
+  @Test
+  fun controllerDiagnosticsRedactRealtimeNamesAndFailureDetails() {
+    val diagnostics = DiagnosticsStore()
+
+    diagnostics.controllerRealtimeEvent("create token=secret payload={\"videoId\":\"dQw4w9WgXcQ\"}")
+    diagnostics.controllerRefetchFailed(IOException("token=secret payload=private"))
+
+    val snapshot = diagnostics.snapshot.value
+    assertEquals("event:unknown", snapshot.controllerRealtimeEventRedacted)
+    assertEquals("IOException", snapshot.controllerRefetchErrorRedacted)
+    assertFalse(snapshot.controllerRealtimeEventRedacted!!.contains("token=secret"))
+    assertFalse(snapshot.controllerRefetchErrorRedacted!!.contains("private"))
+  }
+
+  @Test
+  fun controllerAttemptStartClearsPriorAttemptEvidence() {
+    val diagnostics = DiagnosticsStore()
+    diagnostics.controllerAttemptStarted()
+    diagnostics.controllerEstablished()
+    diagnostics.controllerSubscriptionAccepted()
+    diagnostics.controllerInitialRefetch(2)
+    diagnostics.controllerRealtimeEvent("create")
+    diagnostics.controllerRefetchSucceeded(2)
+    diagnostics.controllerAttemptStarted()
+
+    val snapshot = diagnostics.snapshot.value
+    assertEquals(2, snapshot.controllerAttemptCount)
+    assertEquals(1, snapshot.controllerEstablishCount)
+    assertEquals(null, snapshot.controllerInitialRefetchCount)
+    assertEquals(null, snapshot.controllerRealtimeEventRedacted)
+    assertEquals(null, snapshot.controllerRefetchCount)
+    assertEquals(null, snapshot.controllerRefetchErrorRedacted)
+    assertEquals(false, snapshot.controllerSubscriptionAccepted)
   }
 
   private val future = System.currentTimeMillis() + 60_000
@@ -190,6 +226,142 @@ class ControllerProtocolTest {
     bridge.listenRealtime { }
     assertEquals(2, fetches)
     assertEquals(1, subscriptions)
+  }
+
+  @Test
+  fun bridgeReportsEstablishInitialRefetchSubscriptionAndRealtimeHintTelemetry() = runTest {
+    val callbacks = mutableListOf<String>()
+    var fetches = 0
+    val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
+    val fakeApi = object : ControllerApi {
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun authenticate(credentials: ControllerCredentials) = auth
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
+        fetches++
+        return emptyList()
+      }
+      override suspend fun acknowledge(auth: ControllerAuth, session: ControllerSession, command: ControllerCommand, success: Boolean, errorCode: String?) = Unit
+      override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) = Unit
+    }
+    val realtime = object : ControllerRealtimeTransport {
+      override suspend fun connect(auth: ControllerAuth) = object : ControllerRealtimeConnection {
+        override val events: Flow<PocketBaseRealtimeEvent> = flowOf(
+          PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"client\"}"),
+          PocketBaseRealtimeEvent("create", "{\"record\":{\"token\":\"secret\"}}"),
+        )
+        override suspend fun subscribe(clientId: String, collection: String) { callbacks += "subscribed:$collection" }
+        override fun close() = Unit
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      fakeApi,
+      realtime,
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+      diagnostics = object : ControllerDiagnosticsListener {
+        override fun established() { callbacks += "established" }
+        override fun initialRefetch(commandCount: Int) { callbacks += "initial:$commandCount" }
+        override fun realtimeEvent(name: String) { callbacks += name }
+        override fun refetchSucceeded(commandCount: Int) { callbacks += "refetch:$commandCount" }
+        override fun subscriptionAccepted() { callbacks += "accepted" }
+      },
+    )
+
+    bridge.establish()
+    bridge.listenRealtime { }
+
+    assertEquals(2, fetches)
+    assertEquals(
+      listOf(
+        "subscribed:controller_commands/*",
+        "accepted",
+        "established",
+        "refetch:0",
+        "initial:0",
+        "event:PB_CONNECT",
+        "event:create",
+        "refetch:0",
+      ),
+      callbacks,
+    )
+  }
+
+  @Test
+  fun throwingDiagnosticsCallbacksCannotInterruptControllerLifecycle() = runTest {
+    var fetches = 0
+    val delegate = basicApi()
+    val api = object : ControllerApi by delegate {
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
+        fetches++
+        return emptyList()
+      }
+    }
+    val realtime = object : ControllerRealtimeTransport {
+      override suspend fun connect(auth: ControllerAuth) = object : ControllerRealtimeConnection {
+        override val events: Flow<PocketBaseRealtimeEvent> = flowOf(
+          PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"client\"}"),
+          PocketBaseRealtimeEvent("create", "{\"record\":{}}"),
+        )
+        override suspend fun subscribe(clientId: String, collection: String) = Unit
+        override fun close() = Unit
+      }
+    }
+    val throwing = object : ControllerDiagnosticsListener {
+      override fun attemptStarted() = error("telemetry attempt callback")
+      override fun established() = error("telemetry establish callback")
+      override fun initialRefetch(commandCount: Int) = error("telemetry initial callback")
+      override fun realtimeEvent(name: String) = error("telemetry event callback")
+      override fun refetchSucceeded(commandCount: Int) = error("telemetry refetch callback")
+      override fun subscriptionAccepted() = error("telemetry subscription callback")
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      realtime,
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+      diagnostics = throwing,
+    )
+
+    bridge.establish()
+    bridge.listenRealtime { }
+
+    assertEquals(2, fetches)
+  }
+
+  @Test
+  fun bridgeReportsAuthoritativeRefetchFailureWithoutResponseDetails() = runTest {
+    val failures = mutableListOf<String>()
+    val delegate = basicApi()
+    val api = object : ControllerApi by delegate {
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
+        throw ControllerHttpException(503)
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+      diagnostics = object : ControllerDiagnosticsListener {
+        override fun refetchFailed(errorCode: String) {
+          failures += errorCode
+          error("telemetry failure callback")
+        }
+      },
+    )
+
+    try {
+      bridge.establish()
+      throw AssertionError("expected refetch failure")
+    } catch (_: ControllerHttpException) {
+      // Failure is surfaced to the reconnect loop after redacted telemetry is recorded.
+    }
+
+    assertEquals(listOf("ControllerHttp503"), failures)
   }
 
   @Test
