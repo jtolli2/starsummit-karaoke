@@ -20,11 +20,18 @@ Starsummit Karaoke is a private multi-user karaoke system for parties. Guests us
 
 PocketBase runs as a separate stateful backend container on the Hetzner VPS. A stateless frontend container serves the Vue application. Coolify routes same-origin `/api` and realtime traffic to PocketBase, which provides SQLite-backed party, queue, and library data plus the protected YouTube API proxy. The Vue app must not contain API keys or PocketBase superuser credentials.
 
-The guest client searches a cached song library with Fuse.js and may request a fallback search through PocketBase. Queue submissions go through a server-side endpoint that validates the party code, expiry, temporary identity, payload, duplicates, rate, and fair placement atomically. The tablet owns playback transitions and relays approved commands over the local network to SmartTube through the YouTube Lounge protocol.
+The guest client searches a cached song library with Fuse.js and may request a fallback search through PocketBase. Queue submissions go through a server-side endpoint that validates the party code, expiry, temporary identity, payload, duplicates, rate, and fair placement atomically.
+
+The Fire tablet uses two cooperating surfaces: the Vue `/tablet` route provides the party display
+and constrained `tablet_admin` controls, while a small native Android companion owns the durable
+controller connection. The companion receives only approved playback commands from PocketBase and
+relays them to SmartTube through YouTube Lounge. Lounge pairing credentials and privileged playback
+controls never enter browser clients.
 
 ## Open Decisions
 
-- Define and validate the tablet-to-SmartTube pairing and command protocol.
+- Prove the native companion's SmartTube TV-code pairing, playback commands, state reporting, and
+  reconnect behavior locally before integrating it with PocketBase.
 - Verify Coolify same-origin `/api` routing for `karaoke.app.starsummit.net`, TLS, and PocketBase realtime WebSockets.
 - Define persistent storage, backup, secret, TLS/DNS, and resource-limit policies before deployment.
 - Define fair-rotation behavior and queue transition recovery.

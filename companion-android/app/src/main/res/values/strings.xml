@@ -1,0 +1,4 @@
+<resources>
+  <string name="app_name">Starsummit Companion</string>
+  <string name="diagnostic_channel_name">Lounge connection</string>
+</resources>

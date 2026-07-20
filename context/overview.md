@@ -66,7 +66,10 @@
 - Model a party token, expiry, temporary requester identity, queue status, monotonic sequence, and failure reason. Enforce no duplicate active `(party, song)` records server-side.
 - Use file-based Vue routing through `vite-plugin-pages`: `/party/:code` for guests, `/admin` for controls/settings, and `/tablet` for a playback-focused display. Share the constrained admin session between the protected routes. The current empty router is scaffolding, not a manual-routing decision.
 - Use write-through caching: search the local library first, call YouTube only for misses, normalize and save selected results, and debounce requests. Keep API keys in Coolify secrets and enforce server-side rate limiting even without a hard user-facing cap.
-- Prototype SmartTube pairing and playback-state detection before building the full queue UI. Prefer a tablet-held device token or pairing code, reconnect by refetching current state, and make transitions idempotent.
+- Prototype SmartTube pairing and playback-state detection in a native Fire tablet companion before
+  building the full queue UI. Store durable Lounge pairing material with Android Keystore-backed
+  encryption, reconnect by refetching current state, and make transitions idempotent. Lounge
+  credentials and privileged playback controls must never enter browser clients.
 - Prefer weekly PocketBase backups with a short rolling retention plus a manual backup before large imports. Monthly-only backups risk losing curated library changes.
 - Version PocketBase schema/rule changes in the repository and validate them during deployment; do not rely only on manual dashboard edits.
 
@@ -75,11 +78,14 @@
 -   Technology: SmartTube (Open-source Android TV client) running on Fire OS.
 -   Responsibility: Natively plays raw, high-bitrate YouTube DASH streams completely ad-free. It uses built-in SponsorBlock integration to auto-skip non-music filler, intros, and channel promos.
 
-## C. The Central Hub & Local Proxy (Tablet)
+## C. The Central Hub & Native Companion (Fire Tablet)
 
--   Technology: Vanilla Vue 3 (`src/pages/tablet/index.vue`) paired with the browser's dynamic WakeLock API.
--   Responsibility: Actively sits on a stand at the party displaying a QR code containing the active party code. It handles state transitions (queued ➔ playing ➔ completed) via PocketBase WebSockets.
--   The Bridge: Because the cloud server cannot bypass home firewalls to ping the Fire TV, the tablet pulls commands from the cloud and relays them locally to SmartTube over local Wi-Fi via the YouTube Lounge (Leanback) protocol.
+-   Display technology: Vanilla Vue 3 (`src/pages/tablet/index.vue`) for the party QR, queue, and constrained admin surface.
+-   Controller technology: A small Kotlin Android application in `companion-android/`, with a foreground service and no Google Play Services dependency.
+-   Responsibility: The native companion maintains the durable controller session, receives approved playback commands from PocketBase over HTTPS/realtime, relays them to SmartTube through the YouTube Lounge protocol, and reports connection/playback state back to PocketBase. The Vue display may observe sanitized state but never receives Lounge pairing credentials or privileged playback capabilities.
+-   Credential boundary: Store Lounge pairing material using Android Keystore-backed encryption. Do not place it in browser storage, Vue code, logs, diagnostics exports, or PocketBase records.
+-   Recovery: Treat Wi-Fi changes, process death, Lounge token refresh, and realtime reconnect as normal lifecycle events. Reconnect with bounded backoff, refetch authoritative state, and apply commands idempotently.
+-   Delivery sequence: Prove TV-code pairing, open-video/play/pause/seek, state diagnostics, and reconnect locally before adding PocketBase integration.
 
 ## D. The Guest Interface (Mobile Devices)
 
@@ -100,7 +106,8 @@
 ## 4. Open Questions to Answer Before Coding
 
 1. Coolify ingress: Verify `karaoke.app.starsummit.net`, same-origin `/api`, TLS, and PocketBase realtime WebSockets on a deployed test instance.
-2. Tablet-to-TV bridge: Identify pairing, local device addressing, playback commands, completion events, and reconnect behavior.
+2. Native companion bridge: Validate SmartTube TV-code pairing, Lounge token refresh, playback/state
+   commands, completion events, and reconnect behavior on the Fire tablet before PocketBase work.
 3. Fair rotation: Define the exact rule, such as one pending song per requester before that requester can be served again.
 4. Search quality: Choose the initial library import source and define what makes a YouTube result acceptable as karaoke content.
 5. Operations: Set Coolify resource limits, backup retention, secret rotation, and schema-migration procedures.
@@ -109,7 +116,9 @@
 
 ## 5. Anticipated Implementation Issues to Tackle
 
--   The Wake-Lock Lifecycle: Standard mobile web browsers (especially iOS Safari or Android Chrome) aggressively kill active WebSockets and sleep the screen after a few minutes of inactivity. Ensuring the tablet's browser remains awake and executing background network calls is a critical failure point; reconnect by refetching current state.
+-   Android Background Lifecycle: Fire OS may stop or restart the companion despite its foreground
+    service. Persist only durable pairing material, rebuild ephemeral Lounge sessions after restart,
+    reconnect with bounded backoff, and make the current notification state useful for diagnosis.
 -   YouTube API Quota Burn: Despite local caching, if guests bypass the local library to look for obscure songs, a single search returns multiple items. Implementing smart search input debouncing (waiting until typing stops for 500ms) and restricting search results to 5 tracks per query is necessary.
 -   Concurrency and State Race Conditions: If the tablet processes a song completion event while guests add songs, the database state might fall out of sync. Guests must remain create-only; queue transitions should be idempotent and tablet-admin controlled.
 

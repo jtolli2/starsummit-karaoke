@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+  <!-- Pairing material is encrypted, but backups are disabled in the manifest as defense in depth. -->
+</full-backup-content>
