@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CancellationException
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,6 +13,7 @@ import org.junit.Test
 import java.io.IOException
 import java.io.Reader
 import java.io.StringReader
+import java.time.Instant
 
 class ControllerProtocolTest {
   @Test
@@ -68,6 +70,133 @@ class ControllerProtocolTest {
       .put("action", "open_video").put("videoId", "dQw4w9WgXcQ").put("expiresAt", future), future - 1)
     assertEquals(ControllerAction.OPEN_VIDEO, command.action)
     assertEquals("dQw4w9WgXcQ", command.videoId)
+  }
+
+  @Test
+  fun parsesPocketBaseCommandViewDateTimeAndEmptyNowPlayingPayload() {
+    val expiry = "2026-07-20 08:10:15.123Z"
+    val now = Instant.parse("2026-07-20T08:00:00Z").toEpochMilli()
+    val command = ControllerCommandParser.parseList(
+      JSONObject().put(
+        "commands",
+        JSONArray().put(
+          JSONObject()
+            .put("id", "cmd-now-playing")
+            .put("sequence", 1)
+            .put("idempotencyKey", "now-playing-key")
+            .put("action", "get_now_playing")
+            .put("expiresAt", expiry),
+        ),
+      ).toString(),
+      now,
+    ).single()
+
+    assertEquals(ControllerAction.GET_NOW_PLAYING, command.action)
+    assertEquals(Instant.parse("2026-07-20T08:10:15.123Z").toEpochMilli(), command.expiresAtEpochMs)
+  }
+
+  @Test
+  fun skipsExpiredPocketBaseDateTime() {
+    val expiry = "2026-07-20 08:10:15.123Z"
+    val now = Instant.parse("2026-07-20T08:10:15.124Z").toEpochMilli()
+    val commands = ControllerCommandParser.parseList(
+      JSONObject().put(
+        "commands",
+        JSONArray().put(
+          JSONObject()
+            .put("id", "expired")
+            .put("sequence", 1)
+            .put("idempotencyKey", "expired-key")
+            .put("action", "get_now_playing")
+            .put("expiresAt", expiry),
+        ),
+      ).toString(),
+      now,
+    )
+
+    assertTrue(commands.isEmpty())
+  }
+
+  @Test
+  fun skipsPocketBaseDateTimeAtTheCurrentTime() {
+    val expiry = "2026-07-20 08:10:15.123Z"
+    val now = Instant.parse("2026-07-20T08:10:15.123Z").toEpochMilli()
+    val commands = ControllerCommandParser.parseList(
+      JSONObject().put(
+        "commands",
+        JSONArray().put(
+          JSONObject()
+            .put("id", "boundary")
+            .put("sequence", 1)
+            .put("idempotencyKey", "boundary-key")
+            .put("action", "get_now_playing")
+            .put("expiresAt", expiry),
+        ),
+      ).toString(),
+      now,
+    )
+
+    assertTrue(commands.isEmpty())
+  }
+
+  @Test
+  fun preservesNumericEpochSeconds() {
+    val expected = Instant.parse("2026-07-20T08:10:15Z").toEpochMilli()
+    val command = ControllerCommandParser.parse(
+      JSONObject()
+        .put("id", "numeric")
+        .put("sequence", 1)
+        .put("idempotencyKey", "numeric-key")
+        .put("action", "get_now_playing")
+        .put("expiresAt", expected / 1000),
+      expected - 1,
+    )
+
+    assertEquals(expected, command.expiresAtEpochMs)
+  }
+
+  @Test
+  fun preservesIsoInstantExpiry() {
+    val expiry = "2026-07-20T08:10:15.123Z"
+    val command = ControllerCommandParser.parse(
+      JSONObject()
+        .put("id", "iso")
+        .put("sequence", 1)
+        .put("idempotencyKey", "iso-key")
+        .put("action", "get_now_playing")
+        .put("expiresAt", expiry),
+      Instant.parse("2026-07-20T08:00:00Z").toEpochMilli(),
+    )
+
+    assertEquals(Instant.parse(expiry).toEpochMilli(), command.expiresAtEpochMs)
+  }
+
+  @Test(expected = ControllerProtocolException::class)
+  fun rejectsMalformedPocketBaseDateTime() {
+    ControllerCommandParser.parse(
+      JSONObject()
+        .put("id", "cmd")
+        .put("sequence", 1)
+        .put("idempotencyKey", "key")
+        .put("action", "get_now_playing")
+        .put("payload", JSONObject())
+        .put("expiresAt", "2026-02-30 08:10:15.123Z"),
+      Instant.parse("2026-02-01T00:00:00Z").toEpochMilli(),
+    )
+  }
+
+  @Test(expected = ControllerProtocolException::class)
+  fun rejectsAmbiguousPocketBaseDateTimeOffset() {
+    ControllerCommandParser.parse(
+      JSONObject()
+        .put("id", "cmd")
+        .put("sequence", 1)
+        .put("idempotencyKey", "key")
+        .put("action", "get_now_playing")
+        .put("payload", JSONObject())
+        .put("expiresAt", "2026-07-20 08:10:15.123+00:00"),
+      Instant.parse("2026-07-20T08:00:00Z").toEpochMilli(),
+    )
   }
 
   @Test(expected = ControllerProtocolException::class)

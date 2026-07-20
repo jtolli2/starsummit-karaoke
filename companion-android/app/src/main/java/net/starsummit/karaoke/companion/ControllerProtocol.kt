@@ -3,6 +3,11 @@ package net.starsummit.karaoke.companion
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
+import java.util.Locale
 
 enum class ControllerAction { OPEN_VIDEO, PLAY, PAUSE, SEEK, GET_NOW_PLAYING }
 
@@ -112,9 +117,18 @@ object ControllerCommandParser {
     is Number -> if (value.toLong() < 10_000_000_000L) value.toLong() * 1000 else value.toLong()
     is String -> value.toLongOrNull()?.let { if (it < 10_000_000_000L) it * 1000 else it }
       ?: runCatching { java.time.Instant.parse(value).toEpochMilli() }
+        .recoverCatching {
+          LocalDateTime.parse(value, POCKETBASE_UTC_DATETIME)
+            .toInstant(ZoneOffset.UTC)
+            .toEpochMilli()
+        }
         .getOrElse { throw ControllerProtocolException("invalid command expiry") }
     else -> throw ControllerProtocolException("invalid command expiry")
   }
+
+  private val POCKETBASE_UTC_DATETIME = DateTimeFormatter
+    .ofPattern("uuuu-MM-dd HH:mm:ss.SSS'Z'", Locale.ROOT)
+    .withResolverStyle(ResolverStyle.STRICT)
 }
 
 class ControllerProtocolException(message: String) : IOException(message)

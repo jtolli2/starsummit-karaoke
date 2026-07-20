@@ -95,3 +95,10 @@ Complete
   so the approved diagnostic build adds attempt-scoped, redacted telemetry for subscription
   acceptance, SSE event labels, authoritative refetch counts, and sanitized refetch failure classes.
   It never records auth headers, tokens, command/event payloads, or Lounge material.
+- Live redacted telemetry proved subscription acceptance and `PB_CONNECT`, then showed a
+  `ControllerProtocolException` immediately after a generation-2 command wake/refetch. PocketBase
+  serializes command expiry as `YYYY-MM-DD HH:mm:ss.SSSZ`; the Android command parser accepted only
+  numeric epochs or strict ISO instants with a `T`. The local follow-up parser fix accepts the pinned
+  PocketBase UTC format with strict calendar validation while preserving expiry boundaries, numeric
+  epochs, and ISO timestamps. The focused controller suite passes 32 tests; delivery and renewed live
+  command validation require separate approval.
