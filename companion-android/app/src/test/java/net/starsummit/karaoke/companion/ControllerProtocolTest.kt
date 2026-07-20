@@ -10,6 +10,15 @@ import org.junit.Test
 import java.io.IOException
 
 class ControllerProtocolTest {
+  @Test
+  fun `controller HTTP diagnostics expose status only`() {
+    val diagnostics = DiagnosticsStore()
+
+    diagnostics.error(ControllerHttpException(410), setErrorState = false)
+
+    assertEquals("ControllerHttp410", diagnostics.snapshot.value.lastErrorRedacted)
+  }
+
   private val future = System.currentTimeMillis() + 60_000
   private val session = ControllerSession("session", 4, future)
 

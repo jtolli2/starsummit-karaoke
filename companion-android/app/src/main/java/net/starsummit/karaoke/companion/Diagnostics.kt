@@ -34,7 +34,10 @@ class DiagnosticsStore {
     )
   }
   fun error(value: Throwable, setErrorState: Boolean = true) {
-    val safe = value::class.simpleName ?: "LoungeError"
+    val safe = when (value) {
+      is ControllerHttpException -> "ControllerHttp${value.statusCode}"
+      else -> value::class.simpleName ?: "LoungeError"
+    }
     mutable.value = mutable.value.copy(
       lastErrorRedacted = safe.take(80),
       state = if (setErrorState) ConnectionState.ERROR else mutable.value.state,
