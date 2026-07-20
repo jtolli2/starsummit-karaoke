@@ -26,6 +26,8 @@ class MainActivity : Activity() {
   private lateinit var diagnostics: TextView
   private lateinit var tvCode: EditText
   private lateinit var videoId: EditText
+  private lateinit var controllerUrl: EditText
+  private lateinit var enrollmentGrant: EditText
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -80,6 +82,28 @@ class MainActivity : Activity() {
     root.addView(Button(this).apply {
       text = "Pair TV"
       setOnClickListener { service?.pair(tvCode.text.toString()) }
+    }, match())
+
+    controllerUrl = EditText(this).apply {
+      hint = "PocketBase HTTPS URL"
+      inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+      maxLines = 1
+    }
+    root.addView(controllerUrl, match())
+    enrollmentGrant = EditText(this).apply {
+      hint = "One-time controller enrollment grant"
+      inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+      maxLines = 1
+    }
+    root.addView(enrollmentGrant, match())
+    root.addView(Button(this).apply {
+      text = "Enroll PocketBase controller"
+      setOnClickListener {
+        val grant = enrollmentGrant.text.toString()
+        service?.enrollController(controllerUrl.text.toString(), grant)
+        enrollmentGrant.text.clear()
+        enrollmentGrant.visibility = EditText.INVISIBLE
+      }
     }, match())
 
     videoId = EditText(this).apply {

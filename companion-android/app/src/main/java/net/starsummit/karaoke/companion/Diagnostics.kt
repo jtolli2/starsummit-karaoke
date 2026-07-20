@@ -16,6 +16,7 @@ data class DiagnosticsSnapshot(
   val lastErrorRedacted: String? = null,
   val reconnectAttempt: Int = 0,
   val nowPlaying: PlaybackSnapshot = PlaybackSnapshot(),
+  val playbackRevision: Long = 0,
 )
 
 class DiagnosticsStore {
@@ -45,5 +46,10 @@ class DiagnosticsStore {
       state = if (value == 0) mutable.value.state else ConnectionState.RECONNECTING,
     )
   }
-  fun nowPlaying(value: PlaybackSnapshot) { mutable.value = mutable.value.copy(nowPlaying = value) }
+  fun nowPlaying(value: PlaybackSnapshot, authoritative: Boolean = false) {
+    mutable.value = mutable.value.copy(
+      nowPlaying = value,
+      playbackRevision = mutable.value.playbackRevision + if (authoritative) 1 else 0,
+    )
+  }
 }

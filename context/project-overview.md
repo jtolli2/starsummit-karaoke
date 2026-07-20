@@ -30,9 +30,11 @@ controls never enter browser clients.
 
 ## Open Decisions
 
-- Prove the native companion's SmartTube TV-code pairing, playback commands, state reporting, and
-  reconnect behavior locally before integrating it with PocketBase.
-- Verify Coolify same-origin `/api` routing for `karaoke.app.starsummit.net`, TLS, and PocketBase realtime WebSockets.
+- Validate the implemented controller protocol end-to-end against a deployed PocketBase instance
+  and updated Fire tablet APK only after separate approval; keep Lounge credentials and direct
+  Lounge capabilities device-only.
+- Verify Coolify same-origin `/api` routing for `karaoke.app.starsummit.net`, TLS, and PocketBase
+  realtime Server-Sent Events (SSE).
 - Define persistent storage, backup, secret, TLS/DNS, and resource-limit policies before deployment.
 - Define fair-rotation behavior and queue transition recovery.
 - Choose the initial library import source and YouTube result-quality rules.

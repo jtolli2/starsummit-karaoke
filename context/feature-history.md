@@ -15,3 +15,16 @@
 - Validated the debug APK with 15 JVM tests and `assembleDebug`; independent review found no
   remaining blocking correctness or security issues. PocketBase integration and explicit Wi-Fi
   interruption testing remain deferred.
+
+### 2026-07-20 — PocketBase native controller protocol
+
+- Added separate controller-device enrollment/authentication, resumable monotonic sessions,
+  validated/idempotent commands, atomic terminal acknowledgements, and sanitized state reporting
+  in a pinned PocketBase 0.39.7 backend.
+- Integrated the Fire tablet companion through HTTPS and PocketBase SSE wake hints with encrypted
+  controller credentials/progress, authoritative refetch, ambiguous-send reconciliation, bounded
+  reconnect, and preserved Lounge isolation.
+- Passed real PocketBase authorization/concurrency/SSE integration, six backend contract tests, 31
+  Android JVM tests, Android assembly, Vue unit/build validation, and an independent final review
+  with no remaining actionable findings. Live deployment, enrollment, and tablet mutation remain
+  approval-gated.

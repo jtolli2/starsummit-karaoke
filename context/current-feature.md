@@ -1,6 +1,7 @@
-# Fire Tablet Native Companion Diagnostic Spike
+# PocketBase Native Controller Protocol
 
-> Working record for the single active feature or fix. Keep its status, goals, and implementation notes current; append completed work only to [feature-history.md](feature-history.md).
+> Working record for the single active feature or fix. Keep its status, goals, and implementation
+> notes current; append completed work only to [feature-history.md](feature-history.md).
 
 ## Status
 
@@ -8,72 +9,69 @@ Complete
 
 ## Goals
 
-- Reconcile the architecture so a native Fire tablet companion, rather than browser code, owns
-  YouTube Lounge credentials and privileged SmartTube playback control.
-- Add an isolated Kotlin Android application under `companion-android/` that targets the verified
-  Fire OS 7 / Android 9 (API 28), arm64-v8a tablet without Google Play Services.
-- Produce an installable local diagnostic build with a foreground service and a touch-friendly
-  screen for SmartTube TV-code pairing, connection state, open-video, play, pause, and seek.
-- Persist pairing credentials with Android Keystore-backed encryption and never expose them in
-  browser clients, logs, diagnostics, or exported Android components.
-- Recover the Lounge session after transient Wi-Fi loss and process interruption, with observable
-  connection/playback diagnostics.
-- Keep PocketBase integration out of the spike until Lounge control is proven locally.
+- Add a versioned PocketBase schema and server routes for a native-controller protocol with a
+  device auth collection that is separate from browser `tablet_admin` accounts, operator-created
+  single-use enrollment grants, revocation, and expiring/resumable controller sessions.
+- Restrict command creation to authenticated `tablet_admin` users and command consumption,
+  acknowledgement, and state reporting to the enrolled device and its current session. Deny direct
+  collection writes and prevent guest or cross-device access.
+- Support only the approved convergent command set (`open_video`, `play`, `pause`, `seek`, and
+  `get_now_playing`) with validated payloads, per-device monotonic sequence numbers, unique
+  idempotency keys, explicit expiry, and terminal success/failure acknowledgement semantics.
+- Add the smallest Android companion bridge that authenticates as a controller device, maintains
+  encrypted PocketBase credentials separately from Lounge pairing material, consumes commands over
+  PocketBase's HTTP + Server-Sent Events realtime protocol, and reports only sanitized state.
+- Bound reconnect attempts with backoff, always refetch authoritative commands after reconnect,
+  reject stale sessions, and reconcile duplicate or interrupted commands against current playback
+  state before replaying an absolute/idempotent Lounge operation.
+- Add automated tests for enrollment and authorization boundaries, invalid payloads, duplicate and
+  replayed commands, acknowledgement/state transitions, stale sessions, and reconnect/refetch
+  behavior. Run the Vue build/tests and Android unit tests/assembly without installing an APK or
+  changing any live service or device.
+- Correct in-scope architecture documentation to describe PocketBase realtime as SSE rather than
+  WebSockets and document the controller credential/data boundary without adding queue or
+  fair-rotation behavior.
 
 ## Notes
 
-- Target verified read-only device profile: Amazon KFTRWI (`trona`), Fire OS 7, Android 9/API 28,
-  arm64-v8a, 1200x1920, approximately 6.2 GB free.
-- The companion is a separate native module; it does not replace the guest Vue app or put Lounge
-  access into `/tablet` browser code.
-- No Google Play Services dependency. Prefer Android platform APIs plus small JVM libraries.
-- The Lounge API is private and may change. Keep its transport and protocol parsing isolated behind
-  a small interface, surface protocol failures in diagnostics, and do not couple it to PocketBase.
-- TV-code pairing must retain only the resulting durable pairing material. Pairing tokens are
-  sensitive and must be encrypted at rest through Android Keystore.
-- Do not commit, push, deploy, delete, mutate Coolify, or change tablet state. APK installation and
-  any other tablet mutation require separate explicit approval after identifying the APK and target.
-- Open proof questions: current SmartTube compatibility with controller-side TV-code pairing,
-  durable token refresh behavior, exact state events, and reconnect behavior after Wi-Fi/process loss.
-- Implemented the standalone diagnostic app in `companion-android/`: API 28 Kotlin application,
-  touch controls, `START_STICKY` foreground service, isolated Lounge transport, nested event parser,
-  playback diagnostics, bounded reconnect, and no PocketBase or Google Play Services integration.
-- Pairing material is AES/GCM encrypted with a non-exportable Android Keystore key; private
-  preferences contain only ciphertext and IV. Android backup and cleartext traffic are disabled,
-  and the service is not exported.
-- Lounge session commands are serialized. Session generation and atomic close guards prevent stale
-  or queued commands from controlling a previous TV after re-pairing, and reconnect refetches
-  now-playing state after a successful bind.
-- Local validation: JDK 21 + Android SDK Gradle `testDebugUnitTest assembleDebug` passed with 15
-  tests and no failures. Final debug APK: `companion-android/app/build/outputs/apk/debug/app-debug.apk`
-  (8,739,477 bytes; SHA-256
-  `82dad5af72e3e6f6832b57c095630fbed3234a20c75bb9bfb119643417d0e708`). Generated outputs are
-  ignored and are not present in Git status.
-- Independent final review found no remaining blocking correctness or security issues. SmartTube
-  compatibility remains unproven until an approval-gated APK installation and local TV-code test.
-- With explicit approval on 2026-07-20, installed the reviewed debug APK over USB ADB on Amazon
-  KFTRWI/trona serial `G8S1KT06151705SM` using package replacement. Android reported success and
-  confirmed `net.starsummit.karaoke.companion` versionCode 1, minSdk 28, targetSdk 28. The app was
-  then launched with separate explicit approval. Android confirmed `.MainActivity` resumed and
-  `.CompanionService` running in the foreground with notification ID 1001. Lounge pairing,
-  credential persistence, and playback commands were initially unexercised.
-- With separate explicit approval, submitted the temporary SmartTube TV code to the diagnostic
-  pairing flow. The redacted UI reported `CONNECTED`, reconnect attempt 0, and incoming `noop`
-  Lounge events. The foreground service remained active and the private app data contained the
-  expected `lounge_pairing.xml` preferences file; credential contents were not inspected or exposed.
-  A transient historical `IOException` remained visible after recovery. No open-video, play, pause,
-  seek, or other playback command had been sent at that point.
-- With separate explicit approval, sent Lounge `setPlaylist` for YouTube video `WEuuVs4SrSA`.
-  SmartTube accepted the command and the redacted diagnostic reported the same video ID, player
-  state 1 (playing), position 0.0 seconds, and duration 152.0 seconds while remaining `CONNECTED`
-  with reconnect attempt 0. This proves TV-code pairing and native open-video playback locally.
-  With another explicit approval, pause changed the reported player state to 2 at 83.4 seconds,
-  seek moved the paused player to exactly 30.0 seconds, and resume returned state 1 at that
-  position. This proves native open-video, play, pause, seek, playback-state, and connection
-  diagnostics locally.
-- With another explicit approval, force-stopped only the companion package and confirmed its
-  process and foreground service were absent. Relaunching restored the encrypted pairing without a
-  TV code, re-established `CONNECTED` with reconnect attempt 0 and no current error, refetched the
-  same playing video at 34.4 seconds, and restarted foreground notification ID 1001 in process
-  18990. This proves credential persistence and recovery after a controlled process interruption.
-  A Wi-Fi interruption remains untested.
+- Baseline is signed local `main` commit `3b25ecfc9e689655b48233650c1aaa502f858f34`;
+  the working tree was clean when this feature started.
+- The proven Lounge transport, encrypted Lounge `PairingStore`, command serialization, and
+  generation guards remain isolated and unchanged unless a narrowly required adapter seam is
+  needed.
+- PocketBase persists approved command intents and sanitized observed state only. Lounge tokens,
+  Google cookies, YouTube API keys, and direct Lounge request capabilities remain exclusively on
+  the native device.
+- PocketBase realtime is an SSE notification hint, not a command queue or source of truth. On every
+  connection the companion receives `PB_CONNECT`, authorizes subscriptions with the returned client
+  ID, and refetches commands over HTTPS; disconnects and missed events are expected.
+- Exactly-once external playback is not possible across a process/network failure. The protocol is
+  at-least-once with durable command identity, terminal acknowledgements, and reconciliation before
+  replay; every supported command expresses an absolute or convergent target.
+- Enrollment grant creation is an operator-only local/server administration action and is not
+  exposed to Vue. This implementation will not create a grant, account, or session in any live
+  PocketBase instance.
+- Added a PocketBase 0.39.7 backend under `pocketbase/` with a pinned container, versioned schema,
+  operator enrollment-grant route, separate controller-device auth, resumable monotonic sessions,
+  atomic command/acknowledgement/state transitions, and own-device SSE rules. Direct collection
+  writes remain disabled.
+- Added the native Android bridge without changing the proven Lounge transport. Controller
+  credentials, session identity, and in-flight progress use a distinct Android Keystore key and
+  synchronous encrypted persistence; ambiguous playback sends remain pending until a newer
+  authoritative Lounge state event permits reconciliation.
+- Reconnect uses bounded backoff, preserves in-flight identity across ordinary outages, retries an
+  expired session once as a fresh monotonic generation, subscribes using PocketBase's real
+  `PB_CONNECT` SSE flow, and refetches pending commands over HTTPS after every connection or event.
+- Validation passed on the final tree: six pure backend contract tests; one real PocketBase 0.39.7
+  integration test covering authorization, enrollment replay, idempotency, competing ACKs, stale
+  sessions, state, and actual SSE create/update delivery; 31 Android JVM tests (16 controller and
+  all 15 Lounge regressions); Android `assembleDebug`; `bun test:unit --run`; and `bun run build`.
+- Independent security/concurrency review initially found session-expiry, ambiguous-send,
+  transaction, persistence, and reconciliation failure windows. Those findings were repaired and
+  the final re-review approved the complete tracked and untracked tree with no actionable P0-P3
+  findings.
+- Live PocketBase/Coolify deployment, enrollment, APK installation, and tablet validation remain
+  deliberately unperformed and require new explicit approval. A real Wi-Fi interruption remains
+  untested on the Fire tablet.
+- No commit, push, deployment, deletion, Coolify mutation, APK installation, or tablet mutation is
+  authorized for this feature.

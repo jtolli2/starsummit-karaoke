@@ -19,17 +19,25 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import java.io.IOException
 
 class CompanionService : Service() {
   private val binder = CompanionBinder()
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private lateinit var pairingStore: PairingStore
+  private lateinit var controllerStore: ControllerStore
+  private lateinit var controllerApi: PocketBaseControllerApi
   private lateinit var controller: LoungeController
   private lateinit var diagnosticsStore: DiagnosticsStore
   private var reconnectJob: Job? = null
+  private var controllerJob: Job? = null
+  private var controllerBridge: PocketBaseControllerBridge? = null
   private var session: LoungeSession? = null
   private var sessionGeneration = 0L
   private var reducer = LoungeEventReducer()
@@ -37,11 +45,14 @@ class CompanionService : Service() {
   override fun onCreate() {
     super.onCreate()
     pairingStore = PairingStore(this)
+    controllerStore = ControllerStore(this)
+    controllerApi = PocketBaseControllerApi()
     controller = LoungeHttpController()
     diagnosticsStore = DiagnosticsStore()
     createNotificationChannel()
     startForeground(NOTIFICATION_ID, notification())
     if (pairingStore.load() != null) startConnectionLoop()
+    if (controllerStore.loadCredentials() != null) startControllerLoop()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -51,6 +62,8 @@ class CompanionService : Service() {
   override fun onDestroy() {
     session?.close()
     reconnectJob?.cancel()
+    controllerBridge?.close()
+    controllerJob?.cancel()
     scope.cancel()
     super.onDestroy()
   }
@@ -63,6 +76,98 @@ class CompanionService : Service() {
     fun pause() { command { pause() } }
     fun seekTo(seconds: Double) { command { seekTo(seconds) } }
     fun getNowPlaying() { command { getNowPlaying() } }
+    /** Native enrollment entry point; grant and returned secret never enter UI state or logs. */
+    fun enrollController(baseUrl: String, grant: String, deviceName: String = "Starsummit tablet") {
+      scope.launch {
+        runCatching { controllerApi.enroll(baseUrl, grant, deviceName) }
+          .onSuccess { controllerStore.saveCredentials(it); startControllerLoop() }
+          .onFailure { diagnosticsStore.error(it, setErrorState = false) }
+      }
+    }
+  }
+
+  private fun startControllerLoop() {
+    if (controllerJob?.isActive == true) return
+    controllerJob = scope.launch {
+      var attempt = 0
+      while (isActive) {
+        val credentials = controllerStore.loadCredentials() ?: return@launch
+        val bridge = PocketBaseControllerBridge(
+          api = controllerApi,
+          realtime = OkHttpControllerRealtimeTransport(),
+          store = ControllerStoreProgressAdapter(controllerStore),
+          credentials = credentials,
+          sessionStore = ControllerStoreSessionAdapter(controllerStore),
+        )
+        controllerBridge = bridge
+        try {
+          val processor = ControllerCommandProcessor(LoungeCommandExecutor(), ControllerStoreProgressAdapter(controllerStore))
+          val initialCommands = bridge.establish()
+          runCatching { bridge.reportState(sanitizedControllerState()) }
+            .onFailure { diagnosticsStore.error(it, setErrorState = false) }
+          processControllerCommands(bridge, processor, initialCommands)
+          attempt = 0
+          bridge.listenRealtime { commands -> processControllerCommands(bridge, processor, commands) }
+          throw IOException("PocketBase realtime stream ended")
+        } catch (cancelled: CancellationException) {
+          throw cancelled
+        } catch (failure: Throwable) {
+          if (failure is AmbiguousCommandException) {
+            session?.let { forceReconnect(it, sessionGeneration) }
+          }
+          bridge.close()
+          controllerBridge = null
+          diagnosticsStore.error(failure, setErrorState = false)
+          delay(ControllerReconnectPolicy.delayMillis(attempt))
+          attempt = (attempt + 1).coerceAtMost(ControllerReconnectPolicy.MAX_ATTEMPTS)
+        }
+      }
+    }
+  }
+
+  private suspend fun processControllerCommands(
+    bridge: PocketBaseControllerBridge,
+    processor: ControllerCommandProcessor,
+    commands: List<ControllerCommand>,
+  ) {
+    commands.sortedBy { it.sequence }.forEach { command ->
+      val result = bridge.processCommand(processor, command, diagnosticsStore.snapshot.value.nowPlaying)
+      if (result is CommandResult.Failed) diagnosticsStore.error(IllegalStateException(result.errorCode), setErrorState = false)
+      runCatching {
+        bridge.reportState(sanitizedControllerState())
+      }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
+    }
+  }
+
+  private fun sanitizedControllerState(): SanitizedControllerState {
+    val diagnostics = diagnosticsStore.snapshot.value
+    val now = diagnostics.nowPlaying
+    val progress = controllerStore.loadProgress()
+    return SanitizedControllerState(
+      connectionState = sanitizeControllerConnectionState(diagnostics.state),
+      playback = now.copy(state = now.state?.let(::sanitizeLoungePlayerState)),
+      lastCommandSequence = progress.lastCommandSequence,
+    )
+  }
+
+  private inner class LoungeCommandExecutor : CommandExecutor {
+    private suspend fun active(): LoungeSession = session ?: throw IOException("Lounge unavailable")
+    override suspend fun openVideo(videoId: String) { active().setPlaylist(videoId) }
+    override suspend fun play() { active().play() }
+    override suspend fun pause() { active().pause() }
+    override suspend fun seek(seconds: Double) { active().seekTo(seconds) }
+    override suspend fun getNowPlaying() { active().getNowPlaying() }
+    override suspend fun refreshNowPlaying(): PlaybackSnapshot {
+      val revision = diagnosticsStore.snapshot.value.playbackRevision
+      active().getNowPlaying()
+      return try {
+        withTimeout(CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS) {
+          diagnosticsStore.snapshot.first { it.playbackRevision > revision }.nowPlaying
+        }
+      } catch (_: TimeoutCancellationException) {
+        throw IOException("Lounge now-playing refresh timed out")
+      }
+    }
   }
 
   private suspend fun pairInternal(tvCode: String) {
@@ -116,7 +221,7 @@ class CompanionService : Service() {
             val eventJob = launch {
               connected.events.collect { event ->
                 diagnosticsStore.event(event)
-                diagnosticsStore.nowPlaying(reducer.reduce(event))
+                diagnosticsStore.nowPlaying(reducer.reduce(event), event is LoungeEvent.NowPlaying)
               }
             }
             try {
@@ -197,5 +302,6 @@ class CompanionService : Service() {
   private companion object {
     const val CHANNEL_ID = "lounge_connection"
     const val NOTIFICATION_ID = 1001
+    const val CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS = 3_000L
   }
 }

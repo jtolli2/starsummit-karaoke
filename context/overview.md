@@ -13,12 +13,12 @@
 │ ┌────────────────────────────────────────────────────┐ │
 │ │ PocketBase │ │
 │ │ • Database (SQLite + FTS5 Caching) │ │
-│ │ • Real-time WebSocket Subscriptions │ │
+│ │ • Real-time SSE Subscriptions │ │
 │ │ • Static Web Hosting (Vue App Assets) │ │
 │ │ • Secure Proxy to YouTube Data API v3 │ │
 │ └──────────────────────────▲─────────────────────────┘ │
 └─────────────────────────────┼────────────────────────────┘
-│ HTTPS / WebSockets
+│ HTTPS / Server-Sent Events
 │
 ┌───────────────────────┼───────────────────────┐
 │ Local Home Network │ │
@@ -85,7 +85,9 @@
 -   Responsibility: The native companion maintains the durable controller session, receives approved playback commands from PocketBase over HTTPS/realtime, relays them to SmartTube through the YouTube Lounge protocol, and reports connection/playback state back to PocketBase. The Vue display may observe sanitized state but never receives Lounge pairing credentials or privileged playback capabilities.
 -   Credential boundary: Store Lounge pairing material using Android Keystore-backed encryption. Do not place it in browser storage, Vue code, logs, diagnostics exports, or PocketBase records.
 -   Recovery: Treat Wi-Fi changes, process death, Lounge token refresh, and realtime reconnect as normal lifecycle events. Reconnect with bounded backoff, refetch authoritative state, and apply commands idempotently.
--   Delivery sequence: Prove TV-code pairing, open-video/play/pause/seek, state diagnostics, and reconnect locally before adding PocketBase integration.
+-   Delivery sequence: TV-code pairing, open-video/play/pause/seek, state diagnostics, process
+    recovery, and the local PocketBase controller protocol are implemented. Deployment, native
+    enrollment, and end-to-end live validation remain approval-gated.
 
 ## D. The Guest Interface (Mobile Devices)
 
@@ -105,9 +107,11 @@
 
 ## 4. Open Questions to Answer Before Coding
 
-1. Coolify ingress: Verify `karaoke.app.starsummit.net`, same-origin `/api`, TLS, and PocketBase realtime WebSockets on a deployed test instance.
-2. Native companion bridge: Validate SmartTube TV-code pairing, Lounge token refresh, playback/state
-   commands, completion events, and reconnect behavior on the Fire tablet before PocketBase work.
+1. Coolify ingress: Verify `karaoke.app.starsummit.net`, same-origin `/api`, TLS, and PocketBase
+   realtime Server-Sent Events (SSE) on a deployed test instance.
+2. Native companion bridge: With separate approval, deploy and validate native enrollment,
+   approved-command delivery, acknowledgement, sanitized state reporting, bounded SSE
+   reconnect/refetch, and a real Wi-Fi interruption on the Fire tablet.
 3. Fair rotation: Define the exact rule, such as one pending song per requester before that requester can be served again.
 4. Search quality: Choose the initial library import source and define what makes a YouTube result acceptable as karaoke content.
 5. Operations: Set Coolify resource limits, backup retention, secret rotation, and schema-migration procedures.
