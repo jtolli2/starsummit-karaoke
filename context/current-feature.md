@@ -102,3 +102,10 @@ Complete
   PocketBase UTC format with strict calendar validation while preserving expiry boundaries, numeric
   epochs, and ISO timestamps. The focused controller suite passes 32 tests; delivery and renewed live
   command validation require separate approval.
+- Signed `8f8ca38` deployed successfully and the repaired APK resumed generation 2 without a crash.
+  Live PocketBase commands then proved SSE-triggered authoritative refetch, strict monotonic
+  sequencing, and terminal success acknowledgements for `get_now_playing` (5), `play` (7), `pause`
+  (8), and final `play` (10). Sanitized state advanced to sequence 10 for video `WEuuVs4SrSA`,
+  connected and playing. Parameterized `open_video` (6) and `seek` to 30 seconds (9) reached the
+  companion but did not converge through Lounge before their 30-second expiries; PocketBase marked
+  both failed with `expired` and state remained near 24.7 seconds. No Wi-Fi interruption was run.

@@ -6,8 +6,10 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -17,6 +19,8 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 interface LoungeController {
   suspend fun pair(tvCode: String): PairingMaterial
@@ -41,7 +45,14 @@ class LoungeHttpController(
     .readTimeout(0, TimeUnit.MILLISECONDS)
     .build(),
   private val clientName: String = "Starsummit Karaoke Companion",
+  private val commandTimeoutMillis: Long = COMMAND_TIMEOUT_MILLIS,
 ) : LoungeController {
+  init {
+    require(commandTimeoutMillis in 1..COMMAND_TIMEOUT_MAX_MILLIS) {
+      "Command timeout must be below PocketBase command expiry"
+    }
+  }
+
   override suspend fun pair(tvCode: String): PairingMaterial = withContext(Dispatchers.IO) {
     val code = LoungeValidation.tvCode(tvCode) ?: throw IllegalArgumentException("Invalid TV code")
     val response = postFormRaw(
@@ -66,7 +77,15 @@ class LoungeHttpController(
       LoungeRequestShape.bindForm(pairing, clientName),
     )
     val bound = parseBindResponse(response)
-    HttpLoungeSession(client, pairing, clientName, bound.sid, bound.gsessionId, bound.lastEventId)
+    HttpLoungeSession(
+      client,
+      pairing,
+      clientName,
+      bound.sid,
+      bound.gsessionId,
+      bound.lastEventId,
+      commandTimeoutMillis,
+    )
   }
 
   private fun postFormRaw(url: String, values: Map<String, String>): String {
@@ -189,6 +208,7 @@ internal object LoungeRequestShape {
   ): String {
     val url = BIND_URL.toHttpUrl().newBuilder()
       .addQueryParameter("name", name)
+      .addQueryParameter("id", pairing.screenId)
       .addQueryParameter("loungeIdToken", pairing.loungeToken)
       .addQueryParameter("SID", sid)
       .addQueryParameter("AID", aid.toString())
@@ -227,8 +247,13 @@ private class HttpLoungeSession(
   private val sid: String,
   private val gsessionId: String,
   initialEventId: Long?,
+  commandTimeoutMillis: Long,
 ) : LoungeSession {
   private val commandMutex = Mutex()
+  private val commandSendMutex = Mutex()
+  private val commandClient = client.newBuilder()
+    .callTimeout(commandTimeoutMillis, TimeUnit.MILLISECONDS)
+    .build()
   private val activeCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<Call>()
   private val closed = SessionClosedGate()
   private var requestId = 2L
@@ -272,7 +297,15 @@ private class HttpLoungeSession(
 
   override suspend fun setPlaylist(videoId: String) {
     LoungeValidation.videoId(videoId) ?: throw IllegalArgumentException("Invalid YouTube video ID")
-    command("setPlaylist", mapOf("req0_videoId" to videoId))
+    command(
+      "setPlaylist",
+      mapOf(
+        "req0_videoId" to videoId,
+        "req0_listId" to "",
+        "req0_currentIndex" to "-1",
+        "req0_currentTime" to "0",
+      ),
+    )
   }
 
   override suspend fun play() = command("play")
@@ -290,28 +323,62 @@ private class HttpLoungeSession(
     activeCalls.forEach { it.cancel() }
   }
 
-  private suspend fun command(action: String, values: Map<String, String> = emptyMap()) = commandMutex.withLock {
-    withContext(Dispatchers.IO) {
-      closed.requireOpen()
-      val url = LoungeRequestShape.sessionUrl(pairing, clientName, sid, gsessionId, lastEventId, requestId++.toString(), subscribe = false)
-      val body = FormBody.Builder()
-        .apply { LoungeRequestShape.commandForm(action, offset++, values).forEach { (key, value) -> add(key, value) } }
-        .build()
-      val call = client.newCall(Request.Builder().url(url).post(body).build())
-      closed.requireOpen()
-      activeCalls += call
-      if (closed.isClosed()) {
-        activeCalls -= call
-        call.cancel()
-        throw LoungeSessionClosedException()
-      }
-      try {
-        call.execute().use { response ->
-          if (!response.isSuccessful) throw IOException("Lounge command failed (${response.code})")
+  private suspend fun command(action: String, values: Map<String, String> = emptyMap()) {
+    var call: Call? = null
+    try {
+      commandSendMutex.withLock {
+        call = commandMutex.withLock {
+          closed.requireOpen()
+          val url = LoungeRequestShape.sessionUrl(
+            pairing,
+            clientName,
+            sid,
+            gsessionId,
+            lastEventId,
+            requestId++.toString(),
+            subscribe = false,
+          )
+          val body = FormBody.Builder()
+            .apply {
+              LoungeRequestShape.commandForm(action, offset++, values)
+                .forEach { (key, value) -> add(key, value) }
+            }
+            .build()
+          commandClient.newCall(Request.Builder().url(url).post(body).build()).also { requestCall ->
+            activeCalls += requestCall
+          }
         }
-      } finally {
-        activeCalls -= call
+        withContext(Dispatchers.IO) {
+          closed.requireOpen()
+          if (closed.isClosed()) {
+            call?.cancel()
+            throw LoungeSessionClosedException()
+          }
+          executeCommandCall(call!!).use { response ->
+            if (!response.isSuccessful) throw IOException("Lounge command failed (${response.code})")
+          }
+        }
       }
+    } finally {
+      call?.let { activeCalls -= it }
     }
   }
+
+  private suspend fun executeCommandCall(call: Call) = suspendCancellableCoroutine<okhttp3.Response> { continuation ->
+    continuation.invokeOnCancellation { call.cancel() }
+    call.enqueue(object : Callback {
+      override fun onFailure(call: Call, error: IOException) {
+        runCatching { continuation.resumeWithException(error) }
+      }
+
+      override fun onResponse(call: Call, response: okhttp3.Response) {
+        runCatching {
+          continuation.resume(response) { _, _, _ -> response.close() }
+        }.onFailure { response.close() }
+      }
+    })
+  }
 }
+
+private const val COMMAND_TIMEOUT_MILLIS = 15_000L
+private const val COMMAND_TIMEOUT_MAX_MILLIS = 29_000L

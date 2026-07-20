@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
@@ -105,9 +106,11 @@ class ControllerCommandProcessor(
     }
     progressStore.save(progress.copy(sessionId = session.id, generation = session.generation, inFlightId = command.id, inFlightIdempotencyKey = command.idempotencyKey))
     return try {
-      execute(command)
+      executeWithinExpiry(command)
       markComplete(session, command, progress)
       CommandResult.Applied
+    } catch (deadline: CommandDeadlineExceededException) {
+      if (deadline.ambiguous) CommandResult.TransientFailure("command_deadline_exceeded") else CommandResult.Expired
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
       throw cancelled
     } catch (failure: Throwable) {
@@ -121,7 +124,9 @@ class ControllerCommandProcessor(
     progress: ControllerProgress,
   ): CommandResult {
     val fresh = try {
-      executor.refreshNowPlaying()
+      withRemainingExpiry(command) { executor.refreshNowPlaying() }
+    } catch (_: CommandDeadlineExceededException) {
+      return CommandResult.Expired
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
       throw cancelled
     } catch (failure: Throwable) {
@@ -135,9 +140,11 @@ class ControllerCommandProcessor(
 
   private suspend fun replay(command: ControllerCommand, session: ControllerSession, progress: ControllerProgress): CommandResult {
     return try {
-      execute(command)
+      executeWithinExpiry(command)
       markComplete(session, command, progress)
       CommandResult.Replayed
+    } catch (deadline: CommandDeadlineExceededException) {
+      if (deadline.ambiguous) CommandResult.TransientFailure("command_deadline_exceeded") else CommandResult.Expired
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
       throw cancelled
     } catch (failure: Throwable) {
@@ -158,6 +165,26 @@ class ControllerCommandProcessor(
     ControllerAction.GET_NOW_PLAYING -> executor.getNowPlaying()
   }
 
+  private suspend fun executeWithinExpiry(command: ControllerCommand) {
+    val remaining = command.expiresAtEpochMs - now()
+    if (remaining <= 0) throw CommandDeadlineExceededException()
+    try {
+      withTimeout(remaining) { execute(command) }
+    } catch (_: TimeoutCancellationException) {
+      throw CommandDeadlineExceededException(ambiguous = true)
+    }
+  }
+
+  private suspend fun <T> withRemainingExpiry(command: ControllerCommand, block: suspend () -> T): T {
+    val remaining = command.expiresAtEpochMs - now()
+    if (remaining <= 0) throw CommandDeadlineExceededException()
+    return try {
+      withTimeout(remaining) { block() }
+    } catch (_: TimeoutCancellationException) {
+      throw CommandDeadlineExceededException()
+    }
+  }
+
   private fun markComplete(session: ControllerSession, command: ControllerCommand, old: ControllerProgress) {
     progressStore.save(ControllerProgress(session.id, session.generation, maxOf(old.lastCommandSequence, command.sequence), null, null))
   }
@@ -170,6 +197,11 @@ class ControllerCommandProcessor(
     ControllerAction.GET_NOW_PLAYING -> true
   }
 }
+
+private class CommandDeadlineExceededException(
+  val ambiguous: Boolean = false,
+  cause: Throwable? = null,
+) : Exception(cause)
 
 sealed interface CommandResult {
   data object Applied : CommandResult

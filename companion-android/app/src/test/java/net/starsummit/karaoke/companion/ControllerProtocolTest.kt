@@ -1,6 +1,10 @@
 package net.starsummit.karaoke.companion
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CancellationException
@@ -324,6 +328,58 @@ class ControllerProtocolTest {
     val processor = ControllerCommandProcessor(executor, InMemoryProgressStore(), { future - 1 })
     val command = ControllerCommand("cmd", 1, "key", ControllerAction.PLAY, generation = 3, expiresAtEpochMs = future)
     assertEquals(CommandResult.Stale, processor.process(command, session, PlaybackSnapshot()))
+    assertTrue(!invoked)
+  }
+
+  @Test
+  fun queuedCommandExpiresWhileWaitingForLoungeSend() = runTest {
+    val sendLock = Mutex()
+    val firstEntered = CompletableDeferred<Unit>()
+    val releaseFirst = CompletableDeferred<Unit>()
+    var calls = 0
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = Unit
+      override suspend fun play() {
+        sendLock.withLock {
+          calls++
+          if (calls == 1) {
+            firstEntered.complete(Unit)
+            releaseFirst.await()
+          }
+        }
+      }
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+    }
+    val clock = System.currentTimeMillis()
+    val processor = ControllerCommandProcessor(executor, InMemoryProgressStore(), { System.currentTimeMillis() })
+    val first = ControllerCommand("first", 1, "first-key", ControllerAction.PLAY, expiresAtEpochMs = clock + 5_000)
+    val second = ControllerCommand("second", 2, "second-key", ControllerAction.PLAY, expiresAtEpochMs = clock + 40)
+    val firstResult = launch { assertEquals(CommandResult.Applied, processor.process(first, session, PlaybackSnapshot())) }
+    firstEntered.await()
+    assertEquals(
+      CommandResult.TransientFailure("command_deadline_exceeded"),
+      processor.process(second, session, PlaybackSnapshot()),
+    )
+    releaseFirst.complete(Unit)
+    firstResult.join()
+  }
+
+  @Test
+  fun commandExpiredBeforeExecutionIsNotMarkedAmbiguous() = runTest {
+    var invoked = false
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = Unit
+      override suspend fun play() { invoked = true }
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+    }
+    val now = System.currentTimeMillis()
+    val processor = ControllerCommandProcessor(executor, InMemoryProgressStore(), { now })
+    val command = ControllerCommand("expired", 1, "expired-key", ControllerAction.PLAY, expiresAtEpochMs = now)
+    assertEquals(CommandResult.Expired, processor.process(command, session, PlaybackSnapshot()))
     assertTrue(!invoked)
   }
 
