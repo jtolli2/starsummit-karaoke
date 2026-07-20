@@ -14,7 +14,8 @@ WORKDIR /pb
 COPY pb_migrations /pb/pb_migrations
 COPY pb_hooks /pb/pb_hooks
 COPY README.md /pb/README.md
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 VOLUME ["/pb/pb_data"]
 EXPOSE 8090
-ENTRYPOINT ["/usr/local/bin/pocketbase"]
-CMD ["serve", "--http=0.0.0.0:8090"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

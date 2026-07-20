@@ -79,4 +79,6 @@ POCKETBASE_BIN=/path/to/pocketbase \
 ```
 
 For deployment, use the pinned PocketBase 0.39.x image/binary and run migrations before enabling the
-frontend routes. No live service or device is touched by these tests.
+frontend routes. The included container entrypoint runs `migrate up` against `/pb/pb_data` before
+starting the server so versioned JavaScript migrations are not skipped. No live service or device
+is touched by these tests.
