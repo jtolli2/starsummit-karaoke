@@ -2,13 +2,13 @@
 
 ## Project Purpose & Architecture
 
-This project is a private, cloud-backed karaoke system for parties. Guests use a phone-friendly Vue app to search and append songs; a shared tablet acts as the central hub; SmartTube on a Fire TV Stick plays the selected YouTube video. Treat [context/overview.md](context/overview.md) as the rough-draft architectural brief and update it when an approved architecture decision changes.
+This project is a private, cloud-backed karaoke system for parties. Guests follow a QR URL containing a party code, then use a phone-friendly Vue app to search, view the active queue, and request songs. A shared tablet acts as the central hub; SmartTube on a Fire TV Stick plays the selected YouTube video. Treat [context/overview.md](context/overview.md) as the architectural brief and update it when an approved decision changes.
 
-The intended backend is PocketBase on a Hetzner VPS. It owns the `karaoke_queue` and `song_library` collections, real-time state, static hosting, and a server-side YouTube Data API proxy. Never expose API keys to clients. Keep phone interactions append-oriented, and reserve playback coordination and queue-state transitions for the tablet hub. The tablet is also the only planned bridge to SmartTube's local YouTube Lounge protocol.
+The app uses separate frontend and PocketBase containers in one repository, initially managed by Coolify at `karaoke.app.starsummit.net`; Coolify routes `/api` and realtime traffic to PocketBase. A future external deployment should use managed Compose with Traefik. PocketBase owns persistent data, realtime state, validated queue-request endpoints, and the server-side YouTube proxy; the frontend container serves Vue assets. Never expose API keys or PocketBase superuser credentials to clients. The tablet signs in as a constrained application user with the `tablet_admin` role.
 
 ## Project Structure & Module Organization
 
-This Vue 3, Vite, and TypeScript application starts at `src/main.ts`; `src/App.vue` is the root component and `src/router/index.ts` defines routes. Add components, composables, and services under `src/`; place unit tests in `src/__tests__/`; place publicly served assets in `public/`. Tooling configuration lives at the root (`vite.config.ts`, `vitest.config.ts`, `eslint.config.ts`, and `tsconfig*.json`).
+This Vue 3, Vite, and TypeScript application starts at `src/main.ts`; `src/App.vue` is the root component. Use `vite-plugin-pages` for file-based routing under `src/pages/` (for example, `party/[code].vue`, `admin/index.vue`, and `tablet/index.vue`). The empty router is initial scaffolding until those pages are implemented. Add components, composables, and services under `src/`; place tests in `src/__tests__/` and public assets in `public/`. Keep PocketBase code in `pocketbase/`, including `pb_hooks/`, `pb_migrations/`, and its container definition.
 
 ## Build, Test, and Development Commands
 

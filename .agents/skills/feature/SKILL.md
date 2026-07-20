@@ -1,16 +1,20 @@
 ---
 name: feature
-description: Manage the scoped lifecycle of a Starsummit Karaoke feature or fix: load its context, start work, test, review, explain changes, or prepare completion. Use when implementing or evaluating a project feature through the repository's context files.
+description: "Manage the scoped lifecycle of a Starsummit Karaoke feature or fix: load its context, start work, test, review, explain changes, or prepare completion. Use when implementing or evaluating a project feature through the repository's context files."
 ---
 
 # Karaoke Feature Workflow
 
-Read `context/overview.md`, `context/project-overview.md`, `context/coding-standards.md`, `context/ai-interaction.md`, `context/current-feature.md`, `context/feature-history.md`, and `context/agent-workflow-feedback.md` before acting. Treat `context/overview.md` as the canonical rough draft; use the project overview as the compact reference. Apply relevant feedback before acting, and append a dated entry to the feedback log when it leads to a workflow improvement.
+Read `context/overview.md`, `context/project-overview.md`, `context/coding-standards.md`, `context/ai-interaction.md`, `context/current-feature.md`, `context/feature-history.md`, and `context/agent-workflow-feedback.md` before acting. Treat `context/overview.md` as the canonical rough draft; use the project overview as the compact reference. Apply relevant feedback before acting, and append a dated entry to the feedback log when it leads to a workflow improvement. Assume Coolify manages the initial containerized deployment at `karaoke.app.starsummit.net`.
 
 ## Product Guardrails
 
 - Keep YouTube API credentials and privileged integrations behind PocketBase; never place secrets in Vue client code.
-- Preserve the separation of responsibilities: guests search and append songs, the tablet coordinates shared queue and playback state, and SmartTube renders media.
+- Preserve the separation of responsibilities: guests join through a coded party URL, read the sanitized queue, and submit requests through validated server logic; the tablet coordinates shared queue and playback state; SmartTube renders media.
+- Never use a PocketBase superuser session in browser code. Protect `/admin` and `/tablet` with a constrained `tablet_admin` application account.
+- Keep direct public queue writes disabled. Route submissions through `POST /api/karaoke/requests` and atomically validate party access, expiry, identity, duplicates, rate, and fair placement.
+- Use `vite-plugin-pages` routes under `src/pages/`; treat the current empty router as pre-implementation scaffolding.
+- Keep the frontend and PocketBase in separate containers within this repository, with Coolify routing same-origin `/api` and realtime traffic to PocketBase.
 - Account for real-time conflicts. Queue transitions must be atomic and must not silently lose concurrent guest submissions.
 - Implement only the active feature's goals. Record unresolved product choices instead of inventing behavior.
 

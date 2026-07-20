@@ -35,9 +35,40 @@
 ## A. The Cloud Backend (Hetzner VPS)
 
 -   Technology: PocketBase (Single-binary Go/SQLite setup) secured via HTTPS (https://yourdomain.com).
--   Static File Server: Serves the compiled vanilla Vue 3 application from the pb_public/ folder.
+-   API Service: Runs in its own stateful container. A separate stateless frontend container serves the compiled Vue application.
 -   Database Layer: Manages two core collections: karaoke_queue (active party state) and song_library (prepopulated tracks + cached results).
 -   API Shield: Acts as an intermediary middleware; it stores the secret YouTube API key and proxies search requests to prevent exposing credentials to client devices.
+
+## Hosting Constraint (Current State)
+
+- The Hetzner server currently runs a Coolify instance at `app.starsummit.net` and hosts other applications.
+- The karaoke app will be containerized and Coolify will manage it for the initial deployment at `karaoke.app.starsummit.net`.
+- If deployment moves outside Coolify later, use an externally managed Docker Compose stack and Traefik; do not introduce that second ingress during the initial Coolify deployment.
+- Coolify's existing ingress likely owns the host's public ports 80/443. An independent Traefik or Nginx cannot bind those ports at the same time; it would need to sit behind Coolify's ingress, or replace/reconfigure ingress for every app on the server.
+- Any shared-server design must define resource limits, persistent storage, backups, secret management, TLS/DNS ownership, and a failure boundary so a karaoke deployment cannot disrupt existing apps.
+
+## Current Product Decisions
+
+- Guests scan a QR code containing a party code, currently planned as `https://karaoke.app.starsummit.net/party/<code>`. The code selects and authorizes access to the active party without exposing a predictable public queue.
+- Guests receive temporary identities scoped to that party and may read its sanitized active queue and submit song requests. The tablet uses a signed-in application user with the `tablet_admin` role for queue and playback administration; it never uses a PocketBase superuser session.
+- Parties expire after 12 hours. Duplicate songs are not allowed in the active queue, and fair rotation is preferred over simple first-in/first-out ordering.
+- Party codes expire with the 12-hour party. Store only an appropriate server-side representation of the code and avoid logging or exposing it outside the QR/join flow.
+- Guests may read a sanitized active queue and create requests, but cannot update, delete, reorder, or transition queue records. Duplicate prevention applies while a song is queued or playing; a song may be requested again after completion.
+- The initial song library target is approximately 5,000 songs. Search results discovered through the YouTube API should be saved into the song library when appropriate, with no arbitrary per-party search cap beyond API availability and sensible abuse protection.
+- The guest app should explain clearly why a request was rejected. It is not planned as a PWA. The guest and admin experiences may share the hostname; a separate `/tablet` display route remains an option.
+
+## Confirmed Implementation Defaults
+
+- Keep the frontend and PocketBase in one repository, but use separate runtime containers. PocketBase is stateful and persistent; the Vite frontend is stateless. Coolify routes same-origin `/api` and realtime traffic to PocketBase. Separate repositories are not justified yet.
+- Give guests read access to a sanitized active queue. Submit requests through a server-side PocketBase endpoint rather than direct public collection creation; deny guest update/delete access and all admin/library mutations. Let only a signed-in `tablet_admin` application user perform state transitions.
+- Generate party codes server-side using cryptographically random, human-typeable values; never use sequential codes. Rate-limit code lookup and expire access after 12 hours.
+- The custom `POST /api/karaoke/requests` endpoint must validate party access and expiry, temporary identity, song payload, active duplicates, request rate, and fair-rotation placement atomically, returning a clear rejection reason. Direct public queue writes remain disabled.
+- Model a party token, expiry, temporary requester identity, queue status, monotonic sequence, and failure reason. Enforce no duplicate active `(party, song)` records server-side.
+- Use file-based Vue routing through `vite-plugin-pages`: `/party/:code` for guests, `/admin` for controls/settings, and `/tablet` for a playback-focused display. Share the constrained admin session between the protected routes. The current empty router is scaffolding, not a manual-routing decision.
+- Use write-through caching: search the local library first, call YouTube only for misses, normalize and save selected results, and debounce requests. Keep API keys in Coolify secrets and enforce server-side rate limiting even without a hard user-facing cap.
+- Prototype SmartTube pairing and playback-state detection before building the full queue UI. Prefer a tablet-held device token or pairing code, reconnect by refetching current state, and make transitions idempotent.
+- Prefer weekly PocketBase backups with a short rolling retention plus a manual backup before large imports. Monthly-only backups risk losing curated library changes.
+- Version PocketBase schema/rule changes in the repository and validate them during deployment; do not rely only on manual dashboard edits.
 
 ## B. The Media Rendering Node (Fire TV Stick)
 
@@ -46,20 +77,20 @@
 
 ## C. The Central Hub & Local Proxy (Tablet)
 
--   Technology: Vanilla Vue 3 (/pages/tablet.vue) paired with the browser's dynamic WakeLock API.
--   Responsibility: Actively sits on a stand at the party displaying a static QR code pointing to the root domain. It handles state transitions (queued ➔ playing ➔ completed) via PocketBase WebSockets.
+-   Technology: Vanilla Vue 3 (`src/pages/tablet/index.vue`) paired with the browser's dynamic WakeLock API.
+-   Responsibility: Actively sits on a stand at the party displaying a QR code containing the active party code. It handles state transitions (queued ➔ playing ➔ completed) via PocketBase WebSockets.
 -   The Bridge: Because the cloud server cannot bypass home firewalls to ping the Fire TV, the tablet pulls commands from the cloud and relays them locally to SmartTube over local Wi-Fi via the YouTube Lounge (Leanback) protocol.
 
 ## D. The Guest Interface (Mobile Devices)
 
--   Technology: Vanilla Vue 3 + Vite (/pages/index.vue) using directory-based routing (vite-plugin-pages).
--   Responsibility: Allows any guest scanning the QR code to access a fast, lightweight search and queuing portal with zero authentication required.
+-   Technology: Vanilla Vue 3 + Vite using `vite-plugin-pages` routes under `src/pages/`, including `party/[code].vue`.
+-   Responsibility: Allows any guest scanning the QR code to access a fast, lightweight search and queuing portal using a temporary identity rather than a permanent account.
 
 ---
 
 ## 3. Major Architectural Decisions Made
 
--   Vanilla Vue 3 (Vite) instead of Nuxt: Nuxt's server-side rendering (SSR) was deemed unnecessary overhead for a private web app. Vanilla Vue compiles to flat assets, allowing PocketBase to function as an all-in-one server executable.
+-   Vanilla Vue 3 (Vite) instead of Nuxt: Nuxt's server-side rendering (SSR) was deemed unnecessary overhead for a private web app. Vue compiles to flat assets served by the stateless frontend container while PocketBase runs separately.
 -   SmartTube over Custom Android/WebView Wrapper: Offloads the volatile "cat-and-mouse" game of bypassing YouTube ad-block scripts to an open-source community, ensuring playback stability during a party.
 -   Internet-Facing Hetzner Server over Local Hosting: Eliminates local network headaches (like iOS blocking HTTP WebSockets, router AP Isolation issues, or configuring reverse proxies). Guests can easily connect on cellular data or separate Wi-Fi networks.
 -   Hybrid Database Caching + Client-Side Fuzzy Search (Fuse.js): The application will pre-load thousands of popular songs into a local SQLite database on boot. The mobile app loads this index into memory, applying client-side fuzzy searching via Fuse.js to catch typos without hitting the YouTube API quota.
@@ -68,17 +99,19 @@
 
 ## 4. Open Questions to Answer Before Coding
 
-1. The Handshake Protocol: Exactly what library or raw fetch sequence will the Tablet use to securely pair and register as a virtual remote control with SmartTube's YouTube Lounge protocol receiver?
-2. Database Scale & Initial Scrape: What is the ideal target size for the prepopulated song_library? If it crosses ~15,000 entries, should we pivot from client-side Fuse.js to SQLite's native server-side FTS5 full-text search?
-3. Queue Sorting/Fairness: Should the system enforce strict chronological ordering, or do we implement a smart rotation algorithm so a single user cannot monopolize the playlist by adding ten songs sequentially?
+1. Coolify ingress: Verify `karaoke.app.starsummit.net`, same-origin `/api`, TLS, and PocketBase realtime WebSockets on a deployed test instance.
+2. Tablet-to-TV bridge: Identify pairing, local device addressing, playback commands, completion events, and reconnect behavior.
+3. Fair rotation: Define the exact rule, such as one pending song per requester before that requester can be served again.
+4. Search quality: Choose the initial library import source and define what makes a YouTube result acceptable as karaoke content.
+5. Operations: Set Coolify resource limits, backup retention, secret rotation, and schema-migration procedures.
 
 ---
 
 ## 5. Anticipated Implementation Issues to Tackle
 
--   The Wake-Lock Lifecycle: Standard mobile web browsers (especially iOS Safari or Android Chrome) aggressively kill active WebSockets and sleep the screen after a few minutes of inactivity. Ensuring the tablet's browser remains awake and executing background network calls is a critical failure point.
+-   The Wake-Lock Lifecycle: Standard mobile web browsers (especially iOS Safari or Android Chrome) aggressively kill active WebSockets and sleep the screen after a few minutes of inactivity. Ensuring the tablet's browser remains awake and executing background network calls is a critical failure point; reconnect by refetching current state.
 -   YouTube API Quota Burn: Despite local caching, if guests bypass the local library to look for obscure songs, a single search returns multiple items. Implementing smart search input debouncing (waiting until typing stops for 500ms) and restricting search results to 5 tracks per query is necessary.
--   Concurrency and State Race Conditions: If the tablet processes a song completion event at the exact same moment a guest deletes or adds a song, the database state might fall out of sync. A strict structural approach must ensure the tablet acts as the sole author of queue modifications, treating mobile devices as read/write append-only targets.
+-   Concurrency and State Race Conditions: If the tablet processes a song completion event while guests add songs, the database state might fall out of sync. Guests must remain create-only; queue transitions should be idempotent and tablet-admin controlled.
 
 ---
 

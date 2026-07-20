@@ -2,20 +2,34 @@
 
 > Compact reference for the product model, intended architecture, and open decisions. Read [overview.md](overview.md) for the canonical rough draft and detailed rationale.
 
+## Current Hosting Context
+
+The Hetzner server currently runs Coolify at `app.starsummit.net` and hosts other applications. Karaoke will be containerized and initially managed by Coolify at `karaoke.app.starsummit.net`. If it moves outside Coolify later, use an externally managed Docker Compose stack with Traefik; an additional Traefik/Nginx cannot independently claim ports 80/443 while Coolify's ingress uses them.
+
+## Working Product Decisions
+
+Guests enter through a QR URL containing a party code, receive party-scoped temporary identities, can read the sanitized active queue, and submit song requests through a validated server endpoint. Parties expire after 12 hours; duplicate songs are blocked while queued or playing but may be requested again after completion. Fair rotation is preferred. The initial library target is about 5,000 songs; selected YouTube discoveries may be saved to PocketBase.
+
+The tablet signs in as a constrained application user with the `tablet_admin` role—never as a PocketBase superuser. File-based Vue routes include `/party/:code`, `/admin`, and `/tablet`.
+
 ## Product
 
 Starsummit Karaoke is a private multi-user karaoke system for parties. Guests use their phones to search for and queue tracks. A shared tablet displays a QR code and acts as the party's central control hub. SmartTube on a Fire TV Stick plays the selected YouTube video without ads.
 
 ## Intended Architecture
 
-PocketBase, hosted on a Hetzner VPS, is the shared backend and static host. It is expected to provide SQLite-backed `karaoke_queue` and `song_library` collections, real-time subscriptions, and a protected proxy for the YouTube Data API. The Vue app must not contain the YouTube API key.
+PocketBase runs as a separate stateful backend container on the Hetzner VPS. A stateless frontend container serves the Vue application. Coolify routes same-origin `/api` and realtime traffic to PocketBase, which provides SQLite-backed party, queue, and library data plus the protected YouTube API proxy. The Vue app must not contain API keys or PocketBase superuser credentials.
 
-The guest client searches a cached song library with Fuse.js and may request a limited fallback search through PocketBase. It appends requests to the shared queue. The tablet owns playback transitions and relays approved commands over the local network to SmartTube through the YouTube Lounge protocol. SmartTube is a playback receiver, not a guest-search API.
+The guest client searches a cached song library with Fuse.js and may request a fallback search through PocketBase. Queue submissions go through a server-side endpoint that validates the party code, expiry, temporary identity, payload, duplicates, rate, and fair placement atomically. The tablet owns playback transitions and relays approved commands over the local network to SmartTube through the YouTube Lounge protocol.
 
 ## Open Decisions
 
 - Define and validate the tablet-to-SmartTube pairing and command protocol.
+- Verify Coolify same-origin `/api` routing for `karaoke.app.starsummit.net`, TLS, and PocketBase realtime WebSockets.
+- Define persistent storage, backup, secret, TLS/DNS, and resource-limit policies before deployment.
+- Define fair-rotation behavior and queue transition recovery.
+- Choose the initial library import source and YouTube result-quality rules.
+- Set schema-migration procedures and backup retention.
 - Decide when the song library is large enough to move from client-side fuzzy search to server-side SQLite FTS5.
-- Choose queue fairness rules and concurrency semantics for simultaneous guest requests.
 
 Read [overview.md](overview.md) for the full rough draft, rationale, and anticipated failure modes.
