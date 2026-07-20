@@ -75,3 +75,17 @@ Complete
   untested on the Fire tablet.
 - No commit, push, deployment, deletion, Coolify mutation, APK installation, or tablet mutation is
   authorized for this feature.
+- Live validation on 2026-07-20 deployed signed `a83148e` (`allow empty controller command
+  payloads`) to the temporary Coolify controller instance without replacing its persistent data.
+  The incremental migration accepted an empty-payload `get_now_playing` command, confirming the
+  original PocketBase required-field defect is fixed in the deployed service.
+- Live delivery is blocked by a companion defect: the realtime SSE reader lets
+  `okhttp3.internal.http2.StreamResetException: stream was reset: CANCEL` escape
+  `OkHttpRealtimeConnection.stream` (`ControllerBridge.kt:336`). The exception kills the foreground
+  service process. A controlled, approved force-stop/relaunch reproduced it twice; after the second
+  crash Fire OS scheduled the service restart for 30 minutes. The persisted command therefore stays
+  pending and cannot be used as acknowledgement/state evidence. No Wi-Fi interruption was performed.
+- The approved follow-up repair converts only normal realtime EOF and `IOException` body failures
+  into the existing closed-stream signal; coroutine cancellation and unexpected failures propagate.
+  Focused controller tests cover the stream-reset, closed-signal, cancellation, and unexpected-error
+  paths. Deployment and renewed live validation are pending this repair's approved delivery.

@@ -3,11 +3,14 @@ package net.starsummit.karaoke.companion
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.io.Reader
+import java.io.StringReader
 
 class ControllerProtocolTest {
   @Test
@@ -50,6 +53,76 @@ class ControllerProtocolTest {
     val event = parser.feed("Id\":\"abc\"}\n\n").single()
     assertEquals("PB_CONNECT", event.name)
     assertEquals("abc", parsePocketBaseConnect(event))
+  }
+
+  @Test
+  fun throwingSseBodyReaderEmitsConnectionClosedSentinel() = runTest {
+    val events = mutableListOf<PocketBaseRealtimeEvent>()
+    val reader = object : Reader() {
+      private val delegate = StringReader("event: PB_CONNECT\ndata: {\"clientId\":\"abc\"}\n\n")
+      private var failed = false
+
+      override fun read(cbuf: CharArray, off: Int, len: Int): Int {
+        if (failed) throw IOException("stream reset: CANCEL")
+        val read = delegate.read(cbuf, off, len)
+        failed = true
+        return read
+      }
+
+      override fun close() = delegate.close()
+    }
+
+    runReconnectableRealtimeStream(
+      isOpen = { true },
+      readStream = { consumePocketBaseSse(reader) { events += it } },
+      onStreamClosed = { events += PocketBaseRealtimeEvent("__PB_STREAM_CLOSED__", "") },
+    )
+
+    assertEquals(
+      listOf(
+        PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"abc\"}"),
+        PocketBaseRealtimeEvent("__PB_STREAM_CLOSED__", ""),
+      ),
+      events,
+    )
+  }
+
+  @Test
+  fun cancellationIsNotConvertedToRealtimeReconnect() = runTest {
+    var cancellationEscaped = false
+    var closedSentinelEmitted = false
+
+    try {
+      runReconnectableRealtimeStream(
+        isOpen = { true },
+        readStream = { throw CancellationException("service stopped") },
+        onStreamClosed = { closedSentinelEmitted = true },
+      )
+    } catch (_: CancellationException) {
+      cancellationEscaped = true
+    }
+
+    assertTrue(cancellationEscaped)
+    assertTrue(!closedSentinelEmitted)
+  }
+
+  @Test
+  fun unexpectedRealtimeFailureIsNotConvertedToReconnect() = runTest {
+    var failureEscaped = false
+    var closedSentinelEmitted = false
+
+    try {
+      runReconnectableRealtimeStream(
+        isOpen = { true },
+        readStream = { throw IllegalStateException("unexpected parser failure") },
+        onStreamClosed = { closedSentinelEmitted = true },
+      )
+    } catch (_: IllegalStateException) {
+      failureEscaped = true
+    }
+
+    assertTrue(failureEscaped)
+    assertTrue(!closedSentinelEmitted)
   }
 
   @Test

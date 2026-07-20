@@ -20,6 +20,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+import java.io.Reader
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
@@ -322,27 +323,22 @@ private class OkHttpRealtimeConnection(private val client: OkHttpClient, private
   }
 
   private suspend fun stream() {
-    try {
-      val request = Request.Builder().url(auth.baseUrl.trimEnd('/') + PocketBaseControllerPaths.REALTIME)
-        .header("Accept", "text/event-stream").header("Authorization", "Bearer ${auth.token}").build()
-      val currentCall = client.newCall(request)
-      call = currentCall
-      currentCall.execute().use { response ->
-        if (!response.isSuccessful) throw IOException("PocketBase realtime failed (${response.code})")
-        val parser = PocketBaseSseParser()
-        response.body?.charStream()?.buffered()?.use { reader ->
-          val buffer = CharArray(2048)
-          while (!closed) {
-            val read = reader.read(buffer)
-            if (read < 0) break
-            parser.feed(String(buffer, 0, read)).forEach { eventChannel.emit(it) }
+    runReconnectableRealtimeStream(
+      isOpen = { !closed },
+      readStream = {
+        val request = Request.Builder().url(auth.baseUrl.trimEnd('/') + PocketBaseControllerPaths.REALTIME)
+          .header("Accept", "text/event-stream").header("Authorization", "Bearer ${auth.token}").build()
+        val currentCall = client.newCall(request)
+        call = currentCall
+        currentCall.execute().use { response ->
+          if (!response.isSuccessful) throw IOException("PocketBase realtime failed (${response.code})")
+          response.body?.charStream()?.buffered()?.use { reader ->
+            consumePocketBaseSse(reader, { !closed }) { eventChannel.emit(it) }
           }
-          parser.finish().forEach { eventChannel.emit(it) }
         }
-      }
-    } finally {
-      if (!closed) eventChannel.emit(PocketBaseRealtimeEvent(REALTIME_CLOSED_EVENT, ""))
-    }
+      },
+      onStreamClosed = { eventChannel.emit(PocketBaseRealtimeEvent(REALTIME_CLOSED_EVENT, "")) },
+    )
   }
 
   override suspend fun subscribe(clientId: String, collection: String) = withContext(Dispatchers.IO) {
@@ -354,4 +350,38 @@ private class OkHttpRealtimeConnection(private val client: OkHttpClient, private
 
   override fun close() { closed = true; call?.cancel(); scope.cancel() }
 
+}
+
+/** Runs an SSE stream, converting expected I/O disconnects into the reconnect wake hint. */
+internal suspend fun runReconnectableRealtimeStream(
+  isOpen: () -> Boolean,
+  readStream: suspend () -> Unit,
+  onStreamClosed: suspend () -> Unit,
+) {
+  var reconnectableEnd = false
+  try {
+    readStream()
+    reconnectableEnd = true
+  } catch (_: IOException) {
+    // HTTP/2 stream resets are ordinary realtime disconnects; the service reconnects below.
+    reconnectableEnd = true
+  } finally {
+    if (reconnectableEnd && isOpen()) onStreamClosed()
+  }
+}
+
+/** Reads PocketBase SSE frames. I/O failures are handled by [runReconnectableRealtimeStream]. */
+internal suspend fun consumePocketBaseSse(
+  reader: Reader,
+  shouldContinue: () -> Boolean = { true },
+  onEvent: suspend (PocketBaseRealtimeEvent) -> Unit,
+) {
+  val parser = PocketBaseSseParser()
+  val buffer = CharArray(2048)
+  while (shouldContinue()) {
+    val read = reader.read(buffer)
+    if (read < 0) break
+    parser.feed(String(buffer, 0, read)).forEach { onEvent(it) }
+  }
+  parser.finish().forEach { onEvent(it) }
 }
