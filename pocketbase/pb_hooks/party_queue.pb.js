@@ -12,6 +12,7 @@ function info(c) { try { return c.requestInfo ? c.requestInfo() || {} : $apis.re
 function body(c) { const i = info(c); return i.body && typeof i.body === 'object' ? i.body : i.data && typeof i.data === 'object' ? i.data : {} }
 function auth(c) { return info(c).auth || null }
 function bearer(c) { const h = info(c).headers || {}; const value = h.authorization || h.Authorization || ''; return String(value).replace(/^Bearer\s+/i, '') }
+function query(c, key) { const value = info(c).query?.[key]; return Array.isArray(value) ? value[0] : value }
 function now() { return new Date().toISOString() }
 function future(ms) { return new Date(Date.now() + ms).toISOString() }
 function str(r, f) { return r && r.getString ? r.getString(f) : r?.[f] }
@@ -58,7 +59,44 @@ function requireGuest(c, input) {
 }
 function songView(q, song) { return { id: id(q), sequence: num(q, 'sequence'), status: str(q, 'status'), requestedAt: str(q, 'requested_at'), song: { id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') } } }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, joinAttempts, info, body, auth, bearer, requireGuest, activeParty, tablet, hash, random, code, now, future, str, num, set, id, json, songView, find, records, chooseNext }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, random, code, now, future, str, num, set, id, json, songView, find, records, chooseNext }
+globalThis.__partyQueueRealtime = {
+  authorize(e) {
+    const topic = 'karaoke_party_wake'
+    try {
+      const access = globalThis.__partyQueue.requireGuest({ requestInfo: () => typeof e.requestInfo === 'function' ? e.requestInfo() : e.requestInfo || {} }, {})
+      const requested = Array.isArray(e.subscriptions) ? e.subscriptions : []
+      if (requested.some((item) => item !== topic)) throw new ForbiddenError('Unsupported realtime topic')
+      e.subscriptions = requested.includes(topic) ? [topic] : []
+      e.client.set('karaokePartyId', globalThis.__partyQueue.id(access.party))
+      e.next()
+    } catch (_) { throw new ForbiddenError('Guest realtime authorization required') }
+  },
+  publish(e) {
+    const record = e.record; const collection = record?.collection?.()?.name || record?.collection?.name
+    if (collection !== 'karaoke_queue') return
+    const partyId = globalThis.__partyQueue.str(record, 'party'); const broker = $app.subscriptionsBroker()
+    const message = new SubscriptionMessage({ name: 'karaoke_party_wake', data: '{}' })
+    const clients = broker.clients()
+    Object.keys(clients || {}).forEach((key) => {
+      const client = clients[key]
+      if (client?.hasSubscription?.('karaoke_party_wake') && client.get?.('karaokePartyId') === partyId) client.send(message)
+    })
+  },
+}
+
+onRealtimeSubscribeRequest((e) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  globalThis.__partyQueueRealtime.authorize(e)
+})
+onRecordAfterCreateSuccess((e) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  try { globalThis.__partyQueueRealtime.publish(e) } finally { e.next() }
+})
+onRecordAfterUpdateSuccess((e) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  try { globalThis.__partyQueueRealtime.publish(e) } finally { e.next() }
+})
 
 routerAdd('POST', '/api/karaoke/parties', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
@@ -121,6 +159,28 @@ routerAdd('GET', '/api/karaoke/parties/queue', (c) => {
     const { party } = requireGuest(c, body(c)); const rows = records('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 200, { party: id(party) })
     return c.json(200, { partyId: id(party), expiresAt: str(party, 'expires_at'), queue: rows.map((q) => { const s = $app.findRecordById('karaoke_songs', str(q, 'song')); return songView(q, s) }) })
   } catch (error) { const status = ['party_expired', 'guest_credential_expired'].includes(error.message) ? 410 : 403; return json(c, status, error.message, 'Queue access denied') }
+})
+
+// Sanitized eligible-song browse/search for guests. Library collection rules remain private.
+routerAdd('GET', '/api/karaoke/parties/songs', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { requireGuest, query, records, str, id, json } = globalThis.__partyQueue
+  try {
+    requireGuest(c, {})
+    const q = String(query(c, 'q') || '').trim().slice(0, 100)
+    const escaped = q.replace(/[\\%_]/g, (char) => `\\${char}`)
+    const filter = escaped ? 'eligible = true && (title ~ {:q} || artist ~ {:q})' : 'eligible = true'
+    let rows
+    try {
+      rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+artist', 50, 0, escaped ? { q: escaped } : {})
+    } catch (_) {
+      return json(c, 500, 'song_search_failed', 'Songs could not be loaded')
+    }
+    return c.json(200, { songs: rows.map((song) => ({ id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') })) })
+  } catch (error) {
+    const status = ['party_expired', 'guest_credential_expired'].includes(error.message) ? 410 : 403
+    return json(c, status, error.message, 'Song access denied')
+  }
 })
 
 routerAdd('POST', '/api/karaoke/requests', (c) => {

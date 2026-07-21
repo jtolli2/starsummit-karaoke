@@ -40,3 +40,15 @@
 - Passed pinned PocketBase 0.39.7 authorization, expiry, rate, race, rotation, transition, and
   controller-handoff integration coverage; backend contract tests; Vue tests; production build;
   and independent final security/concurrency review.
+
+### 2026-07-21 — Guest Party Interface
+
+- Added the responsive file-based `/party/[code]` guest experience with temporary party-scoped
+  session credentials, sanitized queue states, eligible-song browse/search, and validated requests
+  with clear duplicate, rate-limit, expiry, and loading/error feedback.
+- Added a party-scoped, payload-free PocketBase SSE wake topic with strict temporary-credential
+  authorization; all queue state is recovered through the existing authenticated HTTPS endpoint.
+  Guests retain no tablet/admin controls or privileged credentials.
+- Passed focused Vue tests, production type-check/build, PocketBase hook syntax checks, and final
+  independent review. The local pinned-runtime integration harness was unavailable and skipped;
+  validate custom wake delivery against it before any deployment validation.

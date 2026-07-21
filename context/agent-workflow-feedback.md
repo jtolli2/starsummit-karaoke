@@ -42,3 +42,13 @@
   Run at least one real pinned-runtime route test before treating hook logic as functional.
 - **Follow-up:** Keep real-runtime tests comprehensive enough to catch concurrency and auth paths,
   not just route initialization.
+
+### 2026-07-21 — Treat credential and SSE recovery as first-class UI behavior
+
+- **Feedback:** Initial guest-page tests did not expose stale temporary credentials, duplicate
+  pending request retries, repeated SSE frame parsing, or hook continuation after wake publication.
+- **Improvement:** Add focused recovery tests and independent review for temporary-credential
+  rejoin, complete SSE frame consumption, bounded reconnect, and `finally`-protected hook
+  continuation whenever a feature adds browser realtime state.
+- **Follow-up:** Exercise the custom guest wake topic in the pinned PocketBase runtime before
+  relying on it in deployment validation.
