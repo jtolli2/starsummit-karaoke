@@ -4,6 +4,21 @@
 
 ## Entries
 
+### 2026-07-21 — Tablet Operator Interface
+
+- Added the touch-first `/tablet` operator experience with constrained `tablet_admin` sign-in,
+  recoverable session/active-party restoration, explicit 12-hour party creation, QR join display,
+  sanitized queue/controller state, and accessible guarded queue actions.
+- Added tablet-only authoritative status and active-party recovery routes, a forward party-owner
+  migration, expiry/monotonic transition protection, and a controller handoff guard that requires
+  a fresh current-generation connected heartbeat before a queue entry can become playing.
+- The browser never receives PocketBase superuser, controller-device, or Lounge material; playback
+  remains an idempotent PocketBase command for the native controller. `/admin` was intentionally
+  not added because `/tablet` is the single constrained operator/display surface.
+- Passed focused Vue tests, backend protocol tests, production build, migration/hook syntax, and
+  independent security/concurrency review. Pinned local PocketBase integration is environment
+  gated; retained-staging live validation is recorded separately after delivery.
+
 ### 2026-07-20 — Fire tablet native companion diagnostic spike
 
 - Added a standalone API 28 Kotlin companion with a foreground service, Android Keystore-backed

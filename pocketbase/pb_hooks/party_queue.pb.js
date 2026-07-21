@@ -6,6 +6,7 @@ const REQUEST_GAP = 30 * 1000
 const JOIN_WINDOW = 60 * 1000
 const JOIN_LIMIT = 20
 const PARTY_REQUEST_LIMIT = 20
+const CONTROLLER_STATE_TTL = 90 * 1000
 const joinAttempts = Object.create(null)
 
 function info(c) { try { return c.requestInfo ? c.requestInfo() || {} : $apis.requestInfo(c) || {} } catch (_) { return {} } }
@@ -59,7 +60,46 @@ function requireGuest(c, input) {
 }
 function songView(q, song) { return { id: id(q), sequence: num(q, 'sequence'), status: str(q, 'status'), requestedAt: str(q, 'requested_at'), song: { id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') } } }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, random, code, now, future, str, num, set, id, json, songView, find, records, chooseNext }
+// Tablet-facing state is deliberately assembled here instead of exposing the
+// controller collections through PocketBase rules.  In particular, auth
+// emails/passwords, session records and command payloads never cross this API.
+function tabletControllerView(party) {
+  const deviceId = str(party, 'controller_device')
+  if (!deviceId) return { connected: false, connectionState: 'disconnected', device: null, state: null }
+  const device = find('controller_devices', 'id = {:id}', { id: deviceId })
+  if (!device || (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))) {
+    return { connected: false, connectionState: 'disconnected', device: null, state: null }
+  }
+  const generation = num(device, 'session_generation')
+  let session = null
+  try {
+    session = records('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, { device: deviceId, generation })
+      .find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
+  } catch (_) {}
+  let state = null
+  try { state = find('controller_state', 'device = {:device}', { device: deviceId }) } catch (_) {}
+  const stateGeneration = state && num(state, 'session_generation') === generation
+  const stateFresh = state && str(state, 'observed_at') && new Date(str(state, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
+  const connectionState = session ? (state && stateGeneration && stateFresh ? str(state, 'connection_state') || 'connecting' : 'disconnected') : 'disconnected'
+  const safeState = state && stateGeneration && stateFresh ? {
+    connectionState,
+    videoId: str(state, 'video_id') || null,
+    playerState: str(state, 'player_state') || 'unknown',
+    positionSeconds: Number.isFinite(Number(state.position_seconds)) ? Number(state.position_seconds) : (state.getFloat ? state.getFloat('position_seconds') : null),
+    durationSeconds: Number.isFinite(Number(state.duration_seconds)) ? Number(state.duration_seconds) : (state.getFloat ? state.getFloat('duration_seconds') : null),
+    lastCommandSequence: num(state, 'last_command_sequence'),
+    observedAt: str(state, 'observed_at') || null,
+  } : null
+  return {
+    connected: Boolean(session && safeState && connectionState === 'connected'),
+    connectionState,
+    device: { id: deviceId, name: str(device, 'device_name') || 'Controller', lastSeenAt: str(device, 'last_seen_at') || null },
+    sessionExpiresAt: session ? str(session, 'expires_at') : null,
+    state: safeState,
+  }
+}
+
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, random, code, now, future, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -108,7 +148,7 @@ routerAdd('POST', '/api/karaoke/parties', (c) => {
       let plain; let party
       for (let i = 0; i < 8; i++) { plain = code(); if (!find('karaoke_parties', 'code_hash = {:hash}', { hash: hash(plain) })) break }
       party = new Record(tx.findCollectionByNameOrId('karaoke_parties'))
-      set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'join_count', 0); tx.save(party)
+      set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0); tx.save(party)
       result = { id: id(party), code: plain, expiresAt: str(party, 'expires_at') }
     })
   } catch (_) { return json(c, 500, 'party_create_failed', 'Party could not be created') }
@@ -233,9 +273,41 @@ routerAdd('GET', '/api/karaoke/queue/next', (c) => {
   return c.json(200, { queue: songView(candidates[0], song) })
 })
 
+// Authoritative, sanitized snapshot for the tablet operator UI.  This is the
+// sole tablet read path for party/queue/controller state; direct collection
+// rules remain locked and no controller credentials or Lounge data are sent.
+routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, info, find, records, id, str, songView, tabletControllerView } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const partyId = info(c).query?.partyId
+  if (Array.isArray(partyId) ? !partyId[0] : !partyId) return json(c, 400, 'invalid_party', 'partyId is required')
+  const party = find('karaoke_parties', 'id = {:id}', { id: Array.isArray(partyId) ? partyId[0] : partyId })
+  if (!party) return json(c, 404, 'party_not_found', 'Party was not found')
+  const rows = records('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 200, { party: id(party) })
+  const queue = rows.map((q) => songView(q, $app.findRecordById('karaoke_songs', str(q, 'song'))))
+  return c.json(200, {
+    party: { id: id(party), status: str(party, 'status'), expiresAt: str(party, 'expires_at'), codeHint: str(party, 'code_hint'), joinCount: Number(party.join_count || 0) || (party.getInt ? party.getInt('join_count') : 0) },
+    queue,
+    controller: tabletControllerView(party),
+  })
+})
+
+// Reload recovery for a tablet account.  Party codes are intentionally not
+// recoverable from their stored hash, so this returns only the safe hint.
+routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, records, id, str } = globalThis.__partyQueue
+  const operator = auth(c)
+  if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const active = records('karaoke_parties', 'created_by = {:operator} && status = "active" && expires_at > {:now}', '-expires_at', 1, { operator: id(operator), now: now() })[0] || null
+  if (!active) return c.json(200, { party: null })
+  return c.json(200, { party: { id: id(active), codeHint: str(active, 'code_hint'), expiresAt: str(active, 'expires_at'), status: str(active, 'status') } })
+})
+
 routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, str, id, set, now, num, future } = globalThis.__partyQueue
+  const { auth, tablet, json, body, str, id, set, now, num, future, activeParty, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const allowed = { queued: ['playing', 'failed'], playing: ['completed', 'failed'] }
   if (!input.queueId || !allowed[input.from]?.includes(input.to)) return json(c, 422, 'invalid_transition', 'Queue transition is invalid')
@@ -243,9 +315,26 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
     let result
     $app.runInTransaction((tx) => {
       const queue = tx.findRecordById('karaoke_queue', input.queueId); if (!queue) throw new Error('queue_not_found')
+      const party = tx.findRecordById('karaoke_parties', str(queue, 'party'))
+      if (!activeParty(party)) throw new Error('party_expired')
       const current = str(queue, 'status'); if (current === input.to) { result = { id: id(queue), status: current, idempotent: true }; return }
       if (current !== input.from) throw new Error('stale_transition')
       if (input.to === 'playing') {
+        const deviceId = str(party, 'controller_device')
+        let device = null
+        try { device = deviceId ? tx.findRecordById('controller_devices', deviceId) : null } catch (_) {}
+        const revoked = device && (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))
+        const generation = device ? num(device, 'session_generation') : 0
+        let session = null; let controllerState = null
+        if (device && !revoked && generation > 0) {
+          try {
+            const sessions = tx.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: deviceId, generation })
+            session = sessions.find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
+            controllerState = tx.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: deviceId })
+          } catch (_) {}
+        }
+        const stateFresh = controllerState && str(controllerState, 'observed_at') && new Date(str(controllerState, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
+        if (!session || !controllerState || !stateFresh || num(controllerState, 'session_generation') !== generation || str(controllerState, 'connection_state') !== 'connected') throw new Error('controller_unavailable')
         let alreadyPlaying = null
         try { alreadyPlaying = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && status = "playing" && id != {:id}', { party: str(queue, 'party'), id: id(queue) }) } catch (_) {}
         if (alreadyPlaying) throw new Error('party_already_playing')
@@ -262,7 +351,7 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
       set(queue, 'status', input.to); if (input.to === 'playing') set(queue, 'started_at', now()); else { set(queue, 'completed_at', now()); set(queue, 'active_song_key', null) } if (input.to === 'failed') set(queue, 'failure_reason', String(input.failureReason || 'playback_failed').slice(0, 160)); tx.save(queue)
       if (input.to === 'playing') {
         const guest = tx.findRecordById('karaoke_guest_identities', str(queue, 'requester')); if (guest) { set(guest, 'last_served_at', now()); tx.save(guest) }
-        const party = tx.findRecordById('karaoke_parties', str(queue, 'party')); const deviceId = party && str(party, 'controller_device')
+        const deviceId = party && str(party, 'controller_device')
         if (deviceId) {
           const device = tx.findRecordById('controller_devices', deviceId); const song = tx.findRecordById('karaoke_songs', str(queue, 'song'))
           let session = null
@@ -280,5 +369,8 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
       result = { id: id(queue), status: input.to, idempotent: false }
     })
     return c.json(200, result)
-  } catch (error) { return json(c, error.message === 'queue_not_found' ? 404 : 409, error.message, 'Queue transition rejected') }
+  } catch (error) {
+    const status = error.message === 'queue_not_found' ? 404 : error.message === 'party_expired' ? 410 : 409
+    return json(c, status, error.message, 'Queue transition rejected')
+  }
 })

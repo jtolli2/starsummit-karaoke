@@ -41,6 +41,8 @@ All requests use the normal PocketBase auth bearer token. Device requests authen
 | `GET /api/karaoke/controllers/commands?sessionId=...&generation=...&after=...` | controller device | — | `{sessionId, generation, commands:[...]}` |
 | `POST /api/karaoke/controllers/commands/:id/ack` | controller device | `{sessionId, generation, status, errorCode?}` | sanitized command |
 | `PUT /api/karaoke/controllers/state` | controller device | `{sessionId, generation, connectionState, videoId?, playerState?, positionSeconds?, durationSeconds?, lastCommandSequence?}` | sanitized state |
+| `GET /api/karaoke/tablet/active` | `tablet_admin` | — | own active party recovery metadata or `null` |
+| `GET /api/karaoke/tablet/status?partyId=...` | `tablet_admin` | — | sanitized party, active queue, and controller state |
 
 Supported actions are `open_video` (`{videoId}`), `play`, `pause`, `seek` (`{seekSeconds}`), and
 `get_now_playing` (empty payload). YouTube IDs must be exactly 11 URL-safe characters. Seek values
@@ -69,6 +71,12 @@ PocketBase realtime is **Server-Sent Events (SSE)**, not WebSockets. The Android
 
 SSE notifications are hints only; reconnects and missed events are expected. A new session increments
 the device generation, making all requests from an older session stale.
+
+The tablet status route is the only browser read path for controller state. It never exposes
+controller credentials, session records, command payloads, or Lounge material. A controller is
+considered connected only when its current-generation session and `connected` state heartbeat are
+both fresh (90 seconds). Starting a queue entry atomically requires that same condition; otherwise
+the queue remains unchanged and returns `controller_unavailable`.
 
 ## Local checks
 

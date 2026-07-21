@@ -4,6 +4,16 @@
 
 ## Entries
 
+### 2026-07-21 — Make controller liveness a transactional precondition
+
+- **Feedback:** A nominal controller session plus a stale `connected` state could make an operator
+  start a song after the native companion had silently disappeared.
+- **Improvement:** Treat a bounded controller heartbeat as part of both the sanitized status model
+  and the same transaction that moves a queue entry to playing and creates its command. Test the
+  stale-state/no-mutation path independently.
+- **Follow-up:** Validate the heartbeat timeout against the retained staging controller without the
+  deferred Wi-Fi interruption test.
+
 ### 2026-07-19 — Clarify implementation security and routing boundaries
 
 - **Feedback:** The guidance left runtime ownership, browser admin credentials, guest queue writes, party access, and router generation ambiguous or contradictory.
