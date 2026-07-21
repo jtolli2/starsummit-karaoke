@@ -697,9 +697,14 @@ class ControllerProtocolTest {
   fun timedOutRefreshAcceptsOnlyObservationAfterDispatchMarker() {
     val target = PlaybackSnapshot(videoId = "WEuuVs4SrSA", positionSeconds = 30.0)
     val observed = DiagnosticsSnapshot(nowPlaying = target, playbackRevision = 8)
-    assertEquals(target, timedOutRefreshSnapshot(observed, commandRevision = 7))
-    assertEquals(null, timedOutRefreshSnapshot(observed, commandRevision = 8))
-    assertEquals(null, timedOutRefreshSnapshot(observed, commandRevision = null))
+    val correlation = CommandCorrelation()
+    assertEquals(null, correlation.accept(observed))
+    correlation.begin("cmd", "key", revision = 7)
+    assertEquals(target, correlation.accept(observed))
+    correlation.begin("cmd", "key", revision = 99)
+    assertEquals(target, correlation.accept(observed))
+    correlation.begin("next", "next-key", revision = 8)
+    assertEquals(null, correlation.accept(observed))
   }
 
   @Test
@@ -744,6 +749,54 @@ class ControllerProtocolTest {
       assertEquals(CommandResult.Duplicate, bridge.processCommand(processor, command, nowPlaying))
     }
     assertEquals(2, acknowledgements)
+  }
+
+  @Test
+  fun recreatedExecutorPreservesSameCommandCorrelationButResetsNewCommand() = runTest {
+    var acknowledgements = 0
+    var observed = DiagnosticsSnapshot()
+    val correlation = CommandCorrelation()
+    val progress = InMemoryProgressStore()
+    val bridge = PocketBaseControllerBridge(
+      basicApi(onAck = { acknowledgements++ }),
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    )
+    bridge.establish()
+    fun executor() = object : CommandExecutor {
+      override fun beginCommand(commandId: String, idempotencyKey: String) {
+        correlation.begin(commandId, idempotencyKey, observed.playbackRevision)
+      }
+      override suspend fun openVideo(videoId: String) {
+        observed = observed.copy(
+          nowPlaying = PlaybackSnapshot(videoId = videoId),
+          playbackRevision = observed.playbackRevision + 1,
+        )
+        throw IOException("response timeout")
+      }
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying() = correlation.accept(observed)
+        ?: throw IOException("uncorrelated state")
+    }
+    val command = ControllerCommand("open", 1, "open-key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = future)
+    var firstAmbiguous = false
+    try {
+      bridge.processCommand(ControllerCommandProcessor(executor(), progress, { future - 1 }), command, PlaybackSnapshot())
+    } catch (_: AmbiguousCommandException) {
+      firstAmbiguous = true
+    }
+    assertTrue(firstAmbiguous)
+    assertEquals(CommandResult.Duplicate, bridge.processCommand(ControllerCommandProcessor(executor(), progress, { future - 1 }), command, observed.nowPlaying))
+    assertEquals(1, acknowledgements)
+
+    correlation.begin("new", "new-key", observed.playbackRevision)
+    assertEquals(null, correlation.accept(observed))
+    assertEquals(null, CommandCorrelation().accept(observed))
   }
 
   @Test

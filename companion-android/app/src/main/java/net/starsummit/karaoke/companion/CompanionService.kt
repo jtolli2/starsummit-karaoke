@@ -41,7 +41,7 @@ class CompanionService : Service() {
   private var session: LoungeSession? = null
   private var sessionGeneration = 0L
   private var reducer = LoungeEventReducer()
-  private var commandStartRevision: Long? = null
+  private val commandCorrelation = CommandCorrelation()
 
   override fun onCreate() {
     super.onCreate()
@@ -161,16 +161,16 @@ class CompanionService : Service() {
   }
 
   private inner class LoungeCommandExecutor : CommandExecutor {
-    private fun markCommandStart() {
-      commandStartRevision = diagnosticsStore.snapshot.value.playbackRevision
+    override fun beginCommand(commandId: String, idempotencyKey: String) {
+      commandCorrelation.begin(commandId, idempotencyKey, diagnosticsStore.snapshot.value.playbackRevision)
     }
 
     private suspend fun active(): LoungeSession = session ?: throw IOException("Lounge unavailable")
-    override suspend fun openVideo(videoId: String) { markCommandStart(); active().setPlaylist(videoId) }
-    override suspend fun play() { markCommandStart(); active().play() }
-    override suspend fun pause() { markCommandStart(); active().pause() }
-    override suspend fun seek(seconds: Double) { markCommandStart(); active().seekTo(seconds) }
-    override suspend fun getNowPlaying() { markCommandStart(); requestNowPlaying() }
+    override suspend fun openVideo(videoId: String) { active().setPlaylist(videoId) }
+    override suspend fun play() { active().play() }
+    override suspend fun pause() { active().pause() }
+    override suspend fun seek(seconds: Double) { active().seekTo(seconds) }
+    override suspend fun getNowPlaying() { requestNowPlaying() }
     private suspend fun requestNowPlaying() { active().getNowPlaying() }
     override suspend fun refreshNowPlaying(): PlaybackSnapshot {
       val revision = diagnosticsStore.snapshot.value.playbackRevision
@@ -181,7 +181,7 @@ class CompanionService : Service() {
         }
       } catch (_: TimeoutCancellationException) {
         val latest = diagnosticsStore.snapshot.value
-        timedOutRefreshSnapshot(latest, commandStartRevision)
+        commandCorrelation.accept(latest)
           ?: throw IOException("Lounge now-playing refresh timed out")
       }
     }
@@ -323,5 +323,20 @@ class CompanionService : Service() {
   }
 }
 
-internal fun timedOutRefreshSnapshot(snapshot: DiagnosticsSnapshot, commandRevision: Long?): PlaybackSnapshot? =
-  snapshot.nowPlaying.takeIf { commandRevision != null && snapshot.playbackRevision > commandRevision }
+internal class CommandCorrelation {
+  private var identity: Pair<String, String>? = null
+  private var dispatchRevision: Long? = null
+
+  fun begin(commandId: String, idempotencyKey: String, revision: Long) {
+    val next = commandId to idempotencyKey
+    if (identity != next) {
+      identity = next
+      dispatchRevision = revision
+    }
+  }
+
+  fun accept(snapshot: DiagnosticsSnapshot): PlaybackSnapshot? {
+    val marker = dispatchRevision ?: return null
+    return snapshot.nowPlaying.takeIf { snapshot.playbackRevision > marker }
+  }
+}

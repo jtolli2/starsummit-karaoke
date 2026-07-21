@@ -122,3 +122,14 @@ Complete
   a success ACK. The focused suites pass 37 controller and 19 Lounge tests, debug APK assembly passes,
   and independent review found no remaining issue. Delivery and renewed live validation require
   separate approval.
+- Signed `a1b9b53` deployed successfully and the matching APK resumed the existing device. Live
+  sequences 18 (`get_now_playing`), 20 (`pause`), and 22 (`play`) succeeded, while `open_video` 19
+  and paused `seek` 21 were applied by SmartTube but expired without ACKs. Final sanitized state
+  reported `WEuuVs4SrSA` playing near 34 seconds, proving both parameterized intents converged.
+  Investigation found that same-command replay replaced its original dispatch revision before
+  redelivery reconciliation.
+- The next local repair scopes correlation by command ID and idempotency key. Recreated executors and
+  retries of the same command retain the original revision; a different command installs a fresh
+  marker, and process restart has no marker and cannot trust cached state. The exact suites pass 38
+  controller and 19 Lounge tests, debug APK assembly passes, and independent review approves the
+  lifecycle and false-ACK behavior. Delivery requires fresh approval.

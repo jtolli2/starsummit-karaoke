@@ -28,6 +28,7 @@ import kotlin.math.abs
 private const val REALTIME_CLOSED_EVENT = "__PB_STREAM_CLOSED__"
 
 interface CommandExecutor {
+  fun beginCommand(commandId: String, idempotencyKey: String) = Unit
   suspend fun openVideo(videoId: String)
   suspend fun play()
   suspend fun pause()
@@ -98,6 +99,7 @@ class ControllerCommandProcessor(
     if (command.sessionId != null && command.sessionId != session.id) return CommandResult.Stale
     if (command.generation != null && command.generation != session.generation) return CommandResult.Stale
     if (command.expiresAtEpochMs <= now()) return CommandResult.Expired
+    executor.beginCommand(command.id, command.idempotencyKey)
     if (progress.sessionId == session.id && progress.generation == session.generation && command.sequence <= progress.lastCommandSequence) {
       return reconcileAndMaybeReplay(command, session, progress)
     }
