@@ -121,6 +121,10 @@ class LoungeProtocolTest {
     assertEquals("rpc", url.queryParameter("RID"))
     assertEquals("0", url.queryParameter("CI"))
     assertEquals("xmlhttp", url.queryParameter("TYPE"))
+    val commandUrl = LoungeRequestShape.sessionUrl(pairing, "Companion", "SID", "gsession", 105, "2", false).toHttpUrl()
+    assertEquals("0", commandUrl.queryParameter("CI"))
+    assertEquals("bind", commandUrl.queryParameter("TYPE"))
+    assertEquals("1", commandUrl.queryParameter("t"))
     assertEquals("token", url.queryParameter("loungeIdToken"))
   }
 
@@ -161,6 +165,10 @@ class LoungeProtocolTest {
     assertEquals("", command.form["req0_listId"])
     assertEquals("-1", command.form["req0_currentIndex"])
     assertEquals("0", command.form["req0_currentTime"])
+    assertEquals("false", command.form["req0_audioOnly"])
+    assertEquals("", command.form["req0_params"])
+    assertEquals("", command.form["req0_playerParams"])
+    assertEquals("true", command.form["req0_prioritizeMobileSenderPlaybackStateOnConnection"])
     session.close()
   }
 

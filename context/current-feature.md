@@ -144,3 +144,12 @@ Complete
   suites pass 43 controller and 19 Lounge tests, the stalled-body cancellation test passes three fresh
   isolated runs, debug APK assembly passes, and independent review approves the result. Delivery and
   renewed live validation require fresh approval.
+- Signed `b98fe15` deployed successfully and its APK resumed generation 2, but actual transition
+  commands 30 and 31 and `seek` 33 still expired while `get_now_playing` 29, `pause` 32, and `play`
+  34 succeeded. Sanitized state remained `WEuuVs4SrSA` near 152 seconds, isolating the remaining
+  defect below controller reconciliation in the Lounge command wire shape.
+- Maintained Lounge sender implementations include `CI=0`, `TYPE=bind`, and `t=1` on command POSTs;
+  the companion omitted them. The next local repair adds those command-only query fields and the
+  complete `setPlaylist` sender form while leaving subscription polling, sender identity, and token
+  placement unchanged. The exact suites pass 43 controller and 19 Lounge tests, debug assembly
+  passes, and independent review approves the protocol shape. Delivery requires fresh approval.

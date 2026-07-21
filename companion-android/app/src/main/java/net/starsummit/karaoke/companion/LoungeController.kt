@@ -218,7 +218,11 @@ internal object LoungeRequestShape {
       .addQueryParameter("VER", "8")
       .addQueryParameter("v", "2")
       .addQueryParameter("RID", requestId)
-    if (subscribe) url.addQueryParameter("CI", "0").addQueryParameter("TYPE", "xmlhttp")
+    if (subscribe) {
+      url.addQueryParameter("CI", "0").addQueryParameter("TYPE", "xmlhttp")
+    } else {
+      url.addQueryParameter("CI", "0").addQueryParameter("TYPE", "bind").addQueryParameter("t", "1")
+    }
     return url.build().toString()
   }
 }
@@ -304,6 +308,10 @@ private class HttpLoungeSession(
         "req0_listId" to "",
         "req0_currentIndex" to "-1",
         "req0_currentTime" to "0",
+        "req0_audioOnly" to "false",
+        "req0_params" to "",
+        "req0_playerParams" to "",
+        "req0_prioritizeMobileSenderPlaybackStateOnConnection" to "true",
       ),
     )
   }
