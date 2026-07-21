@@ -29,6 +29,8 @@ test('party lifecycle authorization and expiry on PocketBase 0.39.7', { skip: !p
   assert.equal((await call('/api/karaoke/parties/queue', 'GET', undefined, joinA.json.credential)).status, 200)
   const songs = await Promise.all(['dQw4w9WgXcQ', '9bZkp7q19f0', 'J---aiyznGQ'].map((youtube_id, i) => call('/api/collections/karaoke_songs/records', 'POST', { youtube_id, title: `Song ${i}`, artist: 'Test', eligible: true }, su.json.token)))
   songs.forEach((s) => assert.equal(s.status, 200, JSON.stringify(s)))
+  const ineligible = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'Zi_XLOBDo_Y', title: 'Unapproved song', artist: 'Test', eligible: false }, su.json.token)
+  assert.equal(ineligible.status, 200, JSON.stringify(ineligible))
   const grant = await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 }, su.json.token); assert.equal(grant.status, 201)
   const enrolled = await call('/api/karaoke/controllers/enroll', 'POST', { token: grant.json.token, deviceName: 'queue tablet' }); assert.equal(enrolled.status, 201)
   assert.equal((await call(`/api/collections/karaoke_parties/records/${created.json.id}`, 'PATCH', { controller_device: enrolled.json.deviceId }, su.json.token)).status, 200)
