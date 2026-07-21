@@ -67,3 +67,10 @@ Complete
 - Final validation passed: PocketBase syntax checks; nine pure backend contracts; real PocketBase
   0.39.7 controller and party integration harnesses using temporary data; `bun test:unit --run`;
   `bun run build`; diff whitespace check; and independent final re-review with no P0/P1 findings.
+- Staging deployment evidence (2026-07-21): retained Coolify application `starsummit-pocketbase-test`
+  is healthy at signed commit `972551f` on its existing persistent volume. TLS, `/api/health`, and
+  SSE passed; party lifecycle access rules, expiry, temporary guests, sanitized queue reads,
+  eligibility, duplicate/rate/race handling, fair rotation, idempotent and single-playing
+  transitions, and controller `open_video` active-session gating were exercised live. Isolated
+  `live-validation-20260721` records remain for later cleanup; no real Fire-tablet enrollment was
+  modified and no Wi-Fi interruption was performed.
