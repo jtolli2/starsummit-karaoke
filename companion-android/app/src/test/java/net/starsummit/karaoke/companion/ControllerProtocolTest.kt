@@ -661,6 +661,92 @@ class ControllerProtocolTest {
   }
 
   @Test
+  fun ambiguousOpenAndSeekRedeliveryReconcilesFromLatestState() = runTest {
+    val targets = listOf(
+      ControllerCommand(
+        "open", 1, "open-key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = future,
+      ),
+      ControllerCommand(
+        "seek", 2, "seek-key", ControllerAction.SEEK, seekSeconds = 30.0, expiresAtEpochMs = future,
+      ),
+    )
+    var nowPlaying = PlaybackSnapshot()
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) {
+        nowPlaying = PlaybackSnapshot(videoId = videoId)
+        throw IOException("response timeout after open")
+      }
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) {
+        nowPlaying = nowPlaying.copy(positionSeconds = seconds)
+        throw IOException("response timeout after seek")
+      }
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying() = nowPlaying
+    }
+    for (command in targets) {
+      val progress = InMemoryProgressStore()
+      val processor = ControllerCommandProcessor(executor, progress, { future - 1 })
+      assertEquals(CommandResult.TransientFailure("IOException"), processor.process(command, session, PlaybackSnapshot()))
+      assertEquals(CommandResult.Duplicate, processor.process(command, session, nowPlaying))
+    }
+  }
+
+  @Test
+  fun timedOutRefreshAcceptsOnlyObservationAfterDispatchMarker() {
+    val target = PlaybackSnapshot(videoId = "WEuuVs4SrSA", positionSeconds = 30.0)
+    val observed = DiagnosticsSnapshot(nowPlaying = target, playbackRevision = 8)
+    assertEquals(target, timedOutRefreshSnapshot(observed, commandRevision = 7))
+    assertEquals(null, timedOutRefreshSnapshot(observed, commandRevision = 8))
+    assertEquals(null, timedOutRefreshSnapshot(observed, commandRevision = null))
+  }
+
+  @Test
+  fun bridgeAcksCorrelatedOpenAndSeekAfterAmbiguousSends() = runTest {
+    var acknowledgements = 0
+    var nowPlaying = PlaybackSnapshot()
+    val bridge = PocketBaseControllerBridge(
+      basicApi(onAck = { acknowledgements++ }),
+      connectingRealtime(),
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    )
+    bridge.establish()
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) {
+        nowPlaying = PlaybackSnapshot(videoId = videoId)
+        throw IOException("open response timeout")
+      }
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) {
+        nowPlaying = nowPlaying.copy(positionSeconds = seconds)
+        throw IOException("seek response timeout")
+      }
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying() = nowPlaying
+    }
+    val processor = ControllerCommandProcessor(executor, InMemoryProgressStore(), { future - 1 })
+    val commands = listOf(
+      ControllerCommand("open", 1, "open-key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = future),
+      ControllerCommand("seek", 2, "seek-key", ControllerAction.SEEK, seekSeconds = 30.0, expiresAtEpochMs = future),
+    )
+    for (command in commands) {
+      var ambiguous = false
+      try {
+        bridge.processCommand(processor, command, PlaybackSnapshot())
+      } catch (_: AmbiguousCommandException) {
+        ambiguous = true
+      }
+      assertTrue(ambiguous)
+      assertEquals(CommandResult.Duplicate, bridge.processCommand(processor, command, nowPlaying))
+    }
+    assertEquals(2, acknowledgements)
+  }
+
+  @Test
   fun cachedConvergedStateWithoutFreshEventIsNotAcknowledged() = runTest {
     var acknowledgements = 0
     val progress = InMemoryProgressStore(ControllerProgress("session", 4, 0, "cmd", "key"))

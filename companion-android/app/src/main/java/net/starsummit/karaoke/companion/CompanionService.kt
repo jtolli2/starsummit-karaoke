@@ -41,6 +41,7 @@ class CompanionService : Service() {
   private var session: LoungeSession? = null
   private var sessionGeneration = 0L
   private var reducer = LoungeEventReducer()
+  private var commandStartRevision: Long? = null
 
   override fun onCreate() {
     super.onCreate()
@@ -160,21 +161,28 @@ class CompanionService : Service() {
   }
 
   private inner class LoungeCommandExecutor : CommandExecutor {
+    private fun markCommandStart() {
+      commandStartRevision = diagnosticsStore.snapshot.value.playbackRevision
+    }
+
     private suspend fun active(): LoungeSession = session ?: throw IOException("Lounge unavailable")
-    override suspend fun openVideo(videoId: String) { active().setPlaylist(videoId) }
-    override suspend fun play() { active().play() }
-    override suspend fun pause() { active().pause() }
-    override suspend fun seek(seconds: Double) { active().seekTo(seconds) }
-    override suspend fun getNowPlaying() { active().getNowPlaying() }
+    override suspend fun openVideo(videoId: String) { markCommandStart(); active().setPlaylist(videoId) }
+    override suspend fun play() { markCommandStart(); active().play() }
+    override suspend fun pause() { markCommandStart(); active().pause() }
+    override suspend fun seek(seconds: Double) { markCommandStart(); active().seekTo(seconds) }
+    override suspend fun getNowPlaying() { markCommandStart(); requestNowPlaying() }
+    private suspend fun requestNowPlaying() { active().getNowPlaying() }
     override suspend fun refreshNowPlaying(): PlaybackSnapshot {
       val revision = diagnosticsStore.snapshot.value.playbackRevision
-      active().getNowPlaying()
+      requestNowPlaying()
       return try {
         withTimeout(CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS) {
           diagnosticsStore.snapshot.first { it.playbackRevision > revision }.nowPlaying
         }
       } catch (_: TimeoutCancellationException) {
-        throw IOException("Lounge now-playing refresh timed out")
+        val latest = diagnosticsStore.snapshot.value
+        timedOutRefreshSnapshot(latest, commandStartRevision)
+          ?: throw IOException("Lounge now-playing refresh timed out")
       }
     }
   }
@@ -314,3 +322,6 @@ class CompanionService : Service() {
     const val CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS = 3_000L
   }
 }
+
+internal fun timedOutRefreshSnapshot(snapshot: DiagnosticsSnapshot, commandRevision: Long?): PlaybackSnapshot? =
+  snapshot.nowPlaying.takeIf { commandRevision != null && snapshot.playbackRevision > commandRevision }

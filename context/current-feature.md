@@ -109,3 +109,16 @@ Complete
   connected and playing. Parameterized `open_video` (6) and `seek` to 30 seconds (9) reached the
   companion but did not converge through Lounge before their 30-second expiries; PocketBase marked
   both failed with `expired` and state remained near 24.7 seconds. No Wi-Fi interruption was run.
+- Signed `a571658` was pinned and deployed to the existing healthy Coolify application without
+  changing its persistent storage, and the matching APK resumed the enrolled generation-2 device.
+  Live PocketBase sequences 13 (`get_now_playing`), 15 (`pause`), and 17 (`play`) reached terminal
+  success ACKs. Sequence 14 used the valid video ID `WEuuVs4SrSA`; it expired without an ACK, but
+  sanitized state subsequently reported that exact video playing, proving SmartTube applied the
+  command while the Lounge response remained ambiguous. Sequence 16 (`seek` to 30 seconds) likewise
+  expired without an ACK.
+- The follow-up local repair correlates ambiguous delivery with the playback revision captured before
+  dispatch. That marker survives controller-loop reconnects, while timeout reconciliation accepts
+  only a newer authoritative playback observation; absent or pre-dispatch cached state cannot produce
+  a success ACK. The focused suites pass 37 controller and 19 Lounge tests, debug APK assembly passes,
+  and independent review found no remaining issue. Delivery and renewed live validation require
+  separate approval.
