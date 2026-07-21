@@ -173,3 +173,12 @@ Complete
   Fire OS suppressed the app's `DEBUG`-priority telemetry in every log buffer. The local diagnostic
   now emits the same redacted records at `INFO`; no fields or transport behavior changed. The exact
   suites and debug assembly pass. Delivery is required to capture the outcome.
+- Signed `1560206` deployed successfully. Redacted Lounge telemetry for sequences 51–53 contained
+  only two successful `getNowPlaying` transports (`RID=2`/`ofs=1` and `RID=3`/`ofs=2`); neither
+  failed `open_video` command reached Lounge at all. This moves the remaining defect upstream to
+  PocketBase realtime notification or authoritative refetch/processing.
+- The next local diagnostic logs only safe controller lifecycle facts at `INFO`: connection attempts,
+  subscription acceptance, sanitized event names, refetch command counts, and an explicit allowlist
+  of error categories. Unknown strings map to `ControllerFailure`; callbacks are asynchronous and
+  noninterfering. The exact suites pass 45 controller and 21 Lounge tests, debug assembly passes, and
+  independent review approves the redaction boundary. Delivery is required to capture the lifecycle.

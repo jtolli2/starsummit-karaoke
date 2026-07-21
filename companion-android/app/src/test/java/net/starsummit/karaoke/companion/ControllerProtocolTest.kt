@@ -59,6 +59,56 @@ class ControllerProtocolTest {
   }
 
   @Test
+  fun controllerLifecycleLoggerEmitsOnlySafeFacts() {
+    val logs = mutableListOf<String>()
+    val logged = CountDownLatch(7)
+    val listener = ControllerLifecycleLogger { message ->
+      logs += message
+      logged.countDown()
+    }.listener()
+
+    listener.attemptStarted()
+    listener.established()
+    listener.initialRefetch(3)
+    listener.subscriptionAccepted()
+    listener.realtimeEvent("create token=secret payload=private")
+    listener.refetchSucceeded(2)
+    listener.refetchFailed("ControllerHttp503")
+
+    assertTrue(logged.await(1, TimeUnit.SECONDS))
+    assertEquals(
+      listOf(
+        "attempt count=1",
+        "established count=1",
+        "initial_refetch command_count=3",
+        "subscription accepted=true",
+        "realtime_event name=event:unknown",
+        "refetch command_count=2",
+        "refetch_error code=ControllerHttp503",
+      ),
+      logs,
+    )
+    val text = logs.joinToString(" ")
+    assertFalse(text.contains("secret"))
+    assertFalse(text.contains("private"))
+    assertEquals("ControllerFailure", sanitizeControllerDiagnosticError("token=secret payload=private"))
+    assertEquals("ControllerFailure", sanitizeControllerDiagnosticError("secretToken123"))
+  }
+
+  @Test
+  fun controllerLifecycleLoggerSwallowsSinkFailures() {
+    val invoked = CountDownLatch(1)
+    val listener = ControllerLifecycleLogger {
+      invoked.countDown()
+      error("sink failure")
+    }.listener()
+
+    listener.attemptStarted()
+
+    assertTrue(invoked.await(1, TimeUnit.SECONDS))
+  }
+
+  @Test
   fun controllerAttemptStartClearsPriorAttemptEvidence() {
     val diagnostics = DiagnosticsStore()
     diagnostics.controllerAttemptStarted()

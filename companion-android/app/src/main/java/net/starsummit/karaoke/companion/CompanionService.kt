@@ -42,6 +42,7 @@ class CompanionService : Service() {
   private var sessionGeneration = 0L
   private var reducer = LoungeEventReducer()
   private val commandCorrelation = CommandCorrelation()
+  private val controllerLifecycleLogger = ControllerLifecycleLogger()
 
   override fun onCreate() {
     super.onCreate()
@@ -93,6 +94,7 @@ class CompanionService : Service() {
       var attempt = 0
       while (isActive) {
         val credentials = controllerStore.loadCredentials() ?: return@launch
+        val lifecycleDiagnostics = controllerLifecycleLogger.listener()
         val bridge = PocketBaseControllerBridge(
           api = controllerApi,
           realtime = OkHttpControllerRealtimeTransport(),
@@ -100,13 +102,34 @@ class CompanionService : Service() {
           credentials = credentials,
           sessionStore = ControllerStoreSessionAdapter(controllerStore),
           diagnostics = object : ControllerDiagnosticsListener {
-            override fun attemptStarted() = diagnosticsStore.controllerAttemptStarted()
-            override fun established() = diagnosticsStore.controllerEstablished()
-            override fun initialRefetch(commandCount: Int) = diagnosticsStore.controllerInitialRefetch(commandCount)
-            override fun realtimeEvent(name: String) = diagnosticsStore.controllerRealtimeEvent(name)
-            override fun refetchSucceeded(commandCount: Int) = diagnosticsStore.controllerRefetchSucceeded(commandCount)
-            override fun refetchFailed(errorCode: String) = diagnosticsStore.controllerRefetchFailed(errorCode)
-            override fun subscriptionAccepted() = diagnosticsStore.controllerSubscriptionAccepted()
+            override fun attemptStarted() {
+              diagnosticsStore.controllerAttemptStarted()
+              lifecycleDiagnostics.attemptStarted()
+            }
+            override fun established() {
+              diagnosticsStore.controllerEstablished()
+              lifecycleDiagnostics.established()
+            }
+            override fun initialRefetch(commandCount: Int) {
+              diagnosticsStore.controllerInitialRefetch(commandCount)
+              lifecycleDiagnostics.initialRefetch(commandCount)
+            }
+            override fun realtimeEvent(name: String) {
+              diagnosticsStore.controllerRealtimeEvent(name)
+              lifecycleDiagnostics.realtimeEvent(name)
+            }
+            override fun refetchSucceeded(commandCount: Int) {
+              diagnosticsStore.controllerRefetchSucceeded(commandCount)
+              lifecycleDiagnostics.refetchSucceeded(commandCount)
+            }
+            override fun refetchFailed(errorCode: String) {
+              diagnosticsStore.controllerRefetchFailed(errorCode)
+              lifecycleDiagnostics.refetchFailed(errorCode)
+            }
+            override fun subscriptionAccepted() {
+              diagnosticsStore.controllerSubscriptionAccepted()
+              lifecycleDiagnostics.subscriptionAccepted()
+            }
           },
         )
         controllerBridge = bridge
