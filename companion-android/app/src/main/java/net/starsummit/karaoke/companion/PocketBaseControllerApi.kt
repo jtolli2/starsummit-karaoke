@@ -1,15 +1,21 @@
 package net.starsummit.karaoke.companion
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 interface ControllerApi {
   suspend fun enroll(baseUrl: String, grant: String, deviceName: String): ControllerCredentials
@@ -44,6 +50,8 @@ class PocketBaseControllerApi(
     .build(),
   private val now: () -> Long = { System.currentTimeMillis() },
 ) : ControllerApi {
+  private data class HttpResponse(val code: Int, val body: String)
+
   override suspend fun enroll(baseUrl: String, grant: String, deviceName: String): ControllerCredentials = withContext(Dispatchers.IO) {
     val response = request(baseUrl, PocketBaseControllerPaths.ENROLL, null, JSONObject().put("token", grant).put("deviceName", deviceName), "POST")
     val json = JSONObject(response)
@@ -110,16 +118,33 @@ class PocketBaseControllerApi(
   private fun authBase(auth: ControllerAuth): String = auth.baseUrl.takeIf { it.startsWith("https://") }
     ?: throw IOException("controller API base URL unavailable")
 
-  private fun request(baseOrUrl: String, path: String?, token: String?, body: JSONObject?, method: String): String {
+  private suspend fun request(baseOrUrl: String, path: String?, token: String?, body: JSONObject?, method: String): String {
     val url = if (path == null) baseOrUrl else baseOrUrl.trimEnd('/') + path
     if (!url.startsWith("https://")) throw IOException("PocketBase controller requires HTTPS")
     val builder = Request.Builder().url(url).header("Accept", "application/json")
     token?.let { builder.header("Authorization", "Bearer $it") }
     body?.let { builder.method(method, it.toString().toRequestBody(JSON)) } ?: builder.method(method, null)
-    client.newCall(builder.build()).execute().use { response ->
-      if (!response.isSuccessful) throw ControllerHttpException(response.code)
-      return response.body?.string().orEmpty()
-    }
+    val response = executeCall(client.newCall(builder.build()))
+    if (response.code !in 200..299) throw ControllerHttpException(response.code)
+    return response.body
+  }
+
+  private suspend fun executeCall(call: Call): HttpResponse = suspendCancellableCoroutine { continuation ->
+    continuation.invokeOnCancellation { call.cancel() }
+    call.enqueue(object : Callback {
+      override fun onFailure(call: Call, error: IOException) {
+        runCatching { continuation.resumeWithException(error) }
+      }
+
+      override fun onResponse(call: Call, response: Response) {
+        runCatching {
+          response.use {
+            val body = it.body?.string().orEmpty()
+            continuation.resume(HttpResponse(it.code, body))
+          }
+        }.onFailure { response.close(); runCatching { continuation.resumeWithException(it) } }
+      }
+    })
   }
 
   private fun encode(value: String) = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())

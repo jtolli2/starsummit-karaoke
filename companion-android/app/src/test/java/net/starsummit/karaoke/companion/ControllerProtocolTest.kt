@@ -8,6 +8,14 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -18,6 +26,13 @@ import java.io.IOException
 import java.io.Reader
 import java.io.StringReader
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import okio.Buffer
+import okio.BufferedSource
+import okio.Source
+import okio.Timeout
+import okio.buffer
 
 class ControllerProtocolTest {
   @Test
@@ -619,7 +634,7 @@ class ControllerProtocolTest {
   }
 
   @Test
-  fun ambiguousSendIsNotAckedThenConvergedRedeliverySucceeds() = runTest {
+  fun ambiguousSendReconcilesImmediatelyAndAcksOnce() = runTest {
     var acknowledgements = 0
     var playCalls = 0
     var nowPlaying = PlaybackSnapshot()
@@ -647,17 +662,244 @@ class ControllerProtocolTest {
       override suspend fun refreshNowPlaying() = nowPlaying
     }
     val processor = ControllerCommandProcessor(executor, progress, { future - 1 })
+    assertEquals(CommandResult.Duplicate, bridge.processCommand(processor, command, PlaybackSnapshot()))
+    assertEquals(1, acknowledgements)
+    assertEquals(null, progress.load().inFlightId)
+    assertEquals(1, playCalls)
+  }
+
+  @Test
+  fun ambiguousSendWithUnconvergedRefreshRemainsUnacked() = runTest {
+    var acknowledgements = 0
+    val progress = InMemoryProgressStore()
+    val bridge = PocketBaseControllerBridge(
+      basicApi(onAck = { acknowledgements++ }),
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    )
+    bridge.establish()
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = throw IOException("send timeout")
+      override suspend fun play() = throw IOException("send timeout")
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying() = throw IOException("refresh unavailable")
+    }
+    val processor = ControllerCommandProcessor(executor, progress, { future - 1 })
+    val command = ControllerCommand("cmd", 1, "key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = future)
     try {
       bridge.processCommand(processor, command, PlaybackSnapshot())
       throw AssertionError("expected ambiguous failure")
     } catch (_: AmbiguousCommandException) {
-      // Controller loop reconnects/refetches; no terminal acknowledgement was sent.
+      // No ACK while the applied state is unconfirmed.
     }
     assertEquals(0, acknowledgements)
+  }
+
+  @Test
+  fun ambiguousRefreshExpiryCannotAckLateState() = runTest {
+    var acknowledgements = 0
+    val clock = System.currentTimeMillis()
+    val progress = InMemoryProgressStore()
+    val bridge = PocketBaseControllerBridge(
+      basicApi(onAck = { acknowledgements++ }),
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { clock },
+    )
+    bridge.establish()
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = throw IOException("send timeout")
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying(): PlaybackSnapshot {
+        delay(100)
+        return PlaybackSnapshot(videoId = "WEuuVs4SrSA")
+      }
+    }
+    val processor = ControllerCommandProcessor(executor, progress, { clock })
+    val command = ControllerCommand("cmd", 1, "key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = clock + 25)
+    try {
+      bridge.processCommand(processor, command, PlaybackSnapshot())
+      throw AssertionError("expected ambiguous expiry")
+    } catch (_: AmbiguousCommandException) {
+      // Expiry prevents a late ACK even if a refresh eventually returns the target.
+    }
+    assertEquals(0, acknowledgements)
+  }
+
+  @Test
+  fun acknowledgementTimeoutRestoresInFlightProgress() = runTest {
+    val clock = System.currentTimeMillis()
+    var acknowledgements = 0
+    val progress = InMemoryProgressStore(ControllerProgress("prior", 2, 4))
+    val delegate = basicApi()
+    val api = object : ControllerApi by delegate {
+      override suspend fun acknowledge(
+        auth: ControllerAuth,
+        session: ControllerSession,
+        command: ControllerCommand,
+        success: Boolean,
+        errorCode: String?,
+      ) {
+        delay(100)
+        acknowledgements++
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { clock },
+    )
+    bridge.establish()
+    val command = ControllerCommand("cmd", 5, "key", ControllerAction.PLAY, expiresAtEpochMs = clock + 25)
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = Unit
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+    }
+    try {
+      bridge.processCommand(ControllerCommandProcessor(executor, progress, { clock }), command, PlaybackSnapshot())
+      throw AssertionError("expected acknowledgement timeout")
+    } catch (_: ControllerAcknowledgementException) {
+      // Reconnect/refetch must recover the command using restored in-flight identity.
+    }
+    assertEquals(0, acknowledgements)
+    assertEquals(4, progress.load().lastCommandSequence)
     assertEquals("cmd", progress.load().inFlightId)
-    assertEquals(CommandResult.Duplicate, bridge.processCommand(processor, command, PlaybackSnapshot()))
-    assertEquals(1, acknowledgements)
-    assertEquals(1, playCalls)
+  }
+
+  @Test
+  fun acknowledgementHttpCancellationCancelsCallAndRestoresInFlightProgress() = runBlocking {
+    val bodyRead = CountDownLatch(1)
+    val cancelled = CountDownLatch(1)
+    val client = OkHttpClient.Builder()
+      .addInterceptor(Interceptor { chain ->
+        val call = chain.call()
+        val body = object : ResponseBody() {
+          override fun contentType() = "application/json".toMediaType()
+          override fun contentLength() = -1L
+          override fun source(): BufferedSource = object : Source {
+            override fun read(sink: Buffer, byteCount: Long): Long {
+              bodyRead.countDown()
+              while (!call.isCanceled()) {
+                try {
+                  Thread.sleep(1)
+                } catch (_: InterruptedException) {
+                  // Re-check cancellation below.
+                }
+              }
+              cancelled.countDown()
+              throw IOException("response body cancelled")
+            }
+
+            override fun timeout() = Timeout.NONE
+            override fun close() = Unit
+          }.buffer()
+        }
+        okhttp3.Response.Builder()
+          .request(chain.request())
+          .protocol(Protocol.HTTP_1_1)
+          .code(200)
+          .message("OK")
+          .body(body)
+          .build()
+      })
+      .build()
+    val delegate = basicApi()
+    val api = object : ControllerApi by delegate {
+      val http = PocketBaseControllerApi(client)
+
+      override suspend fun acknowledge(
+        auth: ControllerAuth,
+        session: ControllerSession,
+        command: ControllerCommand,
+        success: Boolean,
+        errorCode: String?,
+      ) = http.acknowledge(auth, session, command, success, errorCode)
+    }
+    val clock = System.currentTimeMillis()
+    val progress = InMemoryProgressStore(ControllerProgress("prior", 2, 4))
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { clock },
+    )
+    bridge.establish()
+    val command = ControllerCommand("cmd", 5, "key", ControllerAction.PLAY, expiresAtEpochMs = clock + 250)
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = Unit
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+    }
+    try {
+      bridge.processCommand(ControllerCommandProcessor(executor, progress, { clock }), command, PlaybackSnapshot())
+      throw AssertionError("expected acknowledgement timeout")
+    } catch (_: ControllerAcknowledgementException) {
+      // Cancellation must reach the underlying OkHttp call before the in-flight marker is restored.
+    }
+    assertTrue(bodyRead.await(1, TimeUnit.SECONDS))
+    assertTrue(cancelled.await(1, TimeUnit.SECONDS))
+    assertEquals(4, progress.load().lastCommandSequence)
+    assertEquals("cmd", progress.load().inFlightId)
+  }
+
+  @Test
+  fun outerTimeoutDuringAcknowledgementPropagatesAndRestoresInFlightProgress() = runTest {
+    val clock = System.currentTimeMillis()
+    val progress = InMemoryProgressStore(ControllerProgress("prior", 2, 4))
+    val delegate = basicApi()
+    val api = object : ControllerApi by delegate {
+      override suspend fun acknowledge(
+        auth: ControllerAuth,
+        session: ControllerSession,
+        command: ControllerCommand,
+        success: Boolean,
+        errorCode: String?,
+      ) {
+        delay(100)
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { clock },
+    )
+    bridge.establish()
+    val command = ControllerCommand("cmd", 5, "key", ControllerAction.PLAY, expiresAtEpochMs = clock + 10_000)
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = Unit
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+    }
+    try {
+      withTimeout(25) {
+        bridge.processCommand(ControllerCommandProcessor(executor, progress, { clock }), command, PlaybackSnapshot())
+      }
+      throw AssertionError("expected outer timeout")
+    } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+      // Parent cancellation must remain distinguishable from the bridge's own expiry timeout.
+    }
+    assertEquals(4, progress.load().lastCommandSequence)
+    assertEquals("cmd", progress.load().inFlightId)
   }
 
   @Test
@@ -688,8 +930,7 @@ class ControllerProtocolTest {
     for (command in targets) {
       val progress = InMemoryProgressStore()
       val processor = ControllerCommandProcessor(executor, progress, { future - 1 })
-      assertEquals(CommandResult.TransientFailure("IOException"), processor.process(command, session, PlaybackSnapshot()))
-      assertEquals(CommandResult.Duplicate, processor.process(command, session, nowPlaying))
+      assertEquals(CommandResult.Duplicate, processor.process(command, session, PlaybackSnapshot()))
     }
   }
 
@@ -739,14 +980,7 @@ class ControllerProtocolTest {
       ControllerCommand("seek", 2, "seek-key", ControllerAction.SEEK, seekSeconds = 30.0, expiresAtEpochMs = future),
     )
     for (command in commands) {
-      var ambiguous = false
-      try {
-        bridge.processCommand(processor, command, PlaybackSnapshot())
-      } catch (_: AmbiguousCommandException) {
-        ambiguous = true
-      }
-      assertTrue(ambiguous)
-      assertEquals(CommandResult.Duplicate, bridge.processCommand(processor, command, nowPlaying))
+      assertEquals(CommandResult.Duplicate, bridge.processCommand(processor, command, PlaybackSnapshot()))
     }
     assertEquals(2, acknowledgements)
   }
@@ -784,14 +1018,10 @@ class ControllerProtocolTest {
         ?: throw IOException("uncorrelated state")
     }
     val command = ControllerCommand("open", 1, "open-key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = future)
-    var firstAmbiguous = false
-    try {
-      bridge.processCommand(ControllerCommandProcessor(executor(), progress, { future - 1 }), command, PlaybackSnapshot())
-    } catch (_: AmbiguousCommandException) {
-      firstAmbiguous = true
-    }
-    assertTrue(firstAmbiguous)
-    assertEquals(CommandResult.Duplicate, bridge.processCommand(ControllerCommandProcessor(executor(), progress, { future - 1 }), command, observed.nowPlaying))
+    assertEquals(
+      CommandResult.Duplicate,
+      bridge.processCommand(ControllerCommandProcessor(executor(), progress, { future - 1 }), command, PlaybackSnapshot()),
+    )
     assertEquals(1, acknowledgements)
 
     correlation.begin("new", "new-key", observed.playbackRevision)

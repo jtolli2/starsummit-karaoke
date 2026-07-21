@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -116,6 +117,31 @@ class ControllerCommandProcessor(
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
       throw cancelled
     } catch (failure: Throwable) {
+      recoverAmbiguous(command, session, progress, failure)
+    }
+  }
+
+  private suspend fun recoverAmbiguous(
+    command: ControllerCommand,
+    session: ControllerSession,
+    progress: ControllerProgress,
+    failure: Throwable,
+  ): CommandResult {
+    if (failure is IllegalArgumentException) return CommandResult.Failed("invalid_playback_command")
+    if (command.expiresAtEpochMs <= now()) return CommandResult.TransientFailure("command_expired")
+    return try {
+      val fresh = withRemainingExpiry(command) { executor.refreshNowPlaying() }
+      if (isConverged(command, fresh)) {
+        markComplete(session, command, progress)
+        CommandResult.Duplicate
+      } else {
+        classifyFailure(failure)
+      }
+    } catch (deadline: CommandDeadlineExceededException) {
+      if (deadline.ambiguous) CommandResult.TransientFailure("command_deadline_exceeded") else CommandResult.TransientFailure("command_expired")
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+      throw cancelled
+    } catch (_: Throwable) {
       classifyFailure(failure)
     }
   }
@@ -216,6 +242,7 @@ sealed interface CommandResult {
 }
 
 class AmbiguousCommandException(message: String) : IOException(message)
+class ControllerAcknowledgementException(message: String) : IOException(message)
 
 interface ControllerRealtimeTransport {
   suspend fun connect(auth: ControllerAuth): ControllerRealtimeConnection
@@ -330,14 +357,55 @@ class PocketBaseControllerBridge(
   suspend fun processCommand(processor: ControllerCommandProcessor, command: ControllerCommand, snapshot: PlaybackSnapshot): CommandResult {
     val authenticated = auth ?: throw IOException("controller not authenticated")
     val active = session ?: throw IOException("controller session unavailable")
+    val priorProgress = store.load()
     val result = processor.process(command, active, snapshot)
     when (result) {
-      CommandResult.Applied, CommandResult.Replayed, CommandResult.Duplicate -> api.acknowledge(authenticated, active, command, true)
-      is CommandResult.Failed -> api.acknowledge(authenticated, active, command, false, result.errorCode)
+      CommandResult.Applied, CommandResult.Replayed, CommandResult.Duplicate -> acknowledgeSafely(authenticated, active, command, true, null, priorProgress)
+      is CommandResult.Failed -> acknowledgeSafely(authenticated, active, command, false, result.errorCode, priorProgress)
       is CommandResult.TransientFailure -> throw AmbiguousCommandException(result.errorCode)
       CommandResult.Stale, CommandResult.Expired -> Unit
     }
     return result
+  }
+
+  private suspend fun acknowledgeSafely(
+    auth: ControllerAuth,
+    session: ControllerSession,
+    command: ControllerCommand,
+    success: Boolean,
+    errorCode: String?,
+    priorProgress: ControllerProgress,
+  ) {
+    val remaining = command.expiresAtEpochMs - now()
+    if (remaining <= 0) {
+      restoreInFlight(session, command, priorProgress)
+      throw ControllerAcknowledgementException("acknowledgement expired")
+    }
+    val acknowledged = try {
+      withTimeoutOrNull(remaining) {
+        api.acknowledge(auth, session, command, success, errorCode)
+        true
+      }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+      restoreInFlight(session, command, priorProgress)
+      throw cancelled
+    } catch (failure: Throwable) {
+      restoreInFlight(session, command, priorProgress)
+      throw ControllerAcknowledgementException("acknowledgement failed")
+    }
+    if (acknowledged == null) {
+      restoreInFlight(session, command, priorProgress)
+      throw ControllerAcknowledgementException("acknowledgement timed out")
+    }
+  }
+
+  private fun restoreInFlight(session: ControllerSession, command: ControllerCommand, prior: ControllerProgress) {
+    store.save(prior.copy(
+      sessionId = session.id,
+      generation = session.generation,
+      inFlightId = command.id,
+      inFlightIdempotencyKey = command.idempotencyKey,
+    ))
   }
 
   suspend fun reportState(state: SanitizedControllerState) {

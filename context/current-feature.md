@@ -133,3 +133,14 @@ Complete
   marker, and process restart has no marker and cannot trust cached state. The exact suites pass 38
   controller and 19 Lounge tests, debug APK assembly passes, and independent review approves the
   lifecycle and false-ACK behavior. Delivery requires fresh approval.
+- Signed `682e417` deployed successfully and the matching APK resumed generation 2. Live
+  `get_now_playing` 23, `pause` 26, and `play` 28 succeeded. Actual video-transition commands 24 and
+  25 and paused `seek` 27 still expired without ACKs: the parameter POST consumed about 15 seconds,
+  then deferred controller/Lounge teardown and redelivery exhausted the remaining command lifetime.
+- The next local repair performs correlated playback refresh immediately after an ambiguous transport
+  response, before reconnecting, and ACKs only a newer authoritative state that converges. PocketBase
+  HTTP calls now remain cancellation-aware through response-body reads; ACKs are bounded by remaining
+  command lifetime, and uncertain ACKs restore the prior sequence plus in-flight identity. The exact
+  suites pass 43 controller and 19 Lounge tests, the stalled-body cancellation test passes three fresh
+  isolated runs, debug APK assembly passes, and independent review approves the result. Delivery and
+  renewed live validation require fresh approval.
