@@ -40,3 +40,10 @@ Complete
 - Independent final review approved the repaired credential retry and guaranteed hook continuation;
   no P0/P1 findings remain. No deployment, staging mutation, tablet action, or Wi-Fi interruption
   was performed.
+- Staging delivery evidence (2026-07-21): Coolify deployment `w1yvup5abhkormddjuz4z4fm`
+  imported and rolled out exact commit `0de3c6f3c9f595b2942b3562e7a4554f9fe81c6e` against the
+  retained `starsummit-pocketbase-test` volume. The backend health check and public `/api/health`
+  passed; unauthenticated queue and song access correctly returned `guest_credential_required`.
+  The guest page returned 404 because this retained application is PocketBase-only (`/pocketbase`
+  base directory); a separate frontend container/application and same-origin routing are still
+  required before a live phone-route, join/search/request, or browser-SSE check can be performed.

@@ -52,3 +52,14 @@
 - Passed focused Vue tests, production type-check/build, PocketBase hook syntax checks, and final
   independent review. The local pinned-runtime integration harness was unavailable and skipped;
   validate custom wake delivery against it before any deployment validation.
+
+### 2026-07-21 — Guest Party Interface staging delivery evidence
+
+- Deployed exact commit `0de3c6f3c9f595b2942b3562e7a4554f9fe81c6e` to the retained
+  `starsummit-pocketbase-test` Coolify application without replacing its persistent volume.
+  Deployment health and public `/api/health` passed; unauthenticated guest API reads remained
+  denied as designed.
+- Live guest-page validation is blocked by the intentional container boundary not yet provisioned
+  in Coolify: the retained PocketBase-only application returns 404 for `/party/<code>`. A separate
+  frontend application/container with same-origin routing must be created before browser flow and
+  live guest SSE validation can proceed.
