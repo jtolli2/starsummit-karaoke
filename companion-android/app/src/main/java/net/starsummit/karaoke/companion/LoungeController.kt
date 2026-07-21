@@ -64,7 +64,7 @@ private val LOUNGE_TELEMETRY_EXECUTOR by lazy {
 
 private val DEFAULT_LOUNGE_COMMAND_OBSERVER = LoungeCommandObserver { event ->
   runCatching {
-    android.util.Log.d(
+    android.util.Log.i(
       LOUNGE_TELEMETRY_TAG,
       "command action=${event.action} rid=${event.requestId} ofs=${event.offset} " +
         "elapsedMs=${event.elapsedMillis} outcome=${event.outcome}",

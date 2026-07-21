@@ -169,3 +169,7 @@ Complete
   A dedicated daemon executor isolates telemetry from transport latency. The exact suites pass 43
   controller and 21 Lounge tests, debug assembly passes, and independent review finds no issue.
   Delivery is required to capture the actual live HTTP outcome before another protocol change.
+- Signed `7c79474` deployed successfully and reproduced expired `open_video` 48 and `seek` 50, but
+  Fire OS suppressed the app's `DEBUG`-priority telemetry in every log buffer. The local diagnostic
+  now emits the same redacted records at `INFO`; no fields or transport behavior changed. The exact
+  suites and debug assembly pass. Delivery is required to capture the outcome.
