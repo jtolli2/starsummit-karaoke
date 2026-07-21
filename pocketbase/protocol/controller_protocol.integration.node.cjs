@@ -70,6 +70,7 @@ test('PocketBase controller protocol authorization and transitions', { skip: !bi
   const commandBody = { deviceId: enrolled.json.deviceId, action: 'open_video', payload: { videoId: 'dQw4w9WgXcQ' }, idempotencyKey: 'integration-open-001' }
   const command = await call('/api/karaoke/controller-commands', 'POST', commandBody, tabletToken)
   assert.equal(command.status, 201)
+  assert.equal(command.json.videoId, commandBody.payload.videoId)
   assert.equal((await call('/api/karaoke/controller-commands', 'POST', commandBody, tabletToken)).status, 200)
   assert.equal((await call('/api/karaoke/controller-commands', 'POST', { ...commandBody, action: 'pause', payload: {} }, tabletToken)).status, 409)
   assert.equal((await call('/api/karaoke/controller-commands', 'POST', commandBody, deviceToken)).status, 403)
@@ -78,6 +79,14 @@ test('PocketBase controller protocol authorization and transitions', { skip: !bi
   const fetched = await call(query, 'GET', undefined, deviceToken)
   assert.equal(fetched.status, 200, JSON.stringify(fetched))
   assert.equal(fetched.json.commands[0].id, command.json.id)
+  assert.equal(fetched.json.commands[0].videoId, commandBody.payload.videoId)
+  const seekBody = { deviceId: enrolled.json.deviceId, action: 'seek', payload: { seekSeconds: 30 }, idempotencyKey: 'integration-seek-001' }
+  const seekCommand = await call('/api/karaoke/controller-commands', 'POST', seekBody, tabletToken)
+  assert.equal(seekCommand.status, 201)
+  assert.equal(seekCommand.json.seekSeconds, seekBody.payload.seekSeconds)
+  const fetchedWithSeek = await call(query, 'GET', undefined, deviceToken)
+  assert.equal(fetchedWithSeek.status, 200, JSON.stringify(fetchedWithSeek))
+  assert.equal(fetchedWithSeek.json.commands.find((item) => item.id === seekCommand.json.id)?.seekSeconds, seekBody.payload.seekSeconds)
   const streamAbort = new AbortController()
   const stream = await fetch(`${base}/api/realtime`, { headers: { authorization: `Bearer ${deviceToken}` }, signal: streamAbort.signal })
   assert.equal(stream.status, 200)

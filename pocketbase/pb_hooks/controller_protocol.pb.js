@@ -33,14 +33,23 @@ function number(record, field) { return record && typeof record.getInt === 'func
 function bool(record, field) { return record && typeof record.getBool === 'function' ? record.getBool(field) : Boolean(record?.[field]) }
 function set(record, field, value) { record.set(field, value); return record }
 function jsonField(record, field) {
-  let value
-  try { value = record.get(field) } catch (_) { value = null }
-  if ((value == null || (typeof value === 'object' && Object.keys(value).length === 0)) && typeof record.getString === 'function') {
-    try { const text = record.getString(field); if (text) value = text } catch (_) {}
+  let value = null
+  if (typeof record?.getString === 'function') {
+    try {
+      const text = record.getString(field)
+      if (text) {
+        const parsed = JSON.parse(text)
+        if (parsed && typeof parsed === 'object') return parsed
+      }
+    } catch (_) {}
   }
+  try { value = record.get(field) } catch (_) {}
   if (value == null) value = record?.[field]
   if (typeof value === 'string') { try { return JSON.parse(value || '{}') } catch (_) { return {} } }
-  return value && typeof value === 'object' ? value : {}
+  if (value && typeof value === 'object') {
+    try { return JSON.parse(JSON.stringify(value)) } catch (_) { return value }
+  }
+  return {}
 }
 
 function randomSecret(length = 32) {

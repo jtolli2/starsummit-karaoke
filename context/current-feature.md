@@ -182,3 +182,13 @@ Complete
   of error categories. Unknown strings map to `ControllerFailure`; callbacks are asynchronous and
   noninterfering. The exact suites pass 45 controller and 21 Lounge tests, debug assembly passes, and
   independent review approves the redaction boundary. Delivery is required to capture the lifecycle.
+- Signed `5ed7124` deployed successfully and its diagnostic APK resumed generation 2. A minimal live
+  run proved `get_now_playing` 54 reached Lounge and succeeded, while `open_video` 55 triggered an SSE
+  wake followed by `ControllerProtocolException`, reconnect, and eventual expiry without any Lounge
+  transport attempt. This isolates parameterized-command failure to authoritative PocketBase command
+  materialization/parsing before controller execution, rather than the Lounge wire.
+- PocketBase's native JSON field wrapper can appear non-empty to hook JavaScript without exposing
+  payload properties normally. The local repair makes `jsonField` prefer PocketBase's canonical
+  serialized JSON and normalize native-object fallbacks. The real PocketBase 0.39.7 integration test
+  now asserts `videoId` and `seekSeconds` survive both command creation and authoritative device
+  refetch; it passes with the repair. Delivery and renewed live validation require fresh approval.
