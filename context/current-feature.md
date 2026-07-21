@@ -192,3 +192,11 @@ Complete
   serialized JSON and normalize native-object fallbacks. The real PocketBase 0.39.7 integration test
   now asserts `videoId` and `seekSeconds` survive both command creation and authoritative device
   refetch; it passes with the repair. Delivery and renewed live validation require fresh approval.
+- Signed `8a2d5c5` deployed healthy with persistent storage unchanged. Live PocketBase sequences 56–62
+  all received terminal success ACKs in strict order: `get_now_playing`, `open_video` for
+  `WEuuVs4SrSA`, `play`, `pause`, `seek` to 30 seconds, `play`, and a final state refresh. Redacted
+  tablet telemetry proved an SSE event and authoritative one-command refetch for every intent, then
+  successful Lounge transports for `setPlaylist`, `play`, `pause`, `seekTo`, and state reads with
+  advancing RID/OFS pairs. Final sanitized generation-2 state was connected, playing
+  `WEuuVs4SrSA` at 30.061 seconds with duration 152 and last command sequence 62. The payload
+  materialization defect is resolved end to end; no Wi-Fi interruption or resource deletion occurred.
