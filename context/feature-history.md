@@ -4,18 +4,6 @@
 
 ## Entries
 
-### 2026-07-21 — Party Lifecycle and Fair-Rotation Queue Request API
-
-- Added versioned PocketBase party, temporary guest, karaoke-song eligibility/provenance, and queue
-  schema plus server-only party join, sanitized queue, request, fair-start, and tablet transition
-  routes. Codes and credentials are server-hashed; parties and guest access expire after 12 hours.
-- Enforced deterministic requester rotation, direct-write/read boundaries, durable active-song
-  uniqueness, rate limiting, idempotent transitions, and native-controller `open_video` handoff
-  guarded by an active controller session.
-- Passed pinned PocketBase 0.39.7 authorization, expiry, rate, race, rotation, transition, and
-  controller-handoff integration coverage; backend contract tests; Vue tests; production build;
-  and independent final security/concurrency review.
-
 ### 2026-07-20 — Fire tablet native companion diagnostic spike
 
 - Added a standalone API 28 Kotlin companion with a foreground service, Android Keystore-backed
@@ -40,3 +28,15 @@
   Android JVM tests, Android assembly, Vue unit/build validation, and an independent final review
   with no remaining actionable findings. Live deployment, enrollment, and tablet mutation remain
   approval-gated.
+
+### 2026-07-21 — Party Lifecycle and Fair-Rotation Queue Request API
+
+- Added versioned PocketBase party, temporary guest, karaoke-song eligibility/provenance, and queue
+  schema plus server-only party join, sanitized queue, request, fair-start, and tablet transition
+  routes. Codes and credentials are server-hashed; parties and guest access expire after 12 hours.
+- Enforced deterministic requester rotation, direct-write/read boundaries, durable active-song
+  uniqueness, rate limiting, idempotent transitions, and native-controller `open_video` handoff
+  guarded by an active controller session.
+- Passed pinned PocketBase 0.39.7 authorization, expiry, rate, race, rotation, transition, and
+  controller-handoff integration coverage; backend contract tests; Vue tests; production build;
+  and independent final security/concurrency review.
