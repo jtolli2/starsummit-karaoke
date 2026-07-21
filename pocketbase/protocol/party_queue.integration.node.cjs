@@ -71,7 +71,14 @@ test('guest realtime wake is party-scoped and payload-free on PocketBase 0.39.7'
   const subscribe = (clientId, credential, subscriptions) => call('/api/realtime', 'POST', { clientId, subscriptions }, credential)
   const readWake = async (reader, timeout = 3000) => {
     let text = ''; const deadline = Date.now() + timeout
-    while (Date.now() < deadline) { const chunk = await Promise.race([reader.read(), new Promise((resolve) => setTimeout(() => resolve({ done: true }), 250))]); if (chunk.done) break; text += new TextDecoder().decode(chunk.value); const frame = text.split(/\r?\n\r?\n/).find((item) => item.includes('karaoke_party_wake')); if (frame) return frame }
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now()
+      const chunk = await Promise.race([reader.read(), new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), remaining))])
+      if (chunk.timeout || chunk.done) break
+      text += new TextDecoder().decode(chunk.value)
+      const frame = text.split(/\r?\n\r?\n/).find((item) => item.includes('karaoke_party_wake'))
+      if (frame) return frame
+    }
     return null
   }
   const su = await call('/api/collections/_superusers/auth-with-password', 'POST', { identity: 'wake@test.invalid', password: 'CorrectHorseBatteryStaple123!' }); assert.equal(su.status, 200)
@@ -88,7 +95,8 @@ test('guest realtime wake is party-scoped and payload-free on PocketBase 0.39.7'
   assert.ok([200, 204].includes((await subscribe(streamB.clientId, guestB.json.credential, ['karaoke_party_wake'])).status))
   const request = await call('/api/karaoke/requests', 'POST', { youtubeId: 'dQw4w9WgXcQ' }, guestA.json.credential); assert.equal(request.status, 201, JSON.stringify(request))
   const wakeA = await readWake(streamA.reader); assert.ok(wakeA, 'same-party subscriber should receive wake')
-  assert.match(wakeA, /"name"\s*:\s*"karaoke_party_wake"/); assert.match(wakeA, /"data"\s*:\s*"\{\}"/)
+  assert.match(wakeA, /(?:"name"\s*:\s*"karaoke_party_wake"|event:\s*karaoke_party_wake)/)
+  assert.match(wakeA, /(?:"data"\s*:\s*(?:"\{\}"|\{\})|data:\s*\{\})/)
   assert.equal(await readWake(streamB.reader, 1200), null, 'different-party subscriber must not receive wake')
   streamA.abort.abort(); streamB.abort.abort()
 })
