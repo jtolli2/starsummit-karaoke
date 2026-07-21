@@ -153,3 +153,10 @@ Complete
   complete `setPlaylist` sender form while leaving subscription polling, sender identity, and token
   placement unchanged. The exact suites pass 43 controller and 19 Lounge tests, debug assembly
   passes, and independent review approves the protocol shape. Delivery requires fresh approval.
+- Signed `0d30488` deployed successfully and its APK resumed generation 2, but transition commands
+  36 and 37 and `seek` 39 still expired while commands without parameter payloads succeeded. The
+  remaining maintained-sender mismatch was session sequencing: the companion paired first command
+  `RID=2` with `ofs=0`, while working senders start at `RID=2`/`ofs=1` and advance both together.
+- The next local repair initializes Lounge command offset at 1 and tests FIFO pairs `RID=2`/`ofs=1`
+  then `RID=3`/`ofs=2`. The exact suites pass 43 controller and 19 Lounge tests, debug assembly
+  passes, and independent review approves the state alignment. Delivery requires fresh approval.

@@ -262,7 +262,7 @@ class LoungeProtocolTest {
     second.await()
     val sent = synchronized(requests) { requests.drop(1) }
     assertEquals(listOf("2", "3"), sent.map { it.url.toHttpUrl().queryParameter("RID") })
-    assertEquals(listOf("0", "1"), sent.map { it.form["ofs"] })
+    assertEquals(listOf("1", "2"), sent.map { it.form["ofs"] })
     session.close()
   }
 

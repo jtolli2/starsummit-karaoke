@@ -261,7 +261,7 @@ private class HttpLoungeSession(
   private val activeCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<Call>()
   private val closed = SessionClosedGate()
   private var requestId = 2L
-  private var offset = 0L
+  private var offset = 1L
   private var lastEventId = initialEventId ?: 0L
 
   override val events: Flow<LoungeEvent> = channelFlow {
