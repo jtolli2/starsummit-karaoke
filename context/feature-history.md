@@ -63,3 +63,17 @@
   in Coolify: the retained PocketBase-only application returns 404 for `/party/<code>`. A separate
   frontend application/container with same-origin routing must be created before browser flow and
   live guest SSE validation can proceed.
+
+### 2026-07-21 — Frontend Container and Same-Origin Routing
+
+- Added a multi-stage Bun-to-Nginx frontend container with deep-link SPA fallback, strict missing
+  static-asset 404 behavior, health checks, and a same-origin `/api` proxy. PocketBase realtime
+  SSE is unbuffered with long read/send timeouts; forwarded scheme and client-chain handling are
+  constrained for Coolify ingress.
+- Added an approval-gated Coolify Compose topology: frontend is the only public service and
+  PocketBase remains private with an explicitly selected pre-existing external data volume.
+  Documented the production hostname and a non-mutating retained-staging plan.
+- Passed Docker container integration coverage for static serving, deep routes, API proxying,
+  realtime streaming, and built-asset secret scans; passed Vue unit tests, production build,
+  Compose rendering, and independent final review. No commit, deployment, DNS/resource change,
+  volume action, or retained staging mutation was performed.

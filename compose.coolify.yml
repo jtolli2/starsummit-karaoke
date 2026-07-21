@@ -1,0 +1,29 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      POCKETBASE_HOST: pocketbase:8090
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    expose:
+      - '8080'
+  pocketbase:
+    build:
+      context: pocketbase
+      dockerfile: Dockerfile
+    volumes:
+      - pocketbase_data:/pb/pb_data
+    expose:
+      - '8090'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8090/api/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+volumes:
+  pocketbase_data:
+    name: ${POCKETBASE_VOLUME_NAME:?Set POCKETBASE_VOLUME_NAME to the approved existing Coolify volume}
+    external: true
