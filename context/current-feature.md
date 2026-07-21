@@ -43,3 +43,11 @@ Complete
   and `POCKETBASE_VOLUME_NAME=retained-test-volume docker compose -f compose.coolify.yml config`.
   Independent review approved the final diff with no P0-P3 findings. No remote resource, DNS,
   deployment, volume, record, controller, tablet, or Wi-Fi-interruption action was performed.
+- Approved staging delivery evidence (2026-07-21): pushed commit `7f55f116cf4205fd52b57ab6a34184eeec7a3b0c`;
+  redeployed the retained `starsummit-pocketbase-test` application against its existing persistent
+  volume and assigned it the stable private alias `pocketbase-staging`. Created the separate
+  `starsummit-karaoke-frontend-test` Coolify application (`f3b92sq9dy8y5ernb1nw9cfs`) at
+  `https://karaoke-test.app.starsummit.net`, with proxy target `pocketbase-staging:8090`.
+  Deployment health, `/healthz`, deep-route SPA fallback, API health,
+  asset 404, browser guest route, and realtime SSE all passed. No record, volume, controller,
+  tablet, production hostname, or Wi-Fi-interruption mutation was performed.

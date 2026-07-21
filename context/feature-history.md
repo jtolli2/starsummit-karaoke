@@ -77,3 +77,15 @@
   realtime streaming, and built-asset secret scans; passed Vue unit tests, production build,
   Compose rendering, and independent final review. No commit, deployment, DNS/resource change,
   volume action, or retained staging mutation was performed.
+
+### 2026-07-21 — Frontend Container staging delivery evidence
+
+- Pushed `7f55f116cf4205fd52b57ab6a34184eeec7a3b0c`; redeployed the retained PocketBase staging
+  application on its existing persistent volume with a stable private `pocketbase-staging` alias.
+  Created the separate frontend staging application `f3b92sq9dy8y5ernb1nw9cfs` at
+  `https://karaoke-test.app.starsummit.net`, proxying same-origin `/api` to that private alias.
+- Coolify reported both applications healthy. HTTPS checks passed for `/healthz`, an SPA deep
+  route, backend `/api/health`, a missing asset 404, and PocketBase realtime SSE. A browser loaded
+  `/party/DEMO1234` and correctly rendered the backend-provided expired-party state. No backend
+  records, persistent volume, controller enrollment, tablet state, production hostname, or
+  deferred Wi-Fi interruption test was changed.
