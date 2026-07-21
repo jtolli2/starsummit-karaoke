@@ -1,6 +1,8 @@
 package net.starsummit.karaoke.companion
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.isActive
@@ -17,6 +19,8 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -38,6 +42,36 @@ interface LoungeSession {
   fun close()
 }
 
+data class LoungeCommandTelemetry(
+  val action: String,
+  val requestId: Long,
+  val offset: Long,
+  val elapsedMillis: Long,
+  val outcome: String,
+)
+
+fun interface LoungeCommandObserver {
+  fun onCommand(event: LoungeCommandTelemetry)
+}
+
+private const val LOUNGE_TELEMETRY_TAG = "StarsummitLounge"
+
+private val LOUNGE_TELEMETRY_EXECUTOR by lazy {
+  Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "StarsummitLoungeTelemetry").apply { isDaemon = true }
+  }
+}
+
+private val DEFAULT_LOUNGE_COMMAND_OBSERVER = LoungeCommandObserver { event ->
+  runCatching {
+    android.util.Log.d(
+      LOUNGE_TELEMETRY_TAG,
+      "command action=${event.action} rid=${event.requestId} ofs=${event.offset} " +
+        "elapsedMs=${event.elapsedMillis} outcome=${event.outcome}",
+    )
+  }
+}
+
 /** Minimal transport for the private YouTube Lounge protocol. Keep this seam replaceable. */
 class LoungeHttpController(
   private val client: OkHttpClient = OkHttpClient.Builder()
@@ -46,6 +80,7 @@ class LoungeHttpController(
     .build(),
   private val clientName: String = "Starsummit Karaoke Companion",
   private val commandTimeoutMillis: Long = COMMAND_TIMEOUT_MILLIS,
+  private val commandObserver: LoungeCommandObserver = DEFAULT_LOUNGE_COMMAND_OBSERVER,
 ) : LoungeController {
   init {
     require(commandTimeoutMillis in 1..COMMAND_TIMEOUT_MAX_MILLIS) {
@@ -85,6 +120,7 @@ class LoungeHttpController(
       bound.gsessionId,
       bound.lastEventId,
       commandTimeoutMillis,
+      commandObserver,
     )
   }
 
@@ -252,6 +288,7 @@ private class HttpLoungeSession(
   private val gsessionId: String,
   initialEventId: Long?,
   commandTimeoutMillis: Long,
+  private val commandObserver: LoungeCommandObserver,
 ) : LoungeSession {
   private val commandMutex = Mutex()
   private val commandSendMutex = Mutex()
@@ -333,22 +370,30 @@ private class HttpLoungeSession(
 
   private suspend fun command(action: String, values: Map<String, String> = emptyMap()) {
     var call: Call? = null
+    var requestIdForTelemetry = 0L
+    var offsetForTelemetry = 0L
+    val startedAt = System.nanoTime()
+    var outcome: String? = null
     try {
       commandSendMutex.withLock {
         call = commandMutex.withLock {
           closed.requireOpen()
+          val commandRequestId = requestId++
+          val commandOffset = offset++
+          requestIdForTelemetry = commandRequestId
+          offsetForTelemetry = commandOffset
           val url = LoungeRequestShape.sessionUrl(
             pairing,
             clientName,
             sid,
             gsessionId,
             lastEventId,
-            requestId++.toString(),
+            commandRequestId.toString(),
             subscribe = false,
           )
           val body = FormBody.Builder()
             .apply {
-              LoungeRequestShape.commandForm(action, offset++, values)
+              LoungeRequestShape.commandForm(action, commandOffset, values)
                 .forEach { (key, value) -> add(key, value) }
             }
             .build()
@@ -363,13 +408,48 @@ private class HttpLoungeSession(
             throw LoungeSessionClosedException()
           }
           executeCommandCall(call!!).use { response ->
+            outcome = if (response.isSuccessful) "http_2xx" else "http_${response.code}"
             if (!response.isSuccessful) throw IOException("Lounge command failed (${response.code})")
           }
         }
       }
+    } catch (failure: Throwable) {
+      outcome = outcome ?: loungeCommandFailureOutcome(failure)
+      throw failure
     } finally {
       call?.let { activeCalls -= it }
+      emitCommandTelemetry(
+        LoungeCommandTelemetry(
+          action = loungeCommandAction(action),
+          requestId = requestIdForTelemetry,
+          offset = offsetForTelemetry,
+          elapsedMillis = (System.nanoTime() - startedAt).coerceAtLeast(0L) / 1_000_000L,
+          outcome = outcome ?: "closed",
+        ),
+      )
     }
+  }
+
+  private fun emitCommandTelemetry(event: LoungeCommandTelemetry) {
+    runCatching {
+      LOUNGE_TELEMETRY_EXECUTOR.execute {
+        runCatching { commandObserver.onCommand(event) }
+      }
+    }
+  }
+
+  private fun loungeCommandAction(action: String): String = when (action) {
+    "setPlaylist", "play", "pause", "seekTo", "getNowPlaying" -> action
+    else -> "unknown"
+  }
+
+  private fun loungeCommandFailureOutcome(failure: Throwable): String = when {
+    failure is LoungeSessionClosedException || closed.isClosed() -> "closed"
+    failure is TimeoutCancellationException -> "timeout"
+    failure is CancellationException -> "cancelled"
+    failure is InterruptedIOException -> "timeout"
+    failure is IOException -> failure::class.simpleName ?: "IOException"
+    else -> "failure"
   }
 
   private suspend fun executeCommandCall(call: Call) = suspendCancellableCoroutine<okhttp3.Response> { continuation ->

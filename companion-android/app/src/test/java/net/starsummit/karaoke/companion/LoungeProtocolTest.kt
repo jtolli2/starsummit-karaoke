@@ -1,6 +1,7 @@
 package net.starsummit.karaoke.companion
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -173,7 +174,41 @@ class LoungeProtocolTest {
   }
 
   @Test
+  fun commandTelemetryIsRedactedAndAllowlisted() = runBlocking {
+    val telemetry = mutableListOf<LoungeCommandTelemetry>()
+    val telemetryReady = CountDownLatch(1)
+    val client = fakeClient { chain ->
+      val request = chain.request()
+      response(request, if (request.url.queryParameter("RID") == "1") {
+        "[[0,[\"c\",\"sid\"]],[1,[\"S\",\"gsession\"]]]"
+      } else "")
+    }
+    val session = LoungeHttpController(
+      client = client,
+      commandTimeoutMillis = 500,
+      commandObserver = LoungeCommandObserver {
+        telemetry += it
+        telemetryReady.countDown()
+      },
+    ).connect(PairingMaterial("screen-secret", "token-secret", "TV"))
+    session.setPlaylist("dQw4w9WgXcQ")
+    assertTrue(telemetryReady.await(1, TimeUnit.SECONDS))
+    session.close()
+
+    val event = telemetry.single()
+    assertEquals("setPlaylist", event.action)
+    assertEquals(2L, event.requestId)
+    assertEquals(1L, event.offset)
+    assertEquals("http_2xx", event.outcome)
+    assertFalse(event.toString().contains("dQw4w9WgXcQ"))
+    assertFalse(event.toString().contains("token-secret"))
+    assertFalse(event.toString().contains("screen-secret"))
+  }
+
+  @Test
   fun commandTimeoutCancelsTheInFlightCall() = runBlocking {
+    val telemetry = mutableListOf<LoungeCommandTelemetry>()
+    val telemetryReady = CountDownLatch(1)
     val client = fakeClient { chain ->
       val request = chain.request()
       val isBind = request.url.queryParameter("RID") == "1"
@@ -187,13 +222,54 @@ class LoungeProtocolTest {
       }
       response(request, if (isBind) "[[0,[\"c\",\"sid\"]],[1,[\"S\",\"gsession\"]]]" else "")
     }
-    val session = LoungeHttpController(client, commandTimeoutMillis = 50)
+    val session = LoungeHttpController(
+      client,
+      commandTimeoutMillis = 50,
+      commandObserver = LoungeCommandObserver {
+        synchronized(telemetry) { telemetry += it }
+        telemetryReady.countDown()
+      },
+    )
       .connect(PairingMaterial("screen", "token", "TV"))
     val startedAt = System.nanoTime()
     val failure = runCatching { session.play() }.exceptionOrNull()
     val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
     assertTrue(failure is InterruptedIOException)
     assertTrue("command timeout was not bounded", elapsedMillis < 1_000)
+    assertTrue(telemetryReady.await(1, TimeUnit.SECONDS))
+    assertEquals("timeout", synchronized(telemetry) { telemetry.single().outcome })
+    session.close()
+  }
+
+  @Test
+  fun commandObserverCannotDelayTransportOrLeakFailures() = runBlocking {
+    val observerStarted = CountDownLatch(1)
+    val releaseObserver = CountDownLatch(1)
+    val client = fakeClient { chain ->
+      val request = chain.request()
+      response(request, if (request.url.queryParameter("RID") == "1") {
+        "[[0,[\"c\",\"sid\"]],[1,[\"S\",\"gsession\"]]]"
+      } else "")
+    }
+    val session = LoungeHttpController(
+      client = client,
+      commandTimeoutMillis = 500,
+      commandObserver = LoungeCommandObserver {
+        observerStarted.countDown()
+        releaseObserver.await(1, TimeUnit.SECONDS)
+        throw AssertionError("observer failure")
+      },
+    ).connect(PairingMaterial("screen", "token", "TV"))
+    val commandReturned = CountDownLatch(1)
+    val command = async(Dispatchers.Default) {
+      session.play()
+      commandReturned.countDown()
+    }
+    assertTrue(observerStarted.await(1, TimeUnit.SECONDS))
+    val completedBeforeObserverRelease = commandReturned.await(200, TimeUnit.MILLISECONDS)
+    releaseObserver.countDown()
+    command.await()
+    assertTrue("observer delayed command completion", completedBeforeObserverRelease)
     session.close()
   }
 

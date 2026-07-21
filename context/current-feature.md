@@ -160,3 +160,12 @@ Complete
 - The next local repair initializes Lounge command offset at 1 and tests FIFO pairs `RID=2`/`ofs=1`
   then `RID=3`/`ofs=2`. The exact suites pass 43 controller and 19 Lounge tests, debug assembly
   passes, and independent review approves the state alignment. Delivery requires fresh approval.
+- Signed `d5cc8c9` deployed successfully and its APK resumed generation 2, but transition commands
+  42 and 43 and `seek` 45 still expired while non-parameterized commands succeeded. Offset alignment
+  therefore did not resolve the receiver rejection.
+- The next local diagnostic adds asynchronous, redacted Lounge command telemetry containing only the
+  allowlisted action, RID/OFS, elapsed time, and outcome category. It never records URLs, credentials,
+  session/screen identifiers, form values, video/seek payloads, response bodies, or exception messages.
+  A dedicated daemon executor isolates telemetry from transport latency. The exact suites pass 43
+  controller and 21 Lounge tests, debug assembly passes, and independent review finds no issue.
+  Delivery is required to capture the actual live HTTP outcome before another protocol change.
