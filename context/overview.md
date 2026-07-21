@@ -55,6 +55,10 @@
 - Party codes expire with the 12-hour party. Store only an appropriate server-side representation of the code and avoid logging or exposing it outside the QR/join flow.
 - Guests may read a sanitized active queue and create requests, but cannot update, delete, reorder, or transition queue records. Duplicate prevention applies while a song is queued or playing; a song may be requested again after completion.
 - The initial song library target is approximately 5,000 songs. Search results discovered through the YouTube API should be saved into the song library when appropriate, with no arbitrary per-party search cap beyond API availability and sensible abuse protection.
+- The future initial 5,000-song import must contain only YouTube karaoke backing-track videos. It
+  must exclude original music videos, ordinary lyric videos, live performances, covers not meant
+  for karaoke backing tracks, and unrelated/general results. Song records retain provenance and
+  quality-eligibility metadata so the later importer can enforce and audit this rule.
 - The guest app should explain clearly why a request was rejected. It is not planned as a PWA. The guest and admin experiences may share the hostname; a separate `/tablet` display route remains an option.
 
 ## Confirmed Implementation Defaults

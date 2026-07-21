@@ -4,6 +4,17 @@
 
 ## Entries
 
+### 2026-07-21 — Validate PocketBase hook callbacks in their worker VM
+
+- **Feedback:** A new hook passed syntax checks but its route callbacks relied on top-level lexical
+  helpers. PocketBase serializes callback code into worker VMs, producing opaque generic HTTP 400
+  failures rather than a useful server stack.
+- **Improvement:** Follow the proven controller-hook pattern: reload the hook within every route
+  callback and resolve all helper functions and constants through an explicit `globalThis` contract.
+  Run at least one real pinned-runtime route test before treating hook logic as functional.
+- **Follow-up:** Keep real-runtime tests comprehensive enough to catch concurrency and auth paths,
+  not just route initialization.
+
 ### 2026-07-19 — Clarify implementation security and routing boundaries
 
 - **Feedback:** The guidance left runtime ownership, browser admin credentials, guest queue writes, party access, and router generation ambiguous or contradictory.

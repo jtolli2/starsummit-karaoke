@@ -215,6 +215,12 @@ routerAdd('POST', '/api/karaoke/controller-commands', (c) => {
   const device = find(body.deviceId, 'controller_devices')
   if (!device || bool(device, 'revoked')) return jsonError(c, 404, 'device_not_found', 'Controller device is unavailable')
   if (number(device, 'session_generation') < 1) return jsonError(c, 409, 'device_session_required', 'Controller device has not started a session')
+  let activeSession = null
+  try {
+    const sessions = $app.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: recordId(device), generation: number(device, 'session_generation') })
+    activeSession = sessions.find((candidate) => new Date(string(candidate, 'expires_at')).getTime() > Date.now()) || null
+  } catch (_) {}
+  if (!activeSession) return jsonError(c, 409, 'controller_session_inactive', 'Controller device has no active session')
   let payload
   try { payload = sanitizePayload(body.action, body.payload || {}) } catch (error) { return jsonError(c, 422, 'invalid_payload', error.message) }
   let result

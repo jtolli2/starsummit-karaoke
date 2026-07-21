@@ -6,6 +6,13 @@ This directory targets PocketBase **0.39.x**. Apply the migration in
 all five protocol collections (and the constrained `users` auth collection) and the hook rejects
 direct collection writes.
 
+The party/queue migration (`1784506000_party_lifecycle.js`) adds expiring 12-hour parties,
+hashed guest credentials, karaoke eligibility metadata, and an append-only queue. Its companion
+hook exposes `POST /api/karaoke/parties` (tablet), `POST /api/karaoke/parties/join`,
+`GET /api/karaoke/parties/queue`, `POST /api/karaoke/requests`, and tablet-only queue transition/
+fair-rotation endpoints. Guests authenticate with the one-time credential returned by join;
+queue and library collection writes remain disabled.
+
 ## Credential and operator boundary
 
 An operator creates a short-lived enrollment grant using the superuser-only
