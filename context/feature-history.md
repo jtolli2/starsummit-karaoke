@@ -20,6 +20,15 @@
   apps healthy but PocketBase still on `6f1c8ac`; no deployment capability was available in this
   task, so no catalog records/configuration were changed and no live catalog validation is claimed.
 
+### 2026-07-22 — Server-only YouTube catalog discovery hardening
+
+- Added a server-side YouTube Data API discovery path with batched video metadata lookup,
+  embeddable/public/processed filtering, explainable classification, and no browser key exposure.
+- Added durable Pacific-day quota claims with pessimistic reservation, request ownership/leases,
+  stale-owner fencing, persisted payload replay, failure accounting, and zero-result idempotency.
+- Focused backend contracts, production build, and independent review passed. Deployment and live
+  quota validation are still pending an available Coolify deployment action.
+
 ### 2026-07-22 — Controller realtime subscription authorization fix
 
 - Corrected the guest wake hook so it authorizes only subscriptions that include

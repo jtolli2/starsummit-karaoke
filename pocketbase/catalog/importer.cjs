@@ -14,6 +14,22 @@ function sourceFingerprint({ query = '', items = [] }) {
   return crypto.createHash('sha256').update(JSON.stringify(canonicalize({ query, items }))).digest('hex')
 }
 
+// YouTube's quota resets on America/Los_Angeles time, not at UTC midnight. Keep this
+// helper deterministic so callers can supply a fixed instant in tests.
+function quotaDayKey(value = new Date()) {
+  const instant = value instanceof Date ? value : new Date(value)
+  const year = instant.getUTCFullYear()
+  const sunday = (month, ordinal) => {
+    const first = new Date(Date.UTC(year, month, 1)).getUTCDay()
+    return 1 + ((7 - first) % 7) + (ordinal - 1) * 7
+  }
+  const start = Date.UTC(year, 2, sunday(2, 2), 10)
+  const end = Date.UTC(year, 10, sunday(10, 1), 9)
+  const offset = instant.getTime() >= start && instant.getTime() < end ? -7 : -8
+  const pacific = new Date(instant.getTime() + offset * 60 * 60 * 1000)
+  return `${pacific.getUTCFullYear()}-${String(pacific.getUTCMonth() + 1).padStart(2, '0')}-${String(pacific.getUTCDate()).padStart(2, '0')}`
+}
+
 function classify(video = {}) {
   const text = `${video.title || ''} ${video.description || ''}`.toLowerCase()
   if (/\b(live|concert|performance)\b/.test(text)) return { classification: 'live', confidence: 0.98, reason: 'live_performance' }
@@ -66,4 +82,4 @@ function validateChunk({ cursor, offset, existingFingerprint, chunkFingerprint }
   return { replay: false }
 }
 
-module.exports = { CLASSIFICATIONS, REVIEW_STATES, classify, normalize, plan, sourceFingerprint, normalized, validateChunk }
+module.exports = { CLASSIFICATIONS, REVIEW_STATES, classify, normalize, plan, quotaDayKey, sourceFingerprint, normalized, validateChunk }

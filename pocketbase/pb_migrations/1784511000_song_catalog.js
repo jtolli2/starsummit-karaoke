@@ -56,6 +56,7 @@ migrate((app) => {
         { name: 'offset', type: 'number', required: true, min: 0, noDecimal: true },
         { name: 'chunk_fingerprint', type: 'text', required: true, min: 64, max: 64 },
         { name: 'item_count', type: 'number', required: true, min: 1, noDecimal: true },
+        { name: 'payload_json', type: 'json' },
       ], indexes: ['CREATE UNIQUE INDEX idx_karaoke_catalog_import_chunk ON karaoke_catalog_import_chunks (import, offset)'],
     }))
   }

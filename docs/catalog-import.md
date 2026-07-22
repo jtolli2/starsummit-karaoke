@@ -13,9 +13,13 @@ note, retrieval timestamp, rank order, and its complete stable manifest fingerpr
 chunk is safe; changing a manifest or chunk is rejected; chunks must arrive contiguously.
 
 `node pocketbase/catalog/plan-fixture-import.cjs` prints the exact fixture chunk request shape.
-Fixture imports consume zero YouTube Data API quota. Live discovery deliberately returns
-`youtube_import_unavailable` until a server-side YouTube Data API request boundary is provisioned
-with `YOUTUBE_API_KEY`; clients must never provide that key.
+Fixture imports consume zero YouTube Data API quota. Live discovery is requested with
+`fetchFromYoutube: true`, a query, and the same immutable batch/manifest fields. PocketBase reads
+`YOUTUBE_API_KEY` from its server environment, reserves a bounded maximum of 303 credits per
+request (three search retries at 100 credits plus three metadata retries),
+and stores only filtered public, processed, embeddable candidates plus availability metadata.
+Transient API failures are retried briefly and recorded as a redacted run error; the key is never
+returned or logged.
 
 ## Candidate policy
 

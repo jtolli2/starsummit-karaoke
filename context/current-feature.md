@@ -43,3 +43,10 @@ Complete
   remained deployed at `6f1c8ac7d02095a236249dd53a7eded9d4600b58`. This task exposed read-only
   Coolify inspection only, with no deployment/update action or authorized local token path; no
   staging configuration or records were changed and live catalog validation was not claimed.
+- A server-side `YOUTUBE_API_KEY` has now been configured for retained staging. This follow-up
+  activates the live discovery boundary, then requires a redeploy before a small catalog-only
+  validation import can safely consume quota.
+- Added the server-only YouTube discovery boundary with Pacific-day quota accounting, durable
+  request claims/payloads, lease recovery, owner fencing, retry-safe metering, availability
+  filtering, and idempotent empty-result replay. Fourteen focused backend contracts, production
+  build, and final independent review pass. Deployment/live route validation remains pending.

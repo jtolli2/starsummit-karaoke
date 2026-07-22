@@ -15,6 +15,14 @@ function auth(c) { return info(c).auth || null }
 function bearer(c) { const h = info(c).headers || {}; const value = h.authorization || h.Authorization || ''; return String(value).replace(/^Bearer\s+/i, '') }
 function query(c, key) { const value = info(c).query?.[key]; return Array.isArray(value) ? value[0] : value }
 function now() { return new Date().toISOString() }
+function dayKey(value = new Date()) {
+  // America/Los_Angeles reset boundary (DST-aware, independent of host TZ).
+  const instant = value instanceof Date ? value : new Date(value); const year = instant.getUTCFullYear()
+  const sunday = (month, ordinal) => { const first = new Date(Date.UTC(year, month, 1)).getUTCDay(); return 1 + ((7 - first) % 7) + (ordinal - 1) * 7 }
+  const start = Date.UTC(year, 2, sunday(2, 2), 10); const end = Date.UTC(year, 10, sunday(10, 1), 9)
+  const offset = instant.getTime() >= start && instant.getTime() < end ? -7 : -8; const pacific = new Date(instant.getTime() + offset * 60 * 60 * 1000)
+  return `${pacific.getUTCFullYear()}-${String(pacific.getUTCMonth() + 1).padStart(2, '0')}-${String(pacific.getUTCDate()).padStart(2, '0')}`
+}
 function future(ms) { return new Date(Date.now() + ms).toISOString() }
 function str(r, f) { return r && r.getString ? r.getString(f) : r?.[f] }
 function num(r, f) { return r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
@@ -34,6 +42,40 @@ function classifyCatalogItem(item) {
   if (/\bcover\b/.test(text)) return { classification: 'cover', confidence: 0.8, reason: 'cover_signal' }
   if (/\bofficial\b|music video/.test(text)) return { classification: 'original', confidence: 0.85, reason: 'original_signal' }
   return { classification: 'unknown', confidence: 0.25, reason: 'insufficient_metadata' }
+}
+function env(name) { try { return typeof $os !== 'undefined' && $os.getenv ? String($os.getenv(name) || '') : '' } catch (_) { return '' } }
+function youtubeResponse(response) {
+  const status = Number(response?.statusCode ?? response?.status ?? 0)
+  let payload = response?.json
+  if (typeof payload === 'function') { try { payload = payload() } catch (_) {} }
+  if (typeof payload === 'string') { try { payload = JSON.parse(payload) } catch (_) {} }
+  return { status, payload: payload && typeof payload === 'object' ? payload : {} }
+}
+function youtubeRequest(url, meter) {
+  if (typeof $http === 'undefined' || !$http.send) throw new Error('youtube_http_unavailable')
+  let last = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let response
+    try { if (meter) meter.cost += url.includes('/search?') ? 100 : 1; response = youtubeResponse($http.send({ url, method: 'GET', headers: { Accept: 'application/json' }, timeout: 15 })) } catch (error) { last = error; if (attempt < 2) continue; const out = new Error('youtube_network_error'); out.quotaCost = meter?.cost || 0; throw out }
+    if (response.status >= 200 && response.status < 300) return response.payload
+    last = new Error(`youtube_http_${response.status || 'unknown'}`)
+    if (response.status !== 429 && response.status < 500) break
+  }
+  const out = last || new Error('youtube_request_failed'); out.quotaCost = meter?.cost || 0; throw out
+}
+function fetchYoutubeCandidates(queryText, maxResults) {
+  const key = env('YOUTUBE_API_KEY'); if (!key) throw new Error('youtube_key_unconfigured')
+  const q = encodeURIComponent(String(queryText || '').trim()); if (!q) throw new Error('youtube_query_required')
+  const limit = Math.max(1, Math.min(50, Number(maxResults) || 10)); const meter = { cost: 0 }; const helpers = globalThis.__partyQueue || {}; const request = helpers.youtubeRequest || youtubeRequest; const videoId = helpers.YOUTUBE_ID || YOUTUBE_ID
+  let search; try { search = request(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=${limit}&q=${q}&key=${encodeURIComponent(key)}`, meter) } catch (error) { error.quotaCost = meter.cost; throw error }
+  const ids = (Array.isArray(search.items) ? search.items : []).map((item) => String(item?.id?.videoId || '')).filter((id) => videoId.test(id))
+  if (!ids.length) return { items: [], cost: meter.cost }
+  let details; try { details = request(`https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status,statistics&id=${ids.join(',')}&key=${encodeURIComponent(key)}`, meter) } catch (error) { error.quotaCost = meter.cost; throw error }
+  const byId = Object.create(null); (Array.isArray(details.items) ? details.items : []).forEach((item) => { byId[String(item.id)] = item })
+  const items = ids.map((youtubeId, index) => {
+    const item = byId[youtubeId]; const snippet = item?.snippet || {}; const status = item?.status || {}
+    return { youtubeId, title: snippet.title || youtubeId, artist: snippet.channelTitle || '', description: snippet.description || '', channelTitle: snippet.channelTitle || '', classification: undefined, embeddable: status.embeddable === true, privacyStatus: status.privacyStatus || 'unknown', uploadStatus: status.uploadStatus || 'unknown', duration: item?.contentDetails?.duration || '', viewCount: item?.statistics?.viewCount || '', sourceRank: index + 1 }
+  }).filter((item) => item.embeddable && item.privacyStatus === 'public' && item.uploadStatus === 'processed'); return { items, cost: meter.cost }
 }
 function random(n) { return typeof $security !== 'undefined' && $security.randomString ? $security.randomString(n) : Math.random().toString(36).slice(2) + Date.now().toString(36) }
 function code() {
@@ -111,7 +153,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, random, code, now, future, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -419,22 +461,63 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, now, set, num, hash, canonicalize, normalized, classifyCatalogItem, id, str } = globalThis.__partyQueue
+  const { auth, tablet, json, body, now, future, find, set, num, hash, canonicalize, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
-  const input = body(c); const batchKey = String(input.batchKey || '').trim(); const items = Array.isArray(input.items) ? input.items.slice(0, 100) : []; const offset = Number(input.offset)
-  const manifestFingerprint = String(input.manifestFingerprint || ''); const total = Number(input.total); const source = input.source && typeof input.source === 'object' ? input.source : {}
-  if (!batchKey || !items.length || !Number.isInteger(offset) || offset < 0 || !Number.isInteger(total) || total < offset + items.length || !/^[a-f0-9]{64}$/i.test(manifestFingerprint)) return json(c, 422, 'invalid_import', 'batchKey, manifestFingerprint, total, offset, and items are required')
-  // Fixture imports are deterministic and do not spend YouTube quota. Live API
-  // fetching is intentionally unavailable until its authenticated request boundary
-  // is implemented entirely server-side with YOUTUBE_API_KEY.
-  if (input.fetchFromYoutube) return json(c, 503, 'youtube_import_unavailable', 'Live YouTube import is not available')
-  const chunkFingerprint = hash(JSON.stringify(canonicalize({ offset, items })))
+  const input = body(c); const live = input.fetchFromYoutube === true
+  const batchKey = String(input.batchKey || '').trim(); let items = Array.isArray(input.items) ? input.items.slice(0, 100) : []; const offset = Number(input.offset)
+  const manifestFingerprint = String(input.manifestFingerprint || ''); let total = Number(input.total); const source = input.source && typeof input.source === 'object' ? input.source : {}; const sourceUrl = String(source.url || (live ? 'https://www.youtube.com' : '')).slice(0, 500); const sourceTerms = String(source.terms || input.query || '').slice(0, 500)
+  const requestedMaxResults = Math.max(1, Math.min(50, Number(input.requestedMaxResults || total) || 10)); const requestFingerprint = hash(JSON.stringify(canonicalize(live ? { batchKey, manifestFingerprint, query: String(input.query || ''), requestedMaxResults, offset } : { offset, items })))
+  if (!batchKey || (!live && !items.length) || !Number.isInteger(offset) || offset < 0 || !Number.isInteger(total) || (live ? (offset !== 0 || total !== requestedMaxResults) : total < offset + items.length) || !/^[a-f0-9]{64}$/i.test(manifestFingerprint)) return json(c, 422, 'invalid_import', 'batchKey, manifestFingerprint, total, offset, and items are required')
+  if (live) { let key = ''; try { key = String($os.getenv('YOUTUBE_API_KEY') || '') } catch (_) {} if (!key) return json(c, 503, 'youtube_key_unconfigured', 'Live YouTube import is temporarily unavailable'); if (!String(input.query || '').trim()) return json(c, 422, 'youtube_query_required', 'A search query is required') }
+  let ownerToken = ''
+  let attemptedCost = 0
+  if (live) {
+    try {
+      ownerToken = hash(`${batchKey}:${requestFingerprint}:${random(24)}`)
+      $app.runInTransaction((tx) => {
+        let batch = null; try { batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }) } catch (_) {}
+        if (batch && (str(batch, 'source_fingerprint') !== manifestFingerprint || (!live && num(batch, 'total') !== total))) throw new Error('batch_source_mismatch')
+        if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', sourceUrl); set(batch, 'source_terms', sourceTerms); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); tx.save(batch) }
+        let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
+        if (chunk) { if (str(chunk, 'chunk_fingerprint') !== requestFingerprint) throw new Error('chunk_source_mismatch'); throw new Error('chunk_replay') }
+        const claimKey = `${batchKey}:${requestFingerprint}`; let claim = null; try { claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: claimKey }) } catch (_) {}
+        if (claim && str(claim, 'status') === 'in_progress' && new Date(str(claim, 'lease_expires_at')).getTime() > Date.now()) throw new Error('youtube_request_in_progress')
+        if (claim && str(claim, 'status') === 'in_progress') { const oldReserved = num(claim, 'reserved_units'); const oldDay = str(claim, 'quota_day_key'); if (oldReserved && oldDay) { const oldQuota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: oldDay }); set(oldQuota, 'reserved', Math.max(0, num(oldQuota, 'reserved') - oldReserved)); tx.save(oldQuota) } }
+        if (claim && ['ready', 'complete'].includes(str(claim, 'status'))) {
+          // A persisted payload is authoritative on replay. Reuse its owner so
+          // the subsequent chunk commit can complete the claim without turning
+          // an already-finished request into a stale-owner failure.
+          ownerToken = str(claim, 'owner_token') || ownerToken
+          const payload = claim.get ? claim.get('payload_json') : claim.payload_json
+          items = payload?.items || []
+          total = Number(payload?.total || items.length)
+          return
+        }
+        if (!claim) { claim = new Record(tx.findCollectionByNameOrId('karaoke_youtube_claims')); set(claim, 'claim_key', claimKey); set(claim, 'batch_key', batchKey) }
+        // Reclaimed/failed work starts a fresh quota reservation today. Only
+        // ready/complete payload replays retain their persisted quota day.
+        const quotaDay = dayKey(); set(claim, 'quota_day_key', quotaDay); set(claim, 'status', 'in_progress'); set(claim, 'reserved_units', 303); set(claim, 'owner_token', ownerToken); set(claim, 'lease_expires_at', future(120000)); set(claim, 'error_code', ''); tx.save(claim)
+        let quota = null; try { quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: quotaDay }) } catch (_) {}
+        if (!quota) { quota = new Record(tx.findCollectionByNameOrId('karaoke_youtube_quota')); set(quota, 'day_key', quotaDay); set(quota, 'quota_limit', 10000); set(quota, 'reserved', 0); set(quota, 'spent', 0) }
+        if (num(quota, 'spent') + num(quota, 'reserved') + 303 > num(quota, 'quota_limit')) throw new Error('youtube_quota_exhausted'); set(quota, 'reserved', num(quota, 'reserved') + 303); tx.save(quota)
+      })
+      let discovery = null; const existingClaim = find('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (existingClaim && ['ready', 'complete'].includes(str(existingClaim, 'status'))) { const payload = existingClaim.get ? existingClaim.get('payload_json') : existingClaim.payload_json; items = payload?.items || []; total = Number(payload?.total || items.length); discovery = { cost: 0 } } else { discovery = fetchYoutubeCandidates(String(input.query || ''), requestedMaxResults); items = discovery.items; total = items.length }
+      const spent = discovery.cost; attemptedCost = spent
+      if (!existingClaim || !['ready', 'complete'].includes(str(existingClaim, 'status'))) $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (!claim || str(claim, 'owner_token') !== ownerToken) throw new Error('youtube_claim_stale_owner'); const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); const used = num(batch, 'quota_used'); if (used + spent > num(batch, 'quota_limit')) throw new Error('youtube_quota_exhausted'); set(batch, 'quota_used', used + spent); set(batch, 'total', total); set(batch, 'updated_at', now()); tx.save(batch); set(claim, 'payload_json', { items, total, spent }); set(claim, 'spent_units', spent); set(claim, 'status', 'ready'); tx.save(claim); const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: str(claim, 'quota_day_key') }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - num(claim, 'reserved_units'))); set(quota, 'spent', num(quota, 'spent') + spent); tx.save(quota) })
+    } catch (error) {
+      if (error.message === 'chunk_replay') return c.json(200, { batchKey, imported: 0, replay: true })
+      const permanent = ['batch_source_mismatch', 'chunk_source_mismatch', 'youtube_quota_exhausted'].includes(error.message)
+      try { $app.runInTransaction((tx) => { const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); if (batch) { set(batch, 'status', permanent ? 'failed' : 'paused'); set(batch, 'last_error', String(error.message || 'youtube_import_failed').slice(0, 240)); set(batch, 'updated_at', now()); tx.save(batch) } const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (claim && str(claim, 'owner_token') === ownerToken) { const reserved = num(claim, 'reserved_units'); const consumed = Math.min(reserved, Number(error.quotaCost || attemptedCost || 0)); const qday = str(claim, 'quota_day_key'); if (reserved && qday) { const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: qday }); if (quota) { set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - reserved)); if (consumed) set(quota, 'spent', num(quota, 'spent') + consumed); tx.save(quota) } } set(claim, 'reserved_units', 0); set(claim, 'spent_units', consumed); set(claim, 'status', 'failed'); set(claim, 'error_code', String(error.message || 'youtube_import_failed')); tx.save(claim) } }) } catch (_) {}
+      const code = permanent ? error.message : 'youtube_import_failed'; return json(c, code === 'batch_source_mismatch' || code === 'chunk_source_mismatch' || code === 'youtube_request_in_progress' ? 409 : 503, code, code === 'youtube_quota_exhausted' ? 'YouTube import quota is exhausted' : 'Live YouTube import failed')
+    }
+  }
+  const chunkFingerprint = live ? requestFingerprint : hash(JSON.stringify(canonicalize({ offset, items })))
   try {
     let imported = 0
     $app.runInTransaction((tx) => {
       let batch = null; try { batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }) } catch (_) {}
       if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total) }
-      if (str(batch, 'source_fingerprint') !== manifestFingerprint || num(batch, 'total') !== total || str(batch, 'source_url') !== String(source.url || '').slice(0, 500) || str(batch, 'source_terms') !== String(source.terms || '').slice(0, 500)) throw new Error('batch_source_mismatch')
+      if (str(batch, 'source_fingerprint') !== manifestFingerprint || num(batch, 'total') !== total || str(batch, 'source_url') !== sourceUrl || str(batch, 'source_terms') !== sourceTerms) throw new Error('batch_source_mismatch')
       let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
       if (chunk && str(chunk, 'chunk_fingerprint') !== chunkFingerprint) throw new Error('chunk_source_mismatch')
       if (chunk) return
@@ -446,9 +529,11 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
         try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
         if (song) continue // Existing catalog entries retain operator review and eligibility decisions.
         song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))
-        const title = String(item.title || youtubeId).slice(0, 240); const artist = String(item.artist || item.channelTitle || '').slice(0, 160); const result = classifyCatalogItem(item); const normalizedTitle = normalized(title, 240); const normalizedArtist = normalized(artist, 160); set(song, 'youtube_id', youtubeId); set(song, 'title', title); set(song, 'artist', artist); set(song, 'provenance', 'fixture_import'); set(song, 'eligibility_reason', result.reason); set(song, 'source', 'fixture'); set(song, 'source_query', String(input.query || source.terms || '').slice(0, 160)); set(song, 'source_url', String(source.url || '').slice(0, 500)); set(song, 'source_retrieved_at', String(source.retrievedAt || '')); set(song, 'source_rank', offset + itemIndex + 1); set(song, 'source_terms', String(source.terms || '').slice(0, 500)); set(song, 'classification', result.classification); set(song, 'classification_confidence', result.confidence); set(song, 'review_status', 'unreviewed'); set(song, 'eligible', false); set(song, 'normalized_title', normalizedTitle); set(song, 'normalized_artist', normalizedArtist); set(song, 'identity_key', `${normalizedArtist}|${normalizedTitle}`); set(song, 'alternatives_json', []); set(song, 'review_history_json', []); set(song, 'metadata_json', { channelTitle: item.channelTitle || null, description: item.description || null }); set(song, 'import_batch', batchKey); set(song, 'imported_at', now()); tx.save(song); imported++
+        const title = String(item.title || youtubeId).slice(0, 240); const artist = String(item.artist || item.channelTitle || '').slice(0, 160); const result = classifyCatalogItem(item); const normalizedTitle = normalized(title, 240); const normalizedArtist = normalized(artist, 160); set(song, 'youtube_id', youtubeId); set(song, 'title', title); set(song, 'artist', artist); set(song, 'provenance', live ? 'youtube_api_import' : 'fixture_import'); set(song, 'eligibility_reason', result.reason); set(song, 'source', live ? 'youtube' : 'fixture'); set(song, 'source_query', String(input.query || source.terms || '').slice(0, 160)); set(song, 'source_url', sourceUrl); set(song, 'source_retrieved_at', String(source.retrievedAt || now())); set(song, 'source_rank', offset + itemIndex + 1); set(song, 'source_terms', sourceTerms); set(song, 'classification', result.classification); set(song, 'classification_confidence', result.confidence); set(song, 'review_status', 'unreviewed'); set(song, 'eligible', false); set(song, 'normalized_title', normalizedTitle); set(song, 'normalized_artist', normalizedArtist); set(song, 'identity_key', `${normalizedArtist}|${normalizedTitle}`); set(song, 'alternatives_json', []); set(song, 'review_history_json', []); set(song, 'metadata_json', { channelTitle: item.channelTitle || null, description: item.description || null, embeddable: item.embeddable === true, privacyStatus: item.privacyStatus || null, uploadStatus: item.uploadStatus || null, duration: item.duration || null, viewCount: item.viewCount || null }); set(song, 'import_batch', batchKey); set(song, 'imported_at', now()); tx.save(song); imported++
       }
-      chunk = new Record(tx.findCollectionByNameOrId('karaoke_catalog_import_chunks')); set(chunk, 'import', id(batch)); set(chunk, 'offset', offset); set(chunk, 'chunk_fingerprint', chunkFingerprint); set(chunk, 'item_count', items.length); tx.save(chunk)
+      if (!items.length) { if (live) { const emptyClaim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (emptyClaim && (!str(emptyClaim, 'owner_token') || str(emptyClaim, 'owner_token') === ownerToken)) { set(emptyClaim, 'status', 'complete'); set(emptyClaim, 'reserved_units', 0); tx.save(emptyClaim) } } set(batch, 'cursor', total); set(batch, 'status', 'complete'); set(batch, 'updated_at', now()); tx.save(batch); return }
+      chunk = new Record(tx.findCollectionByNameOrId('karaoke_catalog_import_chunks')); set(chunk, 'import', id(batch)); set(chunk, 'offset', offset); set(chunk, 'chunk_fingerprint', chunkFingerprint); set(chunk, 'item_count', items.length); set(chunk, 'payload_json', items); tx.save(chunk)
+      if (live) { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (claim && (!str(claim, 'owner_token') || str(claim, 'owner_token') === ownerToken)) { set(claim, 'status', 'complete'); set(claim, 'reserved_units', 0); tx.save(claim) } }
       const cursor = Math.max(num(batch, 'cursor'), offset + items.length); set(batch, 'cursor', cursor); set(batch, 'status', cursor >= total ? 'complete' : 'paused'); set(batch, 'updated_at', now()); tx.save(batch)
     })
     return c.json(200, { batchKey, imported })

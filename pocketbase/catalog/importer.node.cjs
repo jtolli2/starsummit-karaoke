@@ -3,7 +3,14 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
-const { classify, normalize, plan, sourceFingerprint, validateChunk } = require('./importer.cjs')
+const { classify, normalize, plan, quotaDayKey, sourceFingerprint, validateChunk } = require('./importer.cjs')
+
+test('quota day follows the America/Los_Angeles boundary across UTC midnight', () => {
+  assert.equal(quotaDayKey('2026-07-23T06:59:59.000Z'), '2026-07-22')
+  assert.equal(quotaDayKey('2026-07-23T07:00:00.000Z'), '2026-07-23')
+  assert.equal(quotaDayKey('2026-01-23T07:59:59.000Z'), '2026-01-22')
+  assert.equal(quotaDayKey('2026-01-23T08:00:00.000Z'), '2026-01-23')
+})
 
 test('classification is deterministic and excludes non-karaoke videos', () => {
   assert.deepEqual(classify({ title: 'Queen - Bohemian Rhapsody Karaoke Backing Track' }), { classification: 'karaoke', confidence: 0.92, reason: 'karaoke_backing_signal' })
