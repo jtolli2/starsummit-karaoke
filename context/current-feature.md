@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -50,32 +50,37 @@ In Progress
 - Legacy catalog rows are forward-only quarantined as `needs_review` and ineligible until canonical
   source or audited operator identity is established. Re-import of an existing YouTube ID appends a
   non-destructive identity proposal; it never promotes uploader metadata or overwrites curation.
-- Validation: 36 importer/hook contracts, three pinned PocketBase 0.39.7 preservation/idempotency
-  integrations, 15 Vue tests, and the production build pass. Whole-repository Oxlint remains red
+- Validation: 39 importer/hook contracts, the full 58-test backend suite, pinned PocketBase 0.39.7
+  catalog/party/realtime integrations, 15 Vue tests, and the production build pass.
+  Whole-repository Oxlint remains red
   on pre-existing hook/migration/test lint debt; no auto-fix was applied. Independent review found
   the initial checkpoint, legacy eligibility, provenance, artist-credit, and release-year defects;
   all were corrected and the final verdict is APPROVE with no blockers.
 - YouTube quota must be modeled before each live tranche. Exact replay and unchanged canonical
   inputs must consume no repeat search quota; stop safely when quota or review quality is limiting.
-- Retained staging deployed backend `5a9170586533352c78d45456479a5ad142fcafde`
-  (`inpgdr2rgvfy7wvp30ehqqfy`) and frontend at the same SHA
-  (`egb4iqrjxb6br9181q87yy6y`). The first backend attempt safely rolled back when retained JSON
-  exposed a migration representation mismatch; the serialized audit-history hotfix passed pinned
-  PocketBase 0.39.7 validation and independent review before the successful redeploy.
-- The migration preserved and quarantined all 16 retained catalog rows as `needs_review` and
-  ineligible. Suspect videos `nMDXPAM8RwE` and `9iQH7g_zKl8` are therefore no longer attributable
-  to KaraFun Karaoke or Zoom Karaoke Official as canonical artists. Both remain flagged for
-  constrained operator correction/deduplication to canonical `Rick Astley` / `Never Gonna Give
-  You Up`; neither was deleted, promoted, or silently overwritten.
+- Retained staging ultimately deployed product SHA `50acaa8c92a34d6e94e037351655e07b04d324f0`
+  to backend (`vvnypl84x804g5uz7gcy2vxe`) and frontend (`larll0lgs0l1sk941vc942go`). Exact-SHA
+  logs and health checks passed; the retained volume was preserved. Test-only follow-up
+  `7ab995e` was pushed after deployment and does not change the runtime image.
+- The migration preserved and quarantined all 16 retained catalog rows. Suspect video
+  `nMDXPAM8RwE` was audit-corrected through constrained tablet access to canonical `Rick Astley` /
+  `Never Gonna Give You Up`; it remains `needs_review` and ineligible. `9iQH7g_zKl8` remains
+  missing/uncertain and ineligible because assigning the same identity would collide with the
+  corrected primary; it is retained for operator deduplication/replacement and was not deleted.
 - A live five-item MusicBrainz tranche produced manifest
   `b2f47574d7727bb143be393691928bbb20a5a54dc1f3824748785ad205ff3993` across 1970, 1978,
   2002, 2008, and 2009 lists, with 505 expected and 1,515 conservatively reserved YouTube units.
   A transient MusicBrainz 503 caused zero YouTube spend and led to reviewed Retry-After-compliant
-  retry handling; the replay then completed. No YouTube discovery/import was submitted because
-  this session had no constrained `tablet_admin` credential. That access-control boundary is the
-  explicit quality stop: zero new source records, zero known new YouTube quota, and no bypass of
-  the approved authenticated pipeline.
-- Live checks passed same-origin `/api/health` (200), retained unauthenticated guest denial (403),
-  healthy exact-SHA Coolify deployments, and the deployed tablet sign-in boundary. The retained
+  retry handling. Constrained live discovery then spent 101 units and retained nine candidates,
+  but a retained PocketBase JSON-scalar replay incompatibility prevented automatic chunk commit.
+  Broad expansion stopped rather than repeat quota. One visibly audited karaoke candidate from
+  that paid result was committed through the idempotent fixture path: canonical `Simon &
+  Garfunkel` / `Bridge Over Troubled Water`, MusicBrainz list rank 1, uploader `Atomic Karaoke`,
+  92% karaoke confidence, unreviewed and ineligible. The other eight candidates remain retained.
+- Final staging report: 18 songs; sources fixture 1, MusicBrainz 1, YouTube 2, unknown 14;
+  classifications karaoke 4 and unknown 14; review backlog 18; identity verified-source 1,
+  operator-corrected 1, missing 16; alternatives 8; no unavailable items. Live checks passed
+  same-origin `/api/health` (200), canonical/uploader separation in the tablet UI, retained
+  unauthenticated denial, and healthy exact-SHA deployments. The retained
   volume `ggkfvh2tpdprcocn1sycu8zf`, party/queue/controller/enrollment state, production routing,
   and Wi-Fi state were unchanged.

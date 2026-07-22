@@ -203,3 +203,24 @@
   credential, so the quality stop left zero new records and zero known new YouTube spend. The
   retained volume and unrelated party, queue, controller, enrollment, production, and Wi-Fi state
   were unchanged.
+
+### 2026-07-22 — Popular-Song Source staging population continuation
+
+- Used constrained tablet-admin access to audit-correct `nMDXPAM8RwE` to canonical Rick Astley /
+  Never Gonna Give You Up without approval or eligibility. Preserved `9iQH7g_zKl8` as an
+  ineligible missing-identity alternative because the canonical identity already belongs to the
+  corrected primary; neither record was deleted.
+- Ran the real five-song MusicBrainz manifest. The first discovery retained nine candidates and
+  spent 101 YouTube units. Exact replays spent zero further quota but exposed a retained
+  PocketBase JSON-scalar checkpoint incompatibility, so broad population stopped. Repaired the
+  ready claim's stale per-record reservation from 303 to 0 while preserving its payload and quota
+  ledger; the eight unused candidates remain recoverable.
+- Imported one representative already-paid candidate through the same idempotent fixture contract:
+  Simon & Garfunkel / Bridge Over Troubled Water, Billboard 1970 rank 1, uploader Atomic Karaoke,
+  karaoke confidence 92%, unreviewed and ineligible. Final staging holds 18 songs and eight
+  alternatives; all 18 remain in the review backlog and guest eligibility was not broadened.
+- Deployed product SHA `50acaa8c92a34d6e94e037351655e07b04d324f0` to retained PocketBase
+  (`vvnypl84x804g5uz7gcy2vxe`) and frontend (`larll0lgs0l1sk941vc942go`) with the existing volume.
+  Passed 15 Vue tests, production build, 39 catalog contracts, 58 backend tests, pinned PocketBase
+  catalog/party/realtime integrations, same-origin health, live report, tablet review rendering,
+  and repeated independent review. Test-only fixture commit `7ab995e` was pushed afterward.
