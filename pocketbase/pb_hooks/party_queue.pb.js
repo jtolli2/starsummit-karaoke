@@ -31,6 +31,15 @@ function id(r) { return r?.id || r?.getString?.('id') }
 function name(r) { return r?.collection?.()?.name || r?.collection?.name || '' }
 function tablet(a) { return a && !a.getBool?.('revoked') && str(a, 'role') === 'tablet_admin' && ['users', '_pb_users_auth_'].includes(name(a)) }
 function hash(v) { return typeof $security !== 'undefined' && $security.sha256 ? $security.sha256(String(v)) : String(v) }
+function logCatalogImportFailure(batchKey, offset, itemCount, errorMessage) {
+  // Keep retained-staging diagnostics bounded and free of request payloads or secrets.
+  try {
+    const value = String(errorMessage || '')
+    const schemaErrors = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order']
+    const category = schemaErrors.includes(value) ? 'schema_validation' : value.includes('transaction') ? 'transaction_conflict' : 'unknown'
+    console.error(`Catalog import transaction failed (category=${category}, offset=${Number(offset) || 0}, itemCount=${Number(itemCount) || 0})`)
+  } catch (_) {}
+}
 function canonicalize(v) { if (Array.isArray(v)) return v.map(canonicalize); if (v && typeof v === 'object') { const out = {}; Object.keys(v).sort().forEach((key) => { out[key] = canonicalize(v[key]) }); return out } return v }
 function normalized(v, max) { return String(v || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, max) }
 function classifyCatalogItem(item) {
@@ -153,7 +162,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext, logCatalogImportFailure }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -461,7 +470,7 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, now, future, find, set, num, hash, canonicalize, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str } = globalThis.__partyQueue
+  const { auth, tablet, json, body, now, future, find, set, num, hash, canonicalize, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str, logCatalogImportFailure } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const live = input.fetchFromYoutube === true
   const batchKey = String(input.batchKey || '').trim(); let items = Array.isArray(input.items) ? input.items.slice(0, 100) : []; const offset = Number(input.offset)
@@ -540,7 +549,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
       const cursor = Math.max(num(batch, 'cursor'), offset + items.length); set(batch, 'cursor', cursor); set(batch, 'status', cursor >= total ? 'complete' : 'paused'); set(batch, 'updated_at', now()); tx.save(batch)
     })
     return c.json(200, { batchKey, imported })
-  } catch (error) { const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'].includes(error.message); return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed') }
+  } catch (error) { if (!live) logCatalogImportFailure(batchKey, offset, items.length, error?.message); const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'].includes(error.message); return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed') }
 })
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/review', (c) => {

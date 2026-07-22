@@ -46,6 +46,16 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
   assert.match(hook, /set\(batch, 'total', total\); tx\.save\(batch\)/)
 })
 
+test('fixture import failures log only bounded batch diagnostics', () => {
+  assert.match(hook, /function logCatalogImportFailure\(batchKey, offset, itemCount, errorMessage\)/)
+  assert.match(hook, /const schemaErrors = \['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'\]/)
+  assert.match(hook, /category=\$\{category\}, offset=\$\{Number\(offset\) \|\| 0\}, itemCount=\$\{Number\(itemCount\) \|\| 0\}/)
+  assert.doesNotMatch(hook, /batchKeyLength|batchKeyHash|\$\{message\}/)
+  assert.match(hook, /logCatalogImportFailure\(batchKey, offset, items\.length, error\?\.message\)/)
+  assert.match(hook, /globalThis\.__partyQueue = \{[\s\S]*logCatalogImportFailure \}/)
+  assert.match(hook, /fetchYoutubeCandidates, dayKey, random, id, str, logCatalogImportFailure \} = globalThis\.__partyQueue/)
+})
+
 test('live catalog discovery stays server-side and records quota/availability metadata', () => {
   assert.match(hook, /YOUTUBE_API_KEY/)
   assert.match(hook, /youtube\/v3\/search\?part=snippet&type=video/)
