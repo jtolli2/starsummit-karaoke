@@ -85,7 +85,10 @@ test('identity alternatives and review history are append-only and idempotent', 
   assert.match(hook, /!list\.some\(\(candidate\) => String\(candidate\.youtubeId \|\| ''\) === youtubeId\)/)
   assert.match(hook, /action: 'review'/)
   assert.match(hook, /action: 'replacement'/)
-  assert.match(hook, /set\(song, 'review_history_json', events\)/)
+  assert.match(hook, /function setJson\(r, f, v\) \{ r\.set\(f, JSON\.stringify\(v\)\)/)
+  assert.match(hook, /setJson\(song, 'review_history_json', events\)/)
+  assert.match(hook, /setJson\(identity, 'alternatives_json', list\)/)
+  assert.doesNotMatch(hook, /set\(song, 'review_history_json', events\)/)
 })
 
 test('review and replacement history mutations are transactional and untruncated', () => {
