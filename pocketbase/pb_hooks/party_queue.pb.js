@@ -55,11 +55,19 @@ const CATALOG_CHECKPOINT_HEALTH_FIELDS = {
   ],
 }
 const CATALOG_CHECKPOINT_HEALTH_TYPES = ['text', 'date', 'number', 'select', 'relation', 'json']
+function catalogFieldType(field) {
+  if (!field) return null
+  try {
+    if (typeof field.type === 'function') return String(field.type() || '')
+    return String(field.type || '')
+  } catch (_) { return '' }
+}
 function catalogCheckpointFieldHealth(collection, expected) {
   const [name, expectedType, expectedRequired] = expected
   let field = null
   try { field = collection?.fields?.getByName(name) || null } catch (_) {}
-  const type = CATALOG_CHECKPOINT_HEALTH_TYPES.includes(String(field?.type || '')) ? String(field.type) : field ? 'other' : null
+  const fieldType = catalogFieldType(field)
+  const type = CATALOG_CHECKPOINT_HEALTH_TYPES.includes(fieldType) ? fieldType : field ? 'other' : null
   return { name, type, required: field?.required === true, present: Boolean(field), expectedType, expectedRequired }
 }
 function catalogCheckpointHealth() {
@@ -70,7 +78,7 @@ function catalogCheckpointHealth() {
   const chunkFields = CATALOG_CHECKPOINT_HEALTH_FIELDS.chunks.map((expected) => catalogCheckpointFieldHealth(chunks, expected))
   let rawRelation = null
   try { rawRelation = chunks.fields.getByName('import') || null } catch (_) {}
-  const relationTargetMatches = Boolean(rawRelation && rawRelation.type === 'relation' && String(rawRelation.collectionId || '') === String(imports.id || ''))
+  const relationTargetMatches = Boolean(rawRelation && catalogFieldType(rawRelation) === 'relation' && String(rawRelation.collectionId || '') === String(imports.id || ''))
   const hasIndex = (collection, expected) => Array.isArray(collection.indexes) && collection.indexes.some((index) => String(index).replace(/\s+/g, ' ').trim() === expected)
   const importsUniqueIndex = hasIndex(imports, 'CREATE UNIQUE INDEX idx_karaoke_catalog_import_batch ON karaoke_catalog_imports (batch_key)')
   const chunksUniqueIndex = hasIndex(chunks, 'CREATE UNIQUE INDEX idx_karaoke_catalog_import_chunk ON karaoke_catalog_import_chunks (import, offset)')

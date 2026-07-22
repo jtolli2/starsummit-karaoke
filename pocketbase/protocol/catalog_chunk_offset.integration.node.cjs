@@ -22,9 +22,12 @@ test('PocketBase 0.39.7 repairs required zero offset without rewriting records',
     record.set('offset', 0); record.set('marker', 'preserve-me'); app.save(record)
   }, () => {})`)
   fs.copyFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512600_repair_catalog_chunk_offset_required.js'), path.join(migrations, '1784512600_repair_catalog_chunk_offset_required.js'))
-  fs.writeFileSync(path.join(migrations, '1784512610_assert_offset_repair.js'), `migrate((app) => {
+  fs.copyFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512700_repair_catalog_checkpoint_field_api.js'), path.join(migrations, '1784512700_repair_catalog_checkpoint_field_api.js'))
+  fs.writeFileSync(path.join(migrations, '1784512710_assert_offset_repair.js'), `migrate((app) => {
     const collection = app.findCollectionByNameOrId('karaoke_catalog_import_chunks')
     const field = collection.fields.getByName('offset')
+    const type = typeof field.type === 'function' ? field.type() : field.type
+    if (type !== 'number') throw new Error('offset type changed')
     if (field.required) throw new Error('offset remained required')
     const record = app.findRecordsByFilter('karaoke_catalog_import_chunks', 'marker = "preserve-me"', '', 1, 0)[0]
     if (!record || record.get('offset') !== 0 || record.get('marker') !== 'preserve-me') throw new Error('checkpoint record changed')
