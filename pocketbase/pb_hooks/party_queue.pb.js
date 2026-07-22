@@ -30,8 +30,18 @@ function set(r, f, v) { r.set(f, v); return r }
 function setJson(r, f, v) { r.set(f, JSON.stringify(v)); return r }
 function jsonValue(r, f, fallback) {
   const value = r && r.get ? r.get(f) : r?.[f]
-  if (typeof value !== 'string') return value === null || value === undefined ? fallback : value
-  try { return JSON.parse(value) } catch (_) { return fallback }
+  if (value === null || value === undefined) return fallback
+  if (typeof value === 'string') { try { return JSON.parse(value) } catch (_) { return fallback } }
+  // PocketBase may expose JSONRaw as an object whose string form is the JSON
+  // document. Preserve native arrays and plain objects without coercion.
+  if (Array.isArray(value)) return value
+  if (typeof value === 'object') {
+    const text = String(value)
+    if (text === '[object Object]') return value
+    if (!/^[{[]/.test(text)) return fallback
+    try { return JSON.parse(text) } catch (_) { return fallback }
+  }
+  return fallback
 }
 function sameInstant(left, right) {
   const canonical = (value) => String(value || '').trim().replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T')
