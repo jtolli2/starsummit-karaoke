@@ -5,7 +5,7 @@
 
 ## Status
 
-Complete
+In Progress — retained-staging deployment and live validation pending
 
 ## Goals
 
