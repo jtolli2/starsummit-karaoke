@@ -71,6 +71,12 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
   assert.match(hook, /set\(batch, 'total', total\); tx\.save\(batch\)/)
 })
 
+test('catalog source retrieval dates compare by instant across PocketBase formatting', () => {
+  assert.match(hook, /function sameInstant\(left, right\)/)
+  assert.match(hook, /!sameInstant\(str\(batch, 'source_retrieved_at'\), sourceRetrievedAt\)/)
+  assert.doesNotMatch(hook, /str\(batch, 'source_retrieved_at'\) !== sourceRetrievedAt/)
+})
+
 test('catalog completion verifies canonical content and source metadata digest', () => {
   assert.match(hook, /function catalogFinalDigest\(source, total, items\)/)
   assert.match(hook, /source: \{ url: String\(source\?\.url/)
