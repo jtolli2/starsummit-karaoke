@@ -6,7 +6,8 @@ export type QueueSong = {
   song: { id: string; youtubeId: string; title: string; artist: string }
 }
 
-export type LibrarySong = { id: string; youtubeId: string; title: string; artist: string; eligible?: boolean; reviewState?: string }
+export type LibrarySong = { id: string; youtubeId: string; title: string; artist: string; requestable?: boolean; source?: 'local' | 'youtube'; eligible?: boolean; reviewState?: string }
+export type CatalogIndex = { version: string; songs: LibrarySong[] }
 
 const credentialKey = (code: string) => `karaoke:party:${code.trim().toUpperCase()}:credential`
 
@@ -62,10 +63,73 @@ export function searchSongs(credential: string, query: string) {
   return request<{ songs: LibrarySong[]; total?: number }>(`/api/karaoke/parties/songs?${params}`, {}, credential)
 }
 
+const catalogCacheKey = 'karaoke:catalog:index'
+export const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
+let catalogCache: CatalogIndex | null = null
+let catalogCachedAt = 0
+
+/** Normalize labels for accent/punctuation/spacing tolerant client-side matching. */
+export function normalizeSearchText(value: string) {
+  return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ')
+}
+
+export function normalizeCatalogSong(raw: Partial<LibrarySong> & { youtube_id?: string; youtubeId?: string; id?: string }): LibrarySong {
+  const title = String(raw.title || '').trim() || 'Untitled song'
+  const artist = String(raw.artist || '').trim() || 'Unknown artist'
+  const youtubeId = String(raw.youtubeId || raw.youtube_id || '').trim()
+  return { id: String(raw.id || youtubeId), youtubeId, title, artist, requestable: raw.requestable !== false, source: raw.source || 'local' }
+}
+
+function deterministicSongs(songs: LibrarySong[]) {
+  return songs.map(normalizeCatalogSong).filter((song) => /^[A-Za-z0-9_-]{11}$/.test(song.youtubeId))
+    .sort((a, b) => normalizeSearchText(a.title).localeCompare(normalizeSearchText(b.title)) || normalizeSearchText(a.artist).localeCompare(normalizeSearchText(b.artist)) || a.youtubeId.localeCompare(b.youtubeId))
+}
+
+export async function loadCatalogIndex(credential: string, force = false): Promise<CatalogIndex> {
+  const fresh = catalogCache && Date.now() - catalogCachedAt < CATALOG_CACHE_TTL_MS
+  if (!force && fresh) return catalogCache as CatalogIndex
+  if (!force) {
+    try {
+      const cached = sessionStorage.getItem(catalogCacheKey)
+      if (cached) {
+        const parsed = JSON.parse(cached) as { cachedAt?: number; index?: CatalogIndex } | CatalogIndex
+        if ('index' in parsed && parsed.index) { catalogCache = parsed.index; catalogCachedAt = Number(parsed.cachedAt) || 0 }
+        else { catalogCache = parsed as CatalogIndex; catalogCachedAt = 0 }
+      }
+    } catch { /* ignore unavailable storage */ }
+    if (catalogCache && Date.now() - catalogCachedAt < CATALOG_CACHE_TTL_MS) return catalogCache
+  }
+  try {
+    const payload = await request<{ version?: string; indexVersion?: string; songs?: LibrarySong[] }>('/api/karaoke/parties/catalog', {}, credential)
+    catalogCache = { version: String(payload.version || payload.indexVersion || 'v1'), songs: deterministicSongs(payload.songs || []) }
+    catalogCachedAt = Date.now()
+    try { sessionStorage.setItem(catalogCacheKey, JSON.stringify({ cachedAt: catalogCachedAt, index: catalogCache })) } catch { /* cache is best effort */ }
+    return catalogCache
+  } catch (error) {
+    // A stale sanitized index is preferable to an empty search while offline.
+    if (catalogCache) return catalogCache
+    throw error
+  }
+}
+
+/** Explicit party-scoped fallback; server owns YouTube credentials and quota. */
+export function fallbackSearchSongs(credential: string, query: string) {
+  return request<{ songs?: LibrarySong[]; candidates?: LibrarySong[]; quota?: 'cached' | 'live' | 'unavailable'; cached?: boolean; replay?: boolean }>('/api/karaoke/parties/songs/fallback', { method: 'POST', body: JSON.stringify({ query: query.trim().slice(0, 100) }) }, credential).then((result) => ({ ...result, songs: (result.songs || result.candidates || []).map((song) => ({ ...song, source: 'youtube' as const })) }))
+}
+
 export function requestSong(credential: string, youtubeId: string) {
   return request<QueueSong>('/api/karaoke/requests', {
     method: 'POST',
     body: JSON.stringify({ youtubeId }),
+  }, credential)
+}
+
+/** Request a high-confidence cached fallback candidate through its audited party path. */
+export function requestFallbackSong(credential: string, youtubeId: string, idempotencyKey: string) {
+  return request<QueueSong>('/api/karaoke/parties/songs/fallback/request', {
+    method: 'POST',
+    body: JSON.stringify({ youtubeId, idempotencyKey }),
   }, credential)
 }
 

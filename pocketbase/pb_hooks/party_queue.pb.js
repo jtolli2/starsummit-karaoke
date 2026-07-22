@@ -6,8 +6,14 @@ const REQUEST_GAP = 30 * 1000
 const JOIN_WINDOW = 60 * 1000
 const JOIN_LIMIT = 20
 const PARTY_REQUEST_LIMIT = 20
+const FALLBACK_QUERY_MAX = 80
+const FALLBACK_CANDIDATE_MAX = 5
+const FALLBACK_GUEST_LIMIT = 5
+const FALLBACK_PARTY_LIMIT = 20
+const FALLBACK_POLICY_VERSION = 'v1'
 const CONTROLLER_STATE_TTL = 90 * 1000
 const joinAttempts = Object.create(null)
+const fallbackAttempts = Object.create(null)
 
 function info(c) { try { return c.requestInfo ? c.requestInfo() || {} : $apis.requestInfo(c) || {} } catch (_) { return {} } }
 function body(c) { const i = info(c); return i.body && typeof i.body === 'object' ? i.body : i.data && typeof i.data === 'object' ? i.data : {} }
@@ -211,6 +217,14 @@ function catalogFinalDigest(source, total, items) {
   return hash(JSON.stringify(canonicalize({ source: { url: String(source?.url || ''), terms: String(source?.terms || ''), retrievedAt: String(source?.retrievedAt || '') }, total: Number(total), items: Array.isArray(items) ? items : [] })))
 }
 function normalized(v, max) { return String(v || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, max) }
+function fallbackQuery(v) {
+  const value = normalized(v, FALLBACK_QUERY_MAX)
+  if (value.length < 2 || value.split(' ').filter(Boolean).length > 12) throw new Error('fallback_query_invalid')
+  return value
+}
+function catalogSafeSong(song) {
+  return { id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') }
+}
 function classifyCatalogItem(item) {
   const text = `${item?.videoTitle || item?.title || ''} ${item?.description || ''} ${item?.channelTitle || ''}`.toLowerCase()
   if (/\b(live|concert|performance)\b/.test(text)) return { classification: 'live', confidence: 0.98, reason: 'live_performance' }
@@ -334,7 +348,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -463,6 +477,79 @@ routerAdd('GET', '/api/karaoke/parties/songs', (c) => {
     const status = ['party_expired', 'guest_credential_expired'].includes(error.message) ? 410 : 403
     return json(c, status, error.message, 'Song access denied')
   }
+})
+
+// Compact versioned index for client-side search. Only approved/eligible
+// canonical fields cross the party credential boundary.
+routerAdd('GET', '/api/karaoke/parties/catalog', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { requireGuest, records, str, id, hash, json } = globalThis.__partyQueue
+  try {
+    requireGuest(c, {})
+    const rows = records('karaoke_songs', 'eligible = true && review_status = "approved"', '+normalized_title,+normalized_artist,+youtube_id', 5000, 0)
+    const songs = rows.map((song) => ({ id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') }))
+    const version = hash(songs.map((song) => `${song.youtubeId}|${song.title}|${song.artist}`).join('\n')).slice(0, 32)
+    return c.json(200, { version, songs })
+  } catch (error) {
+    const status = ['party_expired', 'guest_credential_expired'].includes(error.message) ? 410 : 403
+    return json(c, status, error.message, 'Catalog access denied')
+  }
+})
+
+// Explicit party-scoped YouTube fallback. Results are cached durably by the
+// normalized query; candidates remain ineligible globally and are requestable
+// only through the authenticated party path below.
+routerAdd('POST', '/api/karaoke/parties/songs/fallback', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { requireGuest, body, fallbackQuery, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, json, id, str, now, future, set, setJson, num, random, dayKey, fetchYoutubeCandidates, classifyCatalogItem, hash } = globalThis.__partyQueue
+  let access
+  try { access = requireGuest(c, {}) } catch (error) { return json(c, ['party_expired', 'guest_credential_expired'].includes(error.message) ? 410 : 403, error.message, 'Fallback search denied') }
+  let normalizedQuery
+  try { normalizedQuery = fallbackQuery(body(c).query) } catch (error) { return json(c, 422, error.message, 'A bounded search query is required') }
+  const queryHash = hash(normalizedQuery); const ownerToken = random(32); const quotaDay = dayKey(); let ownsClaim = false; let externalCall = false; let quotaReserved = false
+  try {
+    let replay = false; let payload = null
+    $app.runInTransaction((tx) => {
+      let claim = null; try { claim = tx.findFirstRecordByFilter('karaoke_youtube_search_claims', 'query_hash = {:hash} && policy_version = {:policy}', { hash: queryHash, policy: FALLBACK_POLICY_VERSION }) } catch (_) {}
+      if (claim && str(claim, 'status') === 'ready' && new Date(str(claim, 'expires_at')).getTime() > Date.now() && Array.isArray(globalThis.__partyQueue.jsonValue(claim, 'payload_json', null))) { payload = globalThis.__partyQueue.jsonValue(claim, 'payload_json', []); replay = true; return }
+      if (claim && str(claim, 'status') === 'in_progress' && new Date(str(claim, 'lease_expires_at')).getTime() > Date.now()) throw new Error('fallback_in_progress')
+      if (claim && str(claim, 'status') === 'in_progress') { const oldReserved = num(claim, 'reserved_units'); const oldDay = str(claim, 'quota_day_key'); const conservativeSpent = Boolean(str(claim, 'external_started_at')); if (oldReserved && oldDay) { const oldQuota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: oldDay }); set(oldQuota, 'reserved', Math.max(0, num(oldQuota, 'reserved') - oldReserved)); if (conservativeSpent) set(oldQuota, 'spent', num(oldQuota, 'spent') + oldReserved); tx.save(oldQuota) } if (conservativeSpent) set(claim, 'spent_units', num(claim, 'spent_units') + oldReserved); set(claim, 'reserved_units', 0); set(claim, 'status', 'failed'); tx.save(claim) }
+      let limit = null; try { limit = tx.findFirstRecordByFilter('karaoke_fallback_rate_limits', 'party = {:party} && guest = {:guest} && day_key = {:day}', { party: id(access.party), guest: id(access.guest), day: quotaDay }) } catch (_) {}
+      if (!limit) { limit = new Record(tx.findCollectionByNameOrId('karaoke_fallback_rate_limits')); set(limit, 'party', id(access.party)); set(limit, 'guest', id(access.guest)); set(limit, 'day_key', quotaDay); set(limit, 'count', 0) }
+      const partyLimits = tx.findRecordsByFilter('karaoke_fallback_rate_limits', 'party = {:party} && day_key = {:day}', '', 1000, 0, { party: id(access.party), day: quotaDay }); const partyCount = partyLimits.reduce((total, row) => total + num(row, 'count'), 0)
+      if (num(limit, 'count') >= FALLBACK_GUEST_LIMIT || partyCount >= FALLBACK_PARTY_LIMIT) throw new Error('fallback_rate_limited')
+      let quota = null; try { quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: quotaDay }) } catch (_) {} if (!quota) { quota = new Record(tx.findCollectionByNameOrId('karaoke_youtube_quota')); set(quota, 'day_key', quotaDay); set(quota, 'quota_limit', 10000); set(quota, 'reserved', 0); set(quota, 'spent', 0) } if (num(quota, 'spent') + num(quota, 'reserved') + 101 > num(quota, 'quota_limit')) throw new Error('youtube_quota_exhausted')
+      if (!claim) { claim = new Record(tx.findCollectionByNameOrId('karaoke_youtube_search_claims')); set(claim, 'query_hash', queryHash); set(claim, 'policy_version', FALLBACK_POLICY_VERSION) } set(claim, 'status', 'in_progress'); set(claim, 'owner_token', ownerToken); set(claim, 'lease_expires_at', future(120000)); set(claim, 'reserved_units', 101); set(claim, 'quota_day_key', quotaDay); set(claim, 'external_started_at', null); tx.save(claim); set(limit, 'count', num(limit, 'count') + 1); tx.save(limit); set(quota, 'reserved', num(quota, 'reserved') + 101); tx.save(quota); ownsClaim = true; quotaReserved = true
+    })
+    if (replay) { $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_search_claims', 'query_hash = {:hash} && policy_version = {:policy}', { hash: queryHash, policy: FALLBACK_POLICY_VERSION }); let grant = null; try { grant = tx.findFirstRecordByFilter('karaoke_youtube_search_access', 'party = {:party} && guest = {:guest} && claim = {:claim}', { party: id(access.party), guest: id(access.guest), claim: id(claim) }) } catch (_) {} if (!grant) { grant = new Record(tx.findCollectionByNameOrId('karaoke_youtube_search_access')); set(grant, 'party', id(access.party)); set(grant, 'guest', id(access.guest)); set(grant, 'claim', id(claim)) } set(grant, 'expires_at', future(24 * 60 * 60 * 1000)); tx.save(grant) }); return c.json(200, { query: normalizedQuery, replay: true, candidates: payload.map((candidate) => ({ youtubeId: candidate.youtubeId, title: candidate.title, artist: candidate.artist, classification: candidate.classification, confidence: candidate.confidence, reason: candidate.reason })) }) }
+    $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_search_claims', 'query_hash = {:hash} && policy_version = {:policy}', { hash: queryHash, policy: FALLBACK_POLICY_VERSION }); if (str(claim, 'owner_token') !== ownerToken) throw new Error('fallback_claim_stale'); set(claim, 'external_started_at', now()); tx.save(claim) }); externalCall = true; const discovered = fetchYoutubeCandidates(normalizedQuery, FALLBACK_CANDIDATE_MAX); const candidates = discovered.items.map((item) => { const result = classifyCatalogItem(item); return { youtubeId: item.youtubeId, title: String(item.videoTitle || '').slice(0, 240), classification: result.classification, confidence: result.confidence, reason: result.reason } }).filter((item) => item.classification === 'karaoke' && item.confidence >= 0.8).slice(0, FALLBACK_CANDIDATE_MAX)
+    $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_search_claims', 'query_hash = {:hash} && policy_version = {:policy}', { hash: queryHash, policy: FALLBACK_POLICY_VERSION }); if (str(claim, 'owner_token') !== ownerToken) throw new Error('fallback_claim_stale'); setJson(claim, 'payload_json', candidates); set(claim, 'status', 'ready'); set(claim, 'expires_at', future(24 * 60 * 60 * 1000)); set(claim, 'spent_units', num(claim, 'spent_units') + 101); set(claim, 'reserved_units', 0); tx.save(claim); const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: quotaDay }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - 101)); set(quota, 'spent', num(quota, 'spent') + 101); tx.save(quota); let grant = null; try { grant = tx.findFirstRecordByFilter('karaoke_youtube_search_access', 'party = {:party} && guest = {:guest} && claim = {:claim}', { party: id(access.party), guest: id(access.guest), claim: id(claim) }) } catch (_) {} if (!grant) { grant = new Record(tx.findCollectionByNameOrId('karaoke_youtube_search_access')); set(grant, 'party', id(access.party)); set(grant, 'guest', id(access.guest)); set(grant, 'claim', id(claim)) } set(grant, 'expires_at', future(24 * 60 * 60 * 1000)); tx.save(grant) })
+    quotaReserved = false; return c.json(200, { query: normalizedQuery, replay: false, candidates })
+  } catch (error) {
+    try { if (quotaReserved) $app.runInTransaction((tx) => { const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: quotaDay }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - 101)); if (externalCall) set(quota, 'spent', num(quota, 'spent') + 101); tx.save(quota); const claim = tx.findFirstRecordByFilter('karaoke_youtube_search_claims', 'query_hash = {:hash} && policy_version = {:policy}', { hash: queryHash, policy: FALLBACK_POLICY_VERSION }); if (claim && str(claim, 'owner_token') === ownerToken) { set(claim, 'status', 'failed'); set(claim, 'reserved_units', 0); if (externalCall) set(claim, 'spent_units', num(claim, 'spent_units') + 101); tx.save(claim) } }) } catch (_) {}
+    const reason = String(error.message || ''); const code = reason === 'fallback_in_progress' ? 'fallback_in_progress' : reason === 'fallback_rate_limited' ? 'fallback_rate_limited' : reason === 'youtube_quota_exhausted' ? 'fallback_quota_exhausted' : 'fallback_unavailable'; return json(c, code === 'fallback_in_progress' ? 409 : code.includes('rate') || code.includes('quota') ? 429 : 503, code, code === 'fallback_in_progress' ? 'Fallback search is already in progress' : 'Fallback search is temporarily unavailable')
+  }
+})
+
+routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue; let access
+  try { access = q.requireGuest(c, {}) } catch (error) { return q.json(c, 403, error.message, 'Fallback request denied') }
+  const input = q.body(c); const youtubeId = String(input.youtubeId || ''); const requestKey = String(input.idempotencyKey || '').slice(0, 96)
+  if (!q.YOUTUBE_ID.test(youtubeId) || !requestKey) return q.json(c, 422, 'invalid_fallback_request', 'Candidate and idempotency key are required')
+  try {
+    let result
+    $app.runInTransaction((tx) => {
+      const party = tx.findRecordById('karaoke_parties', q.id(access.party)); const guest = tx.findRecordById('karaoke_guest_identities', q.id(access.guest)); if (!q.activeParty(party)) throw new Error('party_expired')
+      const prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }); if (prior) { result = q.songView(prior, tx.findRecordById('karaoke_songs', q.str(prior, 'song'))); return }
+      const grants = tx.findRecordsByFilter('karaoke_youtube_search_access', 'party = {:party} && guest = {:guest} && expires_at > {:now}', '-expires_at', 100, 0, { party: q.id(party), guest: q.id(guest), now: q.now() }); let candidate = null; for (const grant of grants) { const claim = tx.findRecordById('karaoke_youtube_search_claims', q.str(grant, 'claim')); const payload = claim ? q.jsonValue(claim, 'payload_json', []) : []; if (Array.isArray(payload)) { candidate = payload.find((item) => String(item.youtubeId) === youtubeId && item.classification === 'karaoke' && Number(item.confidence) >= 0.8); if (candidate) break } } if (!candidate) throw new Error('fallback_candidate_unavailable')
+      if (q.str(guest, 'last_request_at') && Date.now() - new Date(q.str(guest, 'last_request_at')).getTime() < q.REQUEST_GAP) throw new Error('rate_limited'); const recent = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && requested_at >= {:cutoff}', '', q.PARTY_REQUEST_LIMIT + 1, 0, { party: q.id(party), cutoff: new Date(Date.now() - q.REQUEST_GAP).toISOString() }); if (recent.length >= q.PARTY_REQUEST_LIMIT) throw new Error('rate_limited')
+      let song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }); if (!song) { song = new Record(tx.findCollectionByNameOrId('karaoke_songs')); q.set(song, 'youtube_id', youtubeId); q.set(song, 'title', 'Unidentified karaoke candidate'); q.set(song, 'artist', 'Unidentified artist'); q.set(song, 'eligible', false); q.set(song, 'classification', 'karaoke'); q.set(song, 'classification_confidence', Number(candidate.confidence)); q.set(song, 'review_status', 'needs_review'); q.set(song, 'provenance', 'youtube_fallback'); q.set(song, 'eligibility_reason', 'missing_canonical_identity'); q.set(song, 'identity_status', 'missing'); q.set(song, 'identity_reason', 'missing_canonical_identity'); q.set(song, 'video_title', String(candidate.title || '').slice(0, 500)); tx.save(song) }
+      const duplicate = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && active_song_key = {:key}', { party: q.id(party), key: youtubeId }); if (duplicate) throw new Error('duplicate_song')
+      const sequence = q.num(party, 'queue_sequence') + 1; q.set(party, 'queue_sequence', sequence); tx.save(party); const queue = new Record(tx.findCollectionByNameOrId('karaoke_queue')); q.set(queue, 'party', q.id(party)); q.set(queue, 'song', q.id(song)); q.set(queue, 'requester', q.id(guest)); q.set(queue, 'status', 'queued'); q.set(queue, 'active_song_key', youtubeId); q.set(queue, 'request_key', requestKey); q.set(queue, 'sequence', sequence); q.set(queue, 'requested_at', q.now()); tx.save(queue); q.set(guest, 'last_request_at', q.now()); q.set(guest, 'request_count', q.num(guest, 'request_count') + 1); tx.save(guest); result = q.songView(queue, song)
+    })
+    return c.json(201, result)
+  } catch (error) { const status = { party_expired: 410, duplicate_song: 409, fallback_candidate_unavailable: 422, rate_limited: 429 }[error.message] || 500; return q.json(c, status, error.message, 'Fallback request rejected') }
 })
 
 routerAdd('POST', '/api/karaoke/requests', (c) => {

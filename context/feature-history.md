@@ -256,3 +256,17 @@
   Compose validation. Signed product commits through `204d0f6812b32fbac029e7b82007593eebdac4c4`
   were pushed and deployed healthy to retained PocketBase (`i14gl0508juv9pjvy05x1hdz`) and frontend
   (`xzok7k4as8d5lf3bi3x86wrx`) without replacing volume `ggkfvh2tpdprcocn1sycu8zf`.
+# 2026-07-22 — Fuzzy Local Search with Quota-Safe YouTube Fallback
+
+- Added a sanitized, deterministic approved/eligible catalog index and a Fuse.js guest search with
+  local debounce, typo/alias/accent normalization, weak-match suggestions, five-minute cache refresh,
+  and offline safe-index fallback.
+- Added explicit authenticated fallback discovery with private policy-versioned claims, cache expiry,
+  durable guest/party/global controls, quota reservation/spend settlement, conservative stale-claim
+  recovery, party/guest-scoped candidate grants, and at most five sanitized karaoke candidates.
+- Added the distinct party-scoped selected-candidate request path. It preserves queue idempotency,
+  rotation, active duplicate and rate protections; any fallback song remains unreviewed and ineligible,
+  with YouTube presentation metadata never used as canonical artist/title.
+- Local evidence: 9 focused Vue tests, 27 backend contracts, production build, hook/migration syntax,
+  whitespace, and independent security/concurrency review. Pinned PocketBase runtime, commit/push,
+  retained staging deployment, and live quota/cache validation remain pending.

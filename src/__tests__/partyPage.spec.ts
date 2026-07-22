@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PartyPage from '@/pages/party/[code].vue'
 
 const api = vi.hoisted(() => ({
-  joinParty: vi.fn(), partyCredential: vi.fn(), loadQueue: vi.fn(), searchSongs: vi.fn(), requestSong: vi.fn(), startQueueWakeHint: vi.fn(),
+  joinParty: vi.fn(), partyCredential: vi.fn(), loadQueue: vi.fn(), searchSongs: vi.fn(), loadCatalogIndex: vi.fn(), fallbackSearchSongs: vi.fn(), requestFallbackSong: vi.fn(), normalizeCatalogSong: (song: any) => song, normalizeSearchText: (value: string) => value.toLowerCase(), requestSong: vi.fn(), startQueueWakeHint: vi.fn(),
 }))
 vi.mock('@/services/partyApi', () => api)
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { code: 'ABCD1234' } }) }))
@@ -13,6 +13,7 @@ describe('party page', () => {
     vi.resetAllMocks()
     api.partyCredential.mockReturnValue('credential-1234567890')
     api.loadQueue.mockResolvedValue({ queue: [] })
+    api.loadCatalogIndex.mockResolvedValue({ version: 'test', songs: [{ id: 's1', youtubeId: 'abcdefghijk', title: 'Song', artist: 'Artist' }] })
     api.searchSongs.mockResolvedValue({ songs: [{ id: 's1', youtubeId: 'abcdefghijk', title: 'Song', artist: 'Artist' }] })
     api.startQueueWakeHint.mockResolvedValue(() => undefined)
   })

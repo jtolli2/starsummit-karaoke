@@ -16,6 +16,49 @@ const offsetRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_mig
 const fieldApiRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512700_repair_catalog_checkpoint_field_api.js'), 'utf8')
 const sourceIdentityMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512900_catalog_source_identity.js'), 'utf8')
 const claimLifecycleMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784513100_repair_catalog_claim_lifecycle.js'), 'utf8')
+const fallbackCacheMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784514000_youtube_search_cache.js'), 'utf8')
+const fallbackRequestMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784514100_fallback_request_idempotency.js'), 'utf8')
+const fallbackReservationMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784514220_fallback_claim_reservation_state.js'), 'utf8')
+
+test('party catalog index is versioned and sanitized', () => {
+  const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/parties\/catalog',[\s\S]*?\n}\)/)?.[0] || ''
+  assert.match(endpoint, /requireGuest\(c, \{\}\)/)
+  assert.match(endpoint, /eligible = true && review_status = "approved"/)
+  assert.match(endpoint, /version/)
+  assert.doesNotMatch(endpoint, /provenance:|metadata_json|channelTitle:/)
+})
+
+test('fallback search normalizes, bounds, classifies, and caches durable candidates', () => {
+  assert.match(hook, /function fallbackQuery\(v\)/)
+  assert.match(hook, /FALLBACK_CANDIDATE_MAX = 5/)
+  assert.match(hook, /karaoke_youtube_search_claims/)
+  assert.match(hook, /classifyCatalogItem\(item\)/)
+  assert.match(hook, /confidence >= 0\.8/)
+  assert.match(hook, /query_hash/)
+  assert.match(fallbackCacheMigration, /CREATE UNIQUE INDEX idx_karaoke_youtube_search_cache_query/)
+  assert.match(fallbackCacheMigration, /listRule: null, viewRule: null, createRule: null/)
+  assert.match(hook, /fallback\/request/)
+  assert.match(hook, /fallback_candidate_unavailable/)
+  assert.match(hook, /request_key/)
+  assert.match(hook, /youtube_quota_exhausted/)
+  assert.match(fallbackRequestMigration, /idx_karaoke_queue_request_key/)
+  assert.match(hook, /fallback_in_progress/)
+  assert.match(hook, /reserved_units/)
+  assert.match(hook, /external_started_at/)
+  assert.match(hook, /lease_expires_at', future\(120000\)/)
+  assert.match(hook, /fallback_candidate_unavailable: 422, rate_limited: 429/)
+  assert.match(fallbackReservationMigration, /reserved_units/)
+  assert.match(fallbackReservationMigration, /quota_day_key/)
+})
+
+test('fallback query normalization rejects empty and oversized token input', () => {
+  const start = hook.indexOf('function normalized(')
+  const end = hook.indexOf('function catalogSafeSong(', start)
+  const helpers = new Function(`const FALLBACK_QUERY_MAX = 80; ${hook.slice(start, end)}; return { normalized, fallbackQuery }`)()
+  assert.equal(helpers.fallbackQuery('  Béyoncé---Halo '), 'beyonce halo')
+  assert.throws(() => helpers.fallbackQuery('!'), /fallback_query_invalid/)
+  assert.throws(() => helpers.fallbackQuery('one two three four five six seven eight nine ten eleven twelve thirteen'), /fallback_query_invalid/)
+})
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
   const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/replace'[\s\S]*?\n}\)/)
