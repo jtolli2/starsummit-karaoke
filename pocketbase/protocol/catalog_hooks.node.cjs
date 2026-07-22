@@ -47,8 +47,10 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
 })
 
 test('fixture import failures log only bounded batch diagnostics', () => {
+  assert.match(hook, /function catalogImportFailureStage\(stage\)/)
   assert.match(hook, /function logCatalogImportFailure\(stage, offset, itemCount\)/)
   assert.match(hook, /const stages = \['batch_create', 'batch_validate', 'song_save', 'chunk_save', 'batch_finalize'\]/)
+  assert.match(hook, /return stages\.includes\(stage\) \? stage : 'unknown'/)
   assert.match(hook, /stage=\$\{safeStage\}, offset=\$\{safeOffset\}, itemCount=\$\{safeItemCount\}/)
   assert.doesNotMatch(hook, /batchKeyLength|batchKeyHash|\$\{message\}|errorMessage/)
   assert.match(hook, /const chunkFingerprint = live \? requestFingerprint : hash\(JSON\.stringify\(canonicalize\(\{ offset, items \}\)\)\)\n  let diagnosticStage = 'batch_create'/)
@@ -56,8 +58,11 @@ test('fixture import failures log only bounded batch diagnostics', () => {
   assert.match(hook, /diagnosticStage = 'chunk_save'; tx\.save\(chunk\)/)
   assert.match(hook, /diagnosticStage = 'batch_finalize'; tx\.save\(batch\)/)
   assert.match(hook, /logCatalogImportFailure\(diagnosticStage, offset, items\.length\)/)
-  assert.match(hook, /globalThis\.__partyQueue = \{[\s\S]*logCatalogImportFailure \}/)
-  assert.match(hook, /fetchYoutubeCandidates, dayKey, random, id, str, logCatalogImportFailure \} = globalThis\.__partyQueue/)
+  assert.match(hook, /const extra = !live \? \{ failureStage: catalogImportFailureStage\(diagnosticStage\) \} : undefined/)
+  assert.match(hook, /'Catalog import failed', extra\)/)
+  assert.doesNotMatch(hook, /failureStage:\s*(?:error|input|source|batchKey|manifestFingerprint|chunkFingerprint)/)
+  assert.match(hook, /globalThis\.__partyQueue = \{[\s\S]*catalogImportFailureStage, logCatalogImportFailure \}/)
+  assert.match(hook, /fetchYoutubeCandidates, dayKey, random, id, str, catalogImportFailureStage, logCatalogImportFailure \} = globalThis\.__partyQueue/)
 })
 
 test('live catalog discovery stays server-side and records quota/availability metadata', () => {
