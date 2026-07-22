@@ -1,66 +1,59 @@
-# Karaoke Catalog Import and Search
+# Popular-Song Source Selection and Initial Catalog Population
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
 
 ## Status
 
-Complete
+In Progress
 
 ## Goals
 
-- Deliver a server-only, resumable, idempotent, quota-aware popular-song import pipeline with
-  reproducible input provenance, candidate classification, safe checkpointing, and auditability.
-- Extend the catalog minimally for normalized identity, YouTube provenance/availability,
-  classification, confidence, review state, alternatives, replacement, and import-run metadata.
-- Provide constrained `tablet_admin` catalog-review endpoints/UI while keeping guests restricted to
-  sanitized, approved, eligible catalog search and the existing validated request workflow.
-- Implement deterministic title/artist normalization, pagination and ordering, candidate scoring,
-  deduplication, replacement eligibility, and explainable rejection reasons without browser
-  YouTube credentials or direct public catalog writes.
-- Add proportionate importer, backend contract/integration, auth, deduplication and Vue coverage;
-  deliver a review, approved commit/push/deploy and retained-staging validation when inputs and
-  credentials permit.
+- Select and document a reproducible, legally and operationally reasonable real popular-song
+  source from primary evidence, including rejected alternatives and a bounded US/English-first
+  corpus policy that stops for weak coverage rather than padding to 5,000 songs.
+- Integrate the source with the existing resumable, idempotent, quota-aware catalog pipeline while
+  preserving canonical source artist/title, stable identity/rank/list, retrieval time, source
+  digest, checkpoint evidence, genre/era metadata when available, and deterministic collaboration
+  normalization without losing display metadata.
+- Enforce artist integrity across import, replay, deduplication, review, replacement, and fallback:
+  YouTube channel/uploader data is provenance only and can never populate or overwrite canonical
+  song artist/title; missing or uncertain source identity remains ineligible and reviewable.
+- Keep karaoke candidates heavily preferred, retain controlled lyric/audio fallbacks only when no
+  suitable karaoke result exists, and reject live, misleading, unrelated, and weak candidates.
+- Add catalog coverage/quality reporting and improve constrained tablet review so source identity,
+  canonical metadata, uploader provenance, classification evidence, corrections, and rejection
+  reasons are distinct and auditable without browser superuser credentials.
+- Preserve sanitized deterministic approved/eligible-only guest search based on canonical identity,
+  add proportionate unit, hook-contract, pinned-runtime, and UI validation, obtain independent
+  review, and deliver a carefully bounded retained-staging tranche using available quota.
 
 ## Constraints and Notes
 
-- The initial source is a versioned fixture/import contract carrying source URL, retrieval date,
-  rank and terms notes; a live import requires a reachable declared source and a server-side
-  YouTube Data API key. Do not fabricate live catalog data if either is unavailable.
-- Karaoke candidates are preferred, with `fallback_lyric` and `fallback_audio` visible for review
-  and replaceable when stronger candidates appear. API metadata scoring is heuristic, not semantic
-  certainty.
-- Preserve the retained staging volume and all unrelated party, queue, controller, tablet and
-  validation records. No production or Wi-Fi interruption action is in scope.
-- Delivered the immutable manifest/chunk importer, normalized identity and deduplication, explicit
-  `karaoke`/`fallback_lyric`/`fallback_audio` classification, provenance/confidence/review and
-  replacement metadata, constrained tablet review routes/UI, and sanitized deterministic guest
-  search. YouTube discovery is server-only, quota-aware, resumable, owner-fenced, and replay-safe.
-- The reproducible initial source is the committed versioned fixture/import contract carrying URL,
-  retrieval date, rank, and terms notes. It proves the pipeline without fabricating popularity
-  data. A real licensed/operational popular-song source is still required before a large import;
-  correctness and provenance took priority over the optional 5,000-record target.
-- Retained staging deployed exact product SHA
-  `8dd12a9e102ab0dc28dc94c045cf9b83c3cf7750` to PocketBase deployment
-  `hb4gibgc22o6xipil5563cue` and frontend deployment `bjpslyz1wl41dtktx7ls855i`; both finished
-  healthy, the existing volume was preserved, and same-origin `/api/health` returned 200.
-- Live validation imported one deterministic synthetic fixture, replayed it with zero duplicates,
-  and immediately rejected it as ineligible. One YouTube query imported two credible karaoke
-  candidates (`nMDXPAM8RwE` and `9iQH7g_zKl8`); its exact replay imported zero and spent no further
-  quota. Both remain unreviewed/ineligible for operator review. The successful query consumed 101
-  quota units; total task consumption is not exactly knowable because an earlier failed diagnostic
-  request may also have reached YouTube.
-- Live operator validation restored the signed-in tablet route with no active party and no error,
-  exposed catalog review independently of party state, and displayed 16 unreviewed records. The
-  new records comprise two unreviewed `karaoke` candidates and one rejected synthetic `karaoke`
-  fixture; pre-existing validation records were not changed. Unauthenticated guest search remained
-  denied, and no party, queue, controller, tablet enrollment, or unrelated validation state changed.
-- Additive repair migrations corrected retained checkpoint schema state using the PocketBase 0.39.7
-  field API without dropping data and added the server-computed final digest through a forward-only
-  migration. Two pinned-runtime preservation/idempotency tests, 32 importer/backend contracts, 15
-  Vue tests, the production build, and live staging checks passed; independent final review approved
-  the result with no remaining blocking findings.
-- Remaining limitations: YouTube classification is explainable metadata heuristics rather than
-  semantic certainty; availability can only reflect the API at check time; no broad popular-song
-  source or 5,000-record import was selected; fallbacks remain intentionally reviewable and
-  replaceable rather than enforced by an irreversible karaoke-only constraint.
+- Standing approval covers feature-scoped research, local edits, commits/pushes to existing `main`,
+  retained-staging deployment/configuration, quota use, repair of incorrectly attributed staging
+  records, and up to 5,000 staging records. It excludes deletion/cleanup, retained-volume changes,
+  production DNS/hostname changes, unrelated Coolify changes, paid commitments, tablet/controller
+  mutation, destructive resets, and the deferred Wi-Fi interruption test.
+- Preserve all existing party, queue, controller, enrollment, validation, and persistent-volume
+  state. Do not delete the two suspect live candidates; correct them only from reliable source or
+  explicit operator identity and retain an audit trail, otherwise mark them ineligible for
+  correction.
+- Selected ordered MusicBrainz recording series: the pinned Rolling Stone 2021 list plus available
+  Billboard Year-End Hot 100 subseries. MusicBrainz core data is CC0; the API is current and
+  reproducible with an identifying User-Agent and one-request-per-second limit. A live ListenBrainz
+  sample was rejected as the primary corpus because it failed the artist/diversity quality stop.
+- The planner round-robins Billboard years and the Rolling Stone list by explicit series rank,
+  preserves MusicBrainz artist-credit join phrases, enriches earliest official release year and
+  genres when available, caps artist concentration, rejects ambiguous/missing identities, and
+  emits deterministic per-song checkpoint requests with modeled YouTube cost.
+- Legacy catalog rows are forward-only quarantined as `needs_review` and ineligible until canonical
+  source or audited operator identity is established. Re-import of an existing YouTube ID appends a
+  non-destructive identity proposal; it never promotes uploader metadata or overwrites curation.
+- Validation: 36 importer/hook contracts, three pinned PocketBase 0.39.7 preservation/idempotency
+  integrations, 15 Vue tests, and the production build pass. Whole-repository Oxlint remains red
+  on pre-existing hook/migration/test lint debt; no auto-fix was applied. Independent review found
+  the initial checkpoint, legacy eligibility, provenance, artist-credit, and release-year defects;
+  all were corrected and the final verdict is APPROVE with no blockers.
+- YouTube quota must be modeled before each live tranche. Exact replay and unchanged canonical
+  inputs must consume no repeat search quota; stop safely when quota or review quality is limiting.

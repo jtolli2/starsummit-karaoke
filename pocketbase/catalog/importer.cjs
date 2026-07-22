@@ -53,21 +53,29 @@ function normalize(video, batchKey, query = '') {
   const youtubeId = video.youtubeId || video.id
   const classified = classify(video); const classification = classified.classification
   const reviewStatus = REVIEW_STATES.includes(video.reviewStatus) ? video.reviewStatus : 'unreviewed'
+  const title = String(video.canonicalTitle || video.title || '').trim().slice(0, 240)
+  const artist = String(video.canonicalArtist || video.artist || '').trim().slice(0, 160)
+  const identityComplete = Boolean(title && artist)
   return {
     youtube_id: youtubeId,
-    title: String(video.title || '').trim().slice(0, 240) || youtubeId,
-    artist: String(video.artist || video.channelTitle || '').trim().slice(0, 160),
-    eligible: classification === 'karaoke' && reviewStatus === 'approved',
+    title: title || youtubeId,
+    artist,
+    eligible: identityComplete && classification === 'karaoke' && reviewStatus === 'approved',
     provenance: String(video.provenance || 'youtube_api').slice(0, 120),
-    eligibility_reason: classified.reason,
+    eligibility_reason: identityComplete ? classified.reason : 'missing_canonical_identity',
     source: String(video.source || 'youtube').slice(0, 80),
     source_query: String(query).slice(0, 160),
     classification,
     classification_confidence: classified.confidence,
     review_status: reviewStatus,
     import_batch: String(batchKey).slice(0, 80),
-    normalized_title: normalized(video.title), normalized_artist: normalized(video.artist || video.channelTitle, 160),
-    metadata_json: { channelTitle: video.channelTitle || null, publishedAt: video.publishedAt || null },
+    normalized_title: normalized(title), normalized_artist: normalized(artist, 160),
+    metadata_json: {
+      videoTitle: video.videoTitle || null,
+      channelTitle: video.channelTitle || null,
+      channelId: video.channelId || null,
+      publishedAt: video.publishedAt || null,
+    },
   }
 }
 

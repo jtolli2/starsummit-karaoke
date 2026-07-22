@@ -14,6 +14,7 @@ const fieldRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migr
 const checkpointRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512500_repair_catalog_checkpoint_schema.js'), 'utf8')
 const offsetRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512600_repair_catalog_chunk_offset_required.js'), 'utf8')
 const fieldApiRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512700_repair_catalog_checkpoint_field_api.js'), 'utf8')
+const sourceIdentityMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512900_catalog_source_identity.js'), 'utf8')
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
   const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/replace'[\s\S]*?\n}\)/)
@@ -125,6 +126,33 @@ test('live catalog discovery stays server-side and records quota/availability me
   assert.match(hook, /youtube_quota_exhausted/)
   assert.match(hook, /embeddable === true/)
   assert.doesNotMatch(hook, /return json\(c, 503, 'youtube_import_unavailable'/)
+})
+
+test('channel metadata is provenance-only across import, replay, dedup, review, replacement, and fallback', () => {
+  assert.doesNotMatch(hook, /artist:\s*snippet\.channelTitle/)
+  assert.doesNotMatch(hook, /item\.artist \|\| item\.channelTitle/)
+  assert.match(hook, /canonical_identity_required/)
+  assert.match(hook, /source: String\(canonical\.source/)
+  assert.match(hook, /String\(item\.source/)
+  assert.match(hook, /canonicalTitle: String\(canonical\.title/)
+  assert.match(hook, /video_channel_title/)
+  assert.match(hook, /identityReady = \['verified_source', 'operator_corrected'\]/)
+  assert.match(hook, /action: 'identity_correction'/)
+  assert.match(hook, /replacement candidate must be approved eligible karaoke/i)
+  assert.match(hook, /fallback_lyric/)
+  assert.match(hook, /action: 'source_identity_proposal'/)
+  assert.match(hook, /videoChannelTitle:/)
+  assert.match(hook, /canonicalArtist:/)
+})
+
+test('source identity migration is forward-only and keeps uploader fields distinct', () => {
+  assert.match(sourceIdentityMigration, /source_id/)
+  assert.match(sourceIdentityMigration, /video_channel_title/)
+  assert.match(sourceIdentityMigration, /identity_status/)
+  assert.match(sourceIdentityMigration, /identity_quarantine/)
+  assert.match(sourceIdentityMigration, /song\.set\('eligible', false\)/)
+  assert.match(sourceIdentityMigration, /Forward-only/)
+  assert.doesNotMatch(sourceIdentityMigration, /app\.delete/)
 })
 
 test('live claims persist payload and quota day before catalog completion', () => {

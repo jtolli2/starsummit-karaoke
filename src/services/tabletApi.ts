@@ -25,8 +25,33 @@ export type CatalogSong = {
   artist: string
   eligible?: boolean
   classification?: string
+  classificationConfidence?: number
+  classificationReason?: string
+  source?: string
+  sourceId?: string
+  sourceList?: string
+  sourceRank?: number
+  identityStatus?: 'verified_source' | 'operator_corrected' | 'missing' | 'uncertain'
+  identityReason?: string
+  videoTitle?: string
+  videoChannelTitle?: string
+  videoChannelId?: string
   reviewState: 'unreviewed' | 'needs_review' | 'approved' | 'rejected'
   reviewNote?: string
+}
+
+export type CatalogReport = {
+  total: number
+  bySource: Record<string, number>
+  byClassification: Record<string, number>
+  byReviewState: Record<string, number>
+  byIdentityStatus: Record<string, number>
+  byDecade: Record<string, number>
+  byConfidenceBand: Record<string, number>
+  missingIdentity: number
+  unavailable: number
+  alternatives: number
+  unresolvedReviewBacklog: number
 }
 
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -90,6 +115,17 @@ export function reviewCatalogSong(token: string, id: string, reviewState: Catalo
     method: 'POST',
     body: JSON.stringify({ reviewState, ...(note?.trim() ? { note: note.trim() } : {}) }),
   }, token)
+}
+
+export function correctCatalogIdentity(token: string, id: string, correction: { title: string; artist: string; reason: string }) {
+  return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/identity`, {
+    method: 'POST',
+    body: JSON.stringify(correction),
+  }, token)
+}
+
+export function loadCatalogReport(token: string) {
+  return request<CatalogReport>('/api/karaoke/tablet/catalog/report', {}, token)
 }
 
 export function replaceCatalogSong(token: string, id: string, candidate: { candidateId?: string; youtubeId?: string }) {

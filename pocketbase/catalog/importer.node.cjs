@@ -31,6 +31,39 @@ test('normalization is resumable and approval-gated', () => {
   assert.throws(() => normalize({ id: 'bad' }, 'batch-1'), /invalid_youtube_id/)
 })
 
+test('YouTube channel provenance can never populate canonical artist or title', () => {
+  const row = normalize({
+    id: 'dQw4w9WgXcQ',
+    videoTitle: 'Brand Karaoke - A Song',
+    channelTitle: 'Brand Karaoke',
+    channelId: 'channel-1',
+  }, 'batch-1', 'track')
+  assert.equal(row.artist, '')
+  assert.equal(row.title, 'dQw4w9WgXcQ')
+  assert.equal(row.eligible, false)
+  assert.equal(row.eligibility_reason, 'missing_canonical_identity')
+  assert.deepEqual(row.metadata_json, {
+    videoTitle: 'Brand Karaoke - A Song',
+    channelTitle: 'Brand Karaoke',
+    channelId: 'channel-1',
+    publishedAt: null,
+  })
+})
+
+test('canonical source identity wins over conflicting YouTube uploader metadata', () => {
+  const row = normalize({
+    id: 'dQw4w9WgXcQ',
+    canonicalTitle: 'A Song',
+    canonicalArtist: 'Singer feat. Guest',
+    title: 'Wrong Parsed Title',
+    artist: 'Wrong Parsed Artist',
+    channelTitle: 'Brand Karaoke',
+  }, 'batch-1')
+  assert.equal(row.title, 'A Song')
+  assert.equal(row.artist, 'Singer feat. Guest')
+  assert.equal(row.normalized_artist, 'singer feat guest')
+})
+
 test('quota plan advances cursor without exceeding daily budget', () => {
   const result = plan([1, 2, 3], { cursor: 1, quotaUsed: 9000, quotaLimit: 10000, cost: 100 })
   assert.deepEqual(result.items, [2, 3])
