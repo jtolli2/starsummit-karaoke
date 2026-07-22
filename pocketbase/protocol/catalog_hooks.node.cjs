@@ -36,6 +36,15 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /catalog\/\{id\}\/review/)
 })
 
+test('numeric reader preserves PocketBase decimal confidence and integer counters', () => {
+  const start = hook.indexOf('function num(')
+  const end = hook.indexOf('function set(', start)
+  const num = new Function(`${hook.slice(start, end)}; return num`)()
+  assert.equal(num({ getFloat: () => 0.92, getInt: () => 0 }, 'confidence'), 0.92)
+  assert.equal(num({ getFloat: () => 9, getInt: () => 9 }, 'total'), 9)
+  assert.equal(num({ getInt: () => 9 }, 'total'), 9)
+})
+
 test('checkpoint health is tablet-only and exposes only fixed structural metadata', () => {
   const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/catalog\/checkpoint-health',[\s\S]*?\n}\)/)
   assert.ok(endpoint)

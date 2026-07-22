@@ -25,7 +25,7 @@ function dayKey(value = new Date()) {
 }
 function future(ms) { return new Date(Date.now() + ms).toISOString() }
 function str(r, f) { return r && r.getString ? r.getString(f) : r?.[f] }
-function num(r, f) { return r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
+function num(r, f) { return r && r.getFloat ? r.getFloat(f) : r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
 function set(r, f, v) { r.set(f, v); return r }
 function setJson(r, f, v) { r.set(f, JSON.stringify(v)); return r }
 function jsonValue(r, f, fallback) {
