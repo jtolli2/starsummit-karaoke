@@ -96,6 +96,10 @@ test('identity alternatives and review history are append-only and idempotent', 
   assert.match(hook, /setJson\(song, 'review_history_json', events\)/)
   assert.match(hook, /setJson\(identity, 'alternatives_json', list\)/)
   assert.doesNotMatch(hook, /set\(song, 'review_history_json', events\)/)
+  assert.match(hook, /function jsonValue\(r, f, fallback\)/)
+  assert.match(hook, /JSON\.parse\(value\)/)
+  assert.match(hook, /jsonValue\(existingClaim, 'payload_json', \{\}\)/)
+  assert.match(hook, /setJson\(claim, 'payload_json', \{ items, total, spent \}\)/)
 })
 
 test('review and replacement history mutations are transactional and untruncated', () => {
@@ -171,7 +175,7 @@ test('live claims persist payload and quota day before catalog completion', () =
   assert.match(hook, /set\(claim, 'status', 'complete'\)/)
   assert.match(hook, /quota_day_key/)
   assert.match(hook, /day_key = \{:\s*day\}/)
-  assert.match(hook, /set\(chunk, 'payload_json', items\)/)
+  assert.match(hook, /setJson\(chunk, 'payload_json', items\)/)
   assert.match(hook, /America\/Los_Angeles/)
   assert.match(hook, /ownerToken = str\(claim, 'owner_token'\) \|\| ownerToken/)
   assert.match(hook, /!\['ready', 'complete'\]\.includes\(str\(existingClaim, 'status'\)\)/)
