@@ -30,9 +30,10 @@ test('party lifecycle authorization and expiry on PocketBase 0.39.7', { skip: !p
   assert.equal((await call('/api/karaoke/parties/join', 'POST', { code: expired.json.code })).status, 410)
   const joinA = await call('/api/karaoke/parties/join', 'POST', { code: created.json.code }); const joinB = await call('/api/karaoke/parties/join', 'POST', { code: created.json.code }); assert.equal(joinA.status, 201); assert.equal(joinB.status, 201)
   assert.equal((await call('/api/karaoke/parties/queue', 'GET', undefined, joinA.json.credential)).status, 200)
-  const songs = await Promise.all(['dQw4w9WgXcQ', '9bZkp7q19f0', 'J---aiyznGQ'].map((youtube_id, i) => call('/api/collections/karaoke_songs/records', 'POST', { youtube_id, title: `Song ${i}`, artist: 'Test', eligible: true }, su.json.token)))
+  const approvedSong = { artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source' }
+  const songs = await Promise.all(['dQw4w9WgXcQ', '9bZkp7q19f0', 'J---aiyznGQ'].map((youtube_id, i) => call('/api/collections/karaoke_songs/records', 'POST', { ...approvedSong, youtube_id, title: `Song ${i}` }, su.json.token)))
   songs.forEach((s) => assert.equal(s.status, 200, JSON.stringify(s)))
-  const ineligible = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'Zi_XLOBDo_Y', title: 'Unapproved song', artist: 'Test', eligible: false }, su.json.token)
+  const ineligible = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'Zi_XLOBDo_Y', title: 'Unapproved song', artist: 'Test', eligible: false, classification: 'karaoke', review_status: 'unreviewed', identity_status: 'verified_source' }, su.json.token)
   assert.equal(ineligible.status, 200, JSON.stringify(ineligible))
   const grant = await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 }, su.json.token); assert.equal(grant.status, 201)
   const enrolled = await call('/api/karaoke/controllers/enroll', 'POST', { token: grant.json.token, deviceName: 'queue tablet' }); assert.equal(enrolled.status, 201)
@@ -118,7 +119,7 @@ test('guest realtime wake is party-scoped and payload-free on PocketBase 0.39.7'
   const tablet = await call('/api/collections/users/auth-with-password', 'POST', { identity: 'wake-tablet@test.invalid', password: 'TabletPassword123!' }); assert.equal(tablet.status, 200)
   const partyA = await call('/api/karaoke/parties', 'POST', {}, tablet.json.token); const partyB = await call('/api/karaoke/parties', 'POST', {}, tablet.json.token); assert.equal(partyA.status, 201); assert.equal(partyB.status, 201)
   const guestA = await call('/api/karaoke/parties/join', 'POST', { code: partyA.json.code }); const guestB = await call('/api/karaoke/parties/join', 'POST', { code: partyB.json.code }); assert.equal(guestA.status, 201); assert.equal(guestB.status, 201)
-  const song = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'dQw4w9WgXcQ', title: 'Wake song', artist: 'Test', eligible: true }, su.json.token); assert.equal(song.status, 200)
+  const song = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'dQw4w9WgXcQ', title: 'Wake song', artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source' }, su.json.token); assert.equal(song.status, 200)
 
   const invalid = await connect('not-a-guest-credential'); const invalidResult = await subscribe(invalid.clientId, 'not-a-guest-credential', ['karaoke_party_wake']); assert.equal(invalidResult.status, 403); invalid.abort.abort()
   const unsupported = await connect(guestA.json.credential); const unsupportedResult = await subscribe(unsupported.clientId, guestA.json.credential, ['karaoke_party_wake', 'karaoke_queue/*']); assert.equal(unsupportedResult.status, 403); unsupported.abort.abort()
