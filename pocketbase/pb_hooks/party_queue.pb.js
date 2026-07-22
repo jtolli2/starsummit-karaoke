@@ -45,7 +45,10 @@ function normalizeJsonValue(value, seen) {
   stack.pop(); return out
 }
 function serializeJson(value) { return JSON.stringify(normalizeJsonValue(value)) }
-function setJson(r, f, v) { r.set(f, serializeJson(v)); return r }
+// PocketBase 0.39.7 JSON fields must receive the validated native value.
+// Assigning a serialized string can persist the Go byte wrapper as a numeric
+// array (with a trailing NUL) instead of the intended JSON document.
+function setJson(r, f, v) { r.set(f, normalizeJsonValue(v)); return r }
 function jsonValue(r, f, fallback) {
   const decode = (text) => {
     let decoded
@@ -63,9 +66,15 @@ function jsonValue(r, f, fallback) {
   }
   const value = r && r.get ? r.get(f) : r?.[f]
   if (value === null || value === undefined) return fallback
+  let stored = ''
+  try { stored = r && r.getString ? r.getString(f) : '' } catch (_) {}
+  if (stored && /^(?:\[|\{|"|true$|false$|null$|-?\d)/.test(stored.trim())) {
+    try { return decode(stored) } catch (_) { return fallback }
+  }
   if (typeof value === 'string') { try { return decode(value) } catch (_) { return fallback } }
-  // PocketBase may expose JSONRaw as an object whose string form is the JSON
-  // document. Preserve native arrays and plain objects without coercion.
+  // getString above is the only accepted PocketBase JSONRaw wrapper boundary;
+  // raw numeric arrays are legitimate JSON and must never be guessed to be
+  // encoded bytes merely because they end in zero.
   if (Array.isArray(value)) return value
   if (typeof value === 'object') {
     const text = String(value)
@@ -90,24 +99,8 @@ function jsonValue(r, f, fallback) {
 function requiredJsonValue(r, f) {
   const raw = r && r.get ? r.get(f) : r?.[f]
   if (raw === null || raw === undefined) throw new Error(`json_value_missing_${f}`)
-  let value
-  let stored = ''
-  try { stored = r && r.getString ? r.getString(f) : '' } catch (_) {}
-  if (stored && /^(?:\[|\{|"|true$|false$|null$|-?\d)/.test(stored.trim())) {
-    try { value = JSON.parse(stored) } catch (_) { throw new Error(`json_value_malformed_${f}`) }
-  } else if (typeof raw === 'string') {
-    try { value = JSON.parse(raw) } catch (_) { throw new Error(`json_value_malformed_${f}`) }
-  } else if (Array.isArray(raw)) {
-    value = raw
-  } else if (typeof raw === 'object') {
-    try {
-      value = JSON.parse(JSON.stringify(raw))
-      if (typeof value === 'string' && /^(?:\[|\{)/.test(value.trim())) value = JSON.parse(value)
-    } catch (_) {
-      const text = r && r.getString ? r.getString(f) : String(raw)
-      try { value = JSON.parse(text) } catch (_) { throw new Error(`json_value_wrapper_malformed_${f}`) }
-    }
-  } else throw new Error(`json_value_invalid_${f}`)
+  const invalid = {}; const value = jsonValue(r, f, invalid)
+  if (value === invalid) throw new Error(`json_value_malformed_${f}`)
   try { return normalizeJsonValue(value) } catch (error) { throw new Error(`${error.message}_${f}`) }
 }
 function claimTransitionAllowed(from, to) {
@@ -669,6 +662,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
   if (live) {
     try {
       ownerToken = hash(`${batchKey}:${requestFingerprint}:${random(24)}`)
+      let durableChunkOutcome = ''
       $app.runInTransaction((tx) => {
         let batch = null; try { batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }) } catch (_) {}
         const mismatch = batch && catalogBatchMismatch(batch, { fingerprint: manifestFingerprint, url: sourceUrl, terms: sourceTerms, retrievedAt: sourceRetrievedAt, total }, !live)
@@ -683,10 +677,21 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
           if (replayClaim) {
             validateClaimReplay(replayClaim, requiredJsonValue(replayClaim, 'payload_json'), manifestFingerprint, requestFingerprint)
             const events = jsonValue(replayClaim, 'audit_json', []); const audit = Array.isArray(events) ? events : []
+            if (str(replayClaim, 'status') === 'ready') {
+              // Ready settlement atomically releases its reservation. A
+              // nonzero value here is inconsistent retained state; clearing
+              // only the claim would strand or double-release the quota row.
+              if (num(replayClaim, 'reserved_units') !== 0) throw new Error('claim_reservation_conflict')
+              audit.push({ action: 'resumed_commit', at: now() }); setJson(replayClaim, 'audit_json', audit.slice(-50))
+              set(replayClaim, 'status', 'complete'); set(replayClaim, 'reserved_units', 0)
+              if (!str(replayClaim, 'reservation_released_at')) set(replayClaim, 'reservation_released_at', now())
+              set(replayClaim, 'lifecycle_reason', 'resumed_commit'); tx.save(replayClaim)
+              durableChunkOutcome = 'resumed_commit'; return
+            }
             audit.push({ action: 'exact_replay', at: now() }); setJson(replayClaim, 'audit_json', audit.slice(-50))
-            set(replayClaim, 'replay_count', num(replayClaim, 'replay_count') + 1); tx.save(replayClaim)
+            set(replayClaim, 'replay_count', num(replayClaim, 'replay_count') + 1); set(replayClaim, 'lifecycle_reason', 'exact_replay'); tx.save(replayClaim)
+            durableChunkOutcome = 'exact_replay'; return
           }
-          throw new Error('chunk_replay')
         }
         let claim = null; try { claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: claimKey }) } catch (_) {}
         if (claim && str(claim, 'status') === 'in_progress' && new Date(str(claim, 'lease_expires_at')).getTime() > Date.now()) throw new Error('youtube_request_in_progress')
@@ -710,11 +715,12 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
         if (!quota) { quota = new Record(tx.findCollectionByNameOrId('karaoke_youtube_quota')); set(quota, 'day_key', quotaDay); set(quota, 'quota_limit', 10000); set(quota, 'reserved', 0); set(quota, 'spent', 0) }
         if (num(quota, 'spent') + num(quota, 'reserved') + 303 > num(quota, 'quota_limit')) throw new Error('youtube_quota_exhausted'); set(quota, 'reserved', num(quota, 'reserved') + 303); tx.save(quota)
       })
+      if (durableChunkOutcome === 'resumed_commit') return c.json(200, { batchKey, imported: 0, replay: false, resumed: true })
+      if (durableChunkOutcome === 'exact_replay') return c.json(200, { batchKey, imported: 0, replay: true, resumed: false })
       let discovery = null; const existingClaim = find('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (existingClaim && ['ready', 'complete'].includes(str(existingClaim, 'status'))) { const payload = validateClaimReplay(existingClaim, requiredJsonValue(existingClaim, 'payload_json'), manifestFingerprint, requestFingerprint); items = payload.items; total = payload.total; discovery = { cost: 0 } } else { discovery = fetchYoutubeCandidates(String(input.query || ''), requestedMaxResults); items = discovery.items.map((item) => ({ ...item, canonicalTitle: String(canonical.title || ''), canonicalArtist: String(canonical.artist || ''), source: String(canonical.source || ''), sourceId: String(canonical.sourceId || ''), sourceList: String(canonical.sourceList || ''), sourceRank: Number(canonical.sourceRank || 0), sourcePopularity: Number(canonical.sourcePopularity || 0), genres: Array.isArray(canonical.genres) ? canonical.genres : [], releaseYear: Number(canonical.releaseYear || 0) })); total = items.length }
       const spent = discovery.cost; attemptedCost = spent
       if (!existingClaim || !['ready', 'complete'].includes(str(existingClaim, 'status'))) $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (!claim || str(claim, 'owner_token') !== ownerToken) throw new Error('youtube_claim_stale_owner'); if (!claimTransitionAllowed(str(claim, 'status'), 'ready')) throw new Error('youtube_claim_transition_invalid'); const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); const used = num(batch, 'quota_used'); if (used + spent > num(batch, 'quota_limit')) throw new Error('youtube_quota_exhausted'); const payloadDigest = hash(serializeJson({ items, total, spent })); set(batch, 'quota_used', used + spent); set(batch, 'total', total); set(batch, 'updated_at', now()); tx.save(batch); setJson(claim, 'payload_json', { items, total, spent, sourceFingerprint: manifestFingerprint, chunkFingerprint: requestFingerprint, payloadDigest, orderedIdentity: items.map((item) => String(item.youtubeId || '')) }); set(claim, 'source_fingerprint', manifestFingerprint); set(claim, 'chunk_fingerprint', requestFingerprint); set(claim, 'payload_digest', payloadDigest); setJson(claim, 'ordered_identity_json', items.map((item) => String(item.youtubeId || ''))); const reserved = num(claim, 'reserved_units'); set(claim, 'spent_units', num(claim, 'spent_units') + spent); set(claim, 'reserved_units', 0); set(claim, 'reservation_released_at', now()); set(claim, 'status', 'ready'); tx.save(claim); const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: str(claim, 'quota_day_key') }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - reserved)); set(quota, 'spent', num(quota, 'spent') + spent); tx.save(quota) })
     } catch (error) {
-      if (error.message === 'chunk_replay') return c.json(200, { batchKey, imported: 0, replay: true })
       try { console.error(`Catalog claim failed (reason=${String(error.message || 'unknown').replace(/[^a-z0-9_:-]/gi, '').slice(0, 80)})`) } catch (_) {}
       const batchMismatch = String(error.message || '').startsWith('batch_source_mismatch_')
       const claimConflict = String(error.message || '').startsWith('claim_')

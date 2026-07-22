@@ -81,7 +81,7 @@ test('real hook replays a ready claim across restart and rejects conflicts witho
   const tablet = await call('/api/collections/users/auth-with-password', 'POST', { identity: 'replay-tablet@test.invalid', password: 'TabletPassword123!' }); assert.equal(tablet.status, 200)
   const dayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const source = { url: 'https://source.invalid/manifest', terms: 'integration', retrievedAt: '2026-07-22T12:00:00Z' }
-  const manifestFingerprint = 'a'.repeat(64); const batchKey = 'replay-route-batch'; const canonical = { title: 'Replay Song', artist: 'Replay Artist', source: 'musicbrainz', sourceId: 'mbid-1' }
+  const manifestFingerprint = 'a'.repeat(64); const batchKey = 'replay-route-batch'; const canonical = { title: 'Replay Song 東京', artist: 'Replay Beyoncé', source: 'musicbrainz', sourceId: 'mbid-1' }
   const payload = { items: [{ id: 'dQw4w9WgXcQ', youtubeId: 'dQw4w9WgXcQ', title: 'Replay Song Karaoke', canonicalTitle: canonical.title, canonicalArtist: canonical.artist, videoTitle: 'Replay Song Karaoke', channelTitle: 'Fixture Channel', channelId: 'fixture' }], total: 1, spent: 0 }
   const batch = await call('/api/collections/karaoke_catalog_imports/records', 'POST', { batch_key: batchKey, source_fingerprint: manifestFingerprint, source_url: source.url, source_terms: source.terms, source_retrieved_at: source.retrievedAt, status: 'running', quota_limit: 10000, quota_used: 0, cursor: 0, total: 1 }, su.json.token); assert.equal(batch.status, 200, JSON.stringify(batch))
   const quota = await call('/api/collections/karaoke_youtube_quota/records', 'POST', { day_key: dayKey, quota_limit: 10000, reserved: 0, spent: 0 }, su.json.token); assert.equal(quota.status, 200, JSON.stringify(quota))
@@ -90,10 +90,21 @@ test('real hook replays a ready claim across restart and rejects conflicts witho
   const orderedIdentity = payload.items.map((item) => item.youtubeId)
   const payloadDigest = crypto.createHash('sha256').update(JSON.stringify(canonicalize(payload))).digest('hex')
   const replayPayload = { ...payload, sourceFingerprint: manifestFingerprint, chunkFingerprint: fingerprint, payloadDigest, orderedIdentity }
-  const claim = await call('/api/collections/karaoke_youtube_claims/records', 'POST', { claim_key: `${batchKey}:${fingerprint}`, batch_key: batchKey, status: 'ready', quota_day_key: dayKey, reserved_units: 0, spent_units: 0, payload_json: replayPayload, owner_token: 'fixture-owner', lease_expires_at: new Date(Date.now() + 60000).toISOString(), error_code: '', source_fingerprint: manifestFingerprint, chunk_fingerprint: fingerprint, payload_digest: payloadDigest, ordered_identity_json: orderedIdentity }, su.json.token); assert.equal(claim.status, 200, JSON.stringify(claim))
+  const claim = await call('/api/collections/karaoke_youtube_claims/records', 'POST', { claim_key: `${batchKey}:${fingerprint}`, batch_key: batchKey, status: 'ready', quota_day_key: dayKey, reserved_units: 0, spent_units: 0, payload_json: replayPayload, owner_token: 'fixture-owner', lease_expires_at: new Date(Date.now() + 60000).toISOString(), error_code: '', source_fingerprint: manifestFingerprint, chunk_fingerprint: fingerprint, payload_digest: payloadDigest, ordered_identity_json: orderedIdentity, audit_json: [91, 93, 0] }, su.json.token); assert.equal(claim.status, 200, JSON.stringify(claim))
   const request = { fetchFromYoutube: true, batchKey, manifestFingerprint, query: 'Replay Song', canonical, requestedMaxResults: 1, offset: 0, total: 1, source, items: [] }
   const first = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(first.status, 200, `${JSON.stringify(first)}\n${serverOutput}`); assert.equal(first.json.imported, 1)
   const quotaAfter = await call(`/api/collections/karaoke_youtube_quota/records/${quota.json.id}`, 'GET', undefined, su.json.token); assert.equal(quotaAfter.json.reserved, 0); assert.equal(quotaAfter.json.spent, 0)
+  assert.equal((await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'PATCH', { status: 'ready', reserved_units: 7, reservation_released_at: '' }, su.json.token)).status, 200)
+  assert.equal((await call(`/api/collections/karaoke_youtube_quota/records/${quota.json.id}`, 'PATCH', { reserved: 7 }, su.json.token)).status, 200)
+  const reservationConflict = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(reservationConflict.status, 409)
+  const conflictClaim = await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'GET', undefined, su.json.token); assert.equal(conflictClaim.json.status, 'ready'); assert.equal(conflictClaim.json.reserved_units, 7)
+  const conflictQuota = await call(`/api/collections/karaoke_youtube_quota/records/${quota.json.id}`, 'GET', undefined, su.json.token); assert.equal(conflictQuota.json.reserved, 7); assert.equal(conflictQuota.json.spent, 0)
+  assert.equal((await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'PATCH', { reserved_units: 0 }, su.json.token)).status, 200)
+  assert.equal((await call(`/api/collections/karaoke_youtube_quota/records/${quota.json.id}`, 'PATCH', { reserved: 0 }, su.json.token)).status, 200)
+  const resumed = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(resumed.status, 200); assert.equal(resumed.json.resumed, true); assert.equal(resumed.json.replay, false)
+  const resumedClaim = await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'GET', undefined, su.json.token); assert.equal(resumedClaim.json.status, 'complete'); assert.ok(resumedClaim.json.reservation_released_at); assert.equal(resumedClaim.json.replay_count, 0)
+  const exactReplay = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(exactReplay.status, 200); assert.equal(exactReplay.json.replay, true); assert.equal(exactReplay.json.resumed, false)
+  const replayedClaim = await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'GET', undefined, su.json.token); assert.equal(replayedClaim.json.replay_count, 1)
   assert.equal((await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'PATCH', { payload_digest: 'c'.repeat(64) }, su.json.token)).status, 200)
   const claimConflict = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(claimConflict.status, 409)
   assert.equal((await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'PATCH', { payload_digest: payloadDigest, status: 'complete' }, su.json.token)).status, 200)
@@ -106,6 +117,8 @@ test('real hook replays a ready claim across restart and rejects conflicts witho
   const parallel = await Promise.all([call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token), call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token)]); assert.ok(parallel.every((result) => result.status === 200 && result.json.replay === true), JSON.stringify(parallel))
   server.kill('SIGTERM'); await new Promise((r) => setTimeout(r, 150)); server = start(); await waitReady()
   const replayAfterRestart = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(replayAfterRestart.status, 200); assert.equal(replayAfterRestart.json.replay, true)
+  const finalClaim = await call(`/api/collections/karaoke_youtube_claims/records/${claim.json.id}`, 'GET', undefined, su.json.token); const finalAudit = typeof finalClaim.json.audit_json === 'string' ? JSON.parse(finalClaim.json.audit_json) : finalClaim.json.audit_json
+  assert.equal(finalClaim.json.replay_count, 4); assert.ok(finalAudit.length <= 50); assert.deepEqual(finalAudit.slice(0, 3), [91, 93, 0]); assert.equal(finalAudit.at(-1).action, 'exact_replay', JSON.stringify(finalAudit))
 })
 
 test('PocketBase 0.39.7 restores only the exact retained canary identity', { skip: !process.env.POCKETBASE_BIN }, () => {
