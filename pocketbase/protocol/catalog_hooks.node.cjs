@@ -78,6 +78,8 @@ test('catalog source retrieval dates compare by instant across PocketBase format
   assert.doesNotMatch(hook, /str\(batch, 'source_retrieved_at'\) !== sourceRetrievedAt/)
   assert.match(hook, /function catalogBatchMismatch\(batch, expected, checkTotal\)/)
   assert.match(hook, /mismatchField/)
+  assert.match(hook, /actualTotal/)
+  assert.match(hook, /expectedTotal/)
 })
 
 test('catalog completion verifies canonical content and source metadata digest', () => {
