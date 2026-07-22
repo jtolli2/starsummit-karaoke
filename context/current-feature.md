@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -51,5 +51,7 @@ In Progress
   filtering, and idempotent empty-result replay. Fourteen focused backend contracts, production
   build, and final independent review pass. Deployment/live route validation remains pending.
 - Retained staging safely rolled back two catalog deployment attempts after revealing missing
-  historical collection state on its persistent volume. The catalog migration repair passed; the
-  quota, claim, and payload migrations are now being hardened before another backend-only deploy.
+  historical collection state on its persistent volume. Additive migration repairs subsequently
+  deployed exact commit `53dfa1c70e0cf878f297b85250475ba849e39fbc` successfully; `/api/health`
+  passed and unauthenticated guest search/tablet import probes remained denied (403). No catalog,
+  party, queue, controller, tablet, or validation records were created or changed.

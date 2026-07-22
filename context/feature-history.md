@@ -151,3 +151,15 @@
   `/party/DEMO1234` and correctly rendered the backend-provided expired-party state. No backend
   records, persistent volume, controller enrollment, tablet state, production hostname, or
   deferred Wi-Fi interruption test was changed.
+
+### 2026-07-22 — Karaoke Catalog Import and Search staging delivery
+
+- Retained PocketBase staging deployed exact commit
+  `53dfa1c70e0cf878f297b85250475ba849e39fbc` successfully after additive repairs for the
+  partially restored catalog, quota, claim, and payload collection migrations. Coolify health and
+  public `/api/health` passed; the retained persistent volume was neither replaced nor cleaned.
+- The server-side `YOUTUBE_API_KEY` configuration was applied without exposing its value. Live
+  unauthenticated probes confirmed guest catalog search and the tablet catalog import route both
+  return 403, preserving their credential boundaries. No import was started because no scoped
+  `tablet_admin` credential and approved source manifest were available in this delivery step; no
+  catalog or unrelated retained records changed, and no YouTube quota was intentionally consumed.
