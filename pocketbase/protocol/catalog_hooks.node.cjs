@@ -40,6 +40,8 @@ test('fallback search normalizes, bounds, classifies, and caches durable candida
   assert.match(hook, /fallback\/request/)
   assert.match(hook, /fallback_candidate_unavailable/)
   assert.match(hook, /request_key/)
+  assert.match(fallbackRequestMigration, /WHERE request_key IS NOT NULL/)
+  assert.match(fallbackRequestMigration, /request_key != \\\'\\\'/)
   assert.match(hook, /youtube_quota_exhausted/)
   assert.match(fallbackRequestMigration, /idx_karaoke_queue_request_key/)
   assert.match(hook, /fallback_in_progress/)
