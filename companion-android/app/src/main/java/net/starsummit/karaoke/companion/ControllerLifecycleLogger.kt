@@ -25,6 +25,10 @@ internal class ControllerLifecycleLogger(
       emit("attempt count=${attemptCount.incrementAndGet()}")
     }
 
+    override fun phase(name: String) {
+      emit("phase name=${sanitizeControllerPhase(name)}")
+    }
+
     override fun established() {
       emit("established count=${establishedCount.incrementAndGet()}")
     }
@@ -47,6 +51,10 @@ internal class ControllerLifecycleLogger(
 
     override fun subscriptionAccepted() {
       emit("subscription accepted=true")
+    }
+
+    override fun realtimeFallback(errorCode: String) {
+      emit("realtime_fallback code=${sanitizeControllerDiagnosticError(errorCode)}")
     }
   }
 

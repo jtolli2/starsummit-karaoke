@@ -4,6 +4,19 @@
 
 ## Entries
 
+### 2026-07-22 — Retain authoritative delivery when realtime subscription is rejected
+
+- **Feedback:** The retained Fire tablet could authenticate and establish a controller session, but
+  PocketBase rejected its realtime subscription with HTTP 403. Treating that failure as fatal
+  prevented approved commands from reaching an otherwise healthy controller.
+- **Improvement:** Preserve the authenticated session only for that exact subscribe-time 403, close
+  the failed realtime connection, refetch commands over HTTPS at a bounded interval, and surface
+  only redacted diagnostics. Validate an actual command acknowledgement and an idempotent retry on
+  retained staging; do not broaden the fallback to authentication, session, or other realtime
+  failures.
+- **Follow-up:** Investigate the PocketBase realtime authorization mismatch separately; HTTPS
+  polling is a recoverable delivery path, not a claim that realtime is healthy.
+
 ### 2026-07-21 — Make controller liveness a transactional precondition
 
 - **Feedback:** A nominal controller session plus a stale `connected` state could make an operator

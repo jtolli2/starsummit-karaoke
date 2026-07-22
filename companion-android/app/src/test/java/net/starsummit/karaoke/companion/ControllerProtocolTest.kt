@@ -61,13 +61,14 @@ class ControllerProtocolTest {
   @Test
   fun controllerLifecycleLoggerEmitsOnlySafeFacts() {
     val logs = mutableListOf<String>()
-    val logged = CountDownLatch(7)
+    val logged = CountDownLatch(8)
     val listener = ControllerLifecycleLogger { message ->
       logs += message
       logged.countDown()
     }.listener()
 
     listener.attemptStarted()
+    listener.phase("authenticate")
     listener.established()
     listener.initialRefetch(3)
     listener.subscriptionAccepted()
@@ -79,6 +80,7 @@ class ControllerProtocolTest {
     assertEquals(
       listOf(
         "attempt count=1",
+        "phase name=authenticate",
         "established count=1",
         "initial_refetch command_count=3",
         "subscription accepted=true",
@@ -93,6 +95,7 @@ class ControllerProtocolTest {
     assertFalse(text.contains("private"))
     assertEquals("ControllerFailure", sanitizeControllerDiagnosticError("token=secret payload=private"))
     assertEquals("ControllerFailure", sanitizeControllerDiagnosticError("secretToken123"))
+    assertEquals("unknown", sanitizeControllerPhase("token=secret payload=private"))
   }
 
   @Test
@@ -121,12 +124,31 @@ class ControllerProtocolTest {
 
     val snapshot = diagnostics.snapshot.value
     assertEquals(2, snapshot.controllerAttemptCount)
+    assertEquals("authenticate", snapshot.controllerPhase)
     assertEquals(1, snapshot.controllerEstablishCount)
     assertEquals(null, snapshot.controllerInitialRefetchCount)
     assertEquals(null, snapshot.controllerRealtimeEventRedacted)
     assertEquals(null, snapshot.controllerRefetchCount)
     assertEquals(null, snapshot.controllerRefetchErrorRedacted)
     assertEquals(false, snapshot.controllerSubscriptionAccepted)
+  }
+
+  @Test
+  fun controllerEndpointDiagnosticsExposeOnlyTheHost() {
+    val diagnostics = DiagnosticsStore()
+
+    diagnostics.controllerEndpoint("https://device:secret@controller-test.app.starsummit.net/api")
+
+    assertEquals("controller-test.app.starsummit.net", diagnostics.snapshot.value.controllerEndpointHost)
+  }
+
+  @Test
+  fun pollingFallbackReportsIdleControllerStateBeforeFreshnessExpires() {
+    val initialReportAt = 5_000L
+
+    assertFalse(ControllerHeartbeatPolicy.shouldReport(initialReportAt, initialReportAt + 29_999L))
+    assertTrue(ControllerHeartbeatPolicy.shouldReport(initialReportAt, initialReportAt + 30_000L))
+    assertTrue(ControllerHeartbeatPolicy.shouldReport(0L, 90_001L))
   }
 
   private val future = System.currentTimeMillis() + 60_000
@@ -476,6 +498,38 @@ class ControllerProtocolTest {
     bridge.listenRealtime { }
     assertEquals(2, fetches)
     assertEquals(1, subscriptions)
+  }
+
+  @Test
+  fun bridgeFallsBackToAuthoritativePollingForRealtimeAuthorizationMismatch() = runTest {
+    val callbacks = mutableListOf<String>()
+    val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
+    val api = object : ControllerApi {
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun authenticate(credentials: ControllerCredentials) = auth
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long) = emptyList<ControllerCommand>()
+      override suspend fun acknowledge(auth: ControllerAuth, session: ControllerSession, command: ControllerCommand, success: Boolean, errorCode: String?) = Unit
+      override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) = Unit
+    }
+    val realtime = object : ControllerRealtimeTransport {
+      override suspend fun connect(auth: ControllerAuth) = object : ControllerRealtimeConnection {
+        override val events: Flow<PocketBaseRealtimeEvent> = flowOf(PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"client\"}"))
+        override suspend fun subscribe(clientId: String, collection: String) { throw ControllerHttpException(403) }
+        override fun close() = Unit
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api, realtime, InMemoryProgressStore(), ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+      diagnostics = object : ControllerDiagnosticsListener {
+        override fun realtimeFallback(errorCode: String) { callbacks += errorCode }
+      },
+    )
+
+    assertEquals(emptyList<ControllerCommand>(), bridge.establish())
+    assertFalse(bridge.isRealtimeAvailable)
+    assertEquals(listOf("ControllerHttp403"), callbacks)
   }
 
   @Test

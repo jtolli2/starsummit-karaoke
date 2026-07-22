@@ -18,23 +18,28 @@ data class DiagnosticsSnapshot(
   val nowPlaying: PlaybackSnapshot = PlaybackSnapshot(),
   val playbackRevision: Long = 0,
   val controllerAttemptCount: Int = 0,
+  val controllerEndpointHost: String? = null,
+  val controllerPhase: String? = null,
   val controllerEstablishCount: Int = 0,
   val controllerInitialRefetchCount: Int? = null,
   val controllerRealtimeEventRedacted: String? = null,
   val controllerRefetchCount: Int? = null,
   val controllerRefetchErrorRedacted: String? = null,
   val controllerSubscriptionAccepted: Boolean = false,
+  val controllerRealtimeFallbackErrorRedacted: String? = null,
 )
 
 /** Receives only redacted controller lifecycle facts; it never receives auth or event payloads. */
 interface ControllerDiagnosticsListener {
   fun attemptStarted() = Unit
+  fun phase(name: String) = Unit
   fun established() = Unit
   fun initialRefetch(commandCount: Int) = Unit
   fun realtimeEvent(name: String) = Unit
   fun refetchSucceeded(commandCount: Int) = Unit
   fun refetchFailed(errorCode: String) = Unit
   fun subscriptionAccepted() = Unit
+  fun realtimeFallback(errorCode: String) = Unit
 }
 
 class DiagnosticsStore {
@@ -55,12 +60,22 @@ class DiagnosticsStore {
   fun controllerAttemptStarted() {
     mutable.value = mutable.value.copy(
       controllerAttemptCount = mutable.value.controllerAttemptCount + 1,
+      controllerPhase = "authenticate",
       controllerInitialRefetchCount = null,
       controllerRealtimeEventRedacted = null,
       controllerRefetchCount = null,
       controllerRefetchErrorRedacted = null,
       controllerSubscriptionAccepted = false,
+      controllerRealtimeFallbackErrorRedacted = null,
     )
+  }
+
+  fun controllerPhase(name: String) {
+    mutable.value = mutable.value.copy(controllerPhase = sanitizeControllerPhase(name))
+  }
+
+  fun controllerEndpoint(baseUrl: String) {
+    mutable.value = mutable.value.copy(controllerEndpointHost = sanitizeControllerEndpointHost(baseUrl))
   }
 
   fun controllerEstablished() {
@@ -93,6 +108,9 @@ class DiagnosticsStore {
   fun controllerSubscriptionAccepted() {
     mutable.value = mutable.value.copy(controllerSubscriptionAccepted = true)
   }
+  fun controllerRealtimeFallback(errorCode: String) {
+    mutable.value = mutable.value.copy(controllerRealtimeFallbackErrorRedacted = errorCode.take(80))
+  }
   fun error(value: Throwable, setErrorState: Boolean = true) {
     mutable.value = mutable.value.copy(
       lastErrorRedacted = redactDiagnosticError(value),
@@ -121,6 +139,15 @@ internal fun sanitizeControllerRealtimeEventName(value: String): String {
   }
   return "event:$safe"
 }
+
+internal fun sanitizeControllerPhase(value: String): String = when (value) {
+  "authenticate", "session", "realtime", "subscribe", "initial_refetch", "report_state", "listen" -> value
+  else -> "unknown"
+}
+
+internal fun sanitizeControllerEndpointHost(value: String): String = runCatching {
+  java.net.URI(value).host?.lowercase()?.takeIf { it.isNotBlank() }
+}.getOrNull() ?: "unknown"
 
 internal fun redactDiagnosticError(value: Throwable): String = when (value) {
   is ControllerHttpException -> "ControllerHttp${value.statusCode}"

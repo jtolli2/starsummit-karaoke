@@ -268,14 +268,18 @@ class PocketBaseControllerBridge(
   private var session: ControllerSession? = null
   private var realtimeConnection: ControllerRealtimeConnection? = null
   private var realtimeClientId: String? = null
+  var isRealtimeAvailable = false
+    private set
   val stateMachine = ControllerBridgeStateMachine()
 
   suspend fun establish(): List<ControllerCommand> {
     notifyDiagnostics { diagnostics.attemptStarted() }
     stateMachine.authenticating()
+    notifyDiagnostics { diagnostics.phase("authenticate") }
     val authenticated = api.authenticate(credentials)
     auth = authenticated
     stateMachine.connecting()
+    notifyDiagnostics { diagnostics.phase("session") }
     val previous = store.load()
     val resumeSessionId = previous.sessionId ?: sessionStore?.load()?.id
     var replacedExpiredSession = false
@@ -301,13 +305,26 @@ class PocketBaseControllerBridge(
       inFlightId = previous.inFlightId.takeUnless { replacedExpiredSession },
       inFlightIdempotencyKey = previous.inFlightIdempotencyKey.takeUnless { replacedExpiredSession },
     ))
+    notifyDiagnostics { diagnostics.phase("realtime") }
     val connected = realtime.connect(authenticated)
     realtimeConnection?.close()
     realtimeConnection = connected
-    realtimeClientId = withTimeout(15_000L) { connected.awaitConnectAndSubscribe() }
-    notifyDiagnostics { diagnostics.subscriptionAccepted() }
+    notifyDiagnostics { diagnostics.phase("subscribe") }
+    try {
+      realtimeClientId = withTimeout(15_000L) { connected.awaitConnectAndSubscribe() }
+      isRealtimeAvailable = true
+      notifyDiagnostics { diagnostics.subscriptionAccepted() }
+    } catch (failure: ControllerHttpException) {
+      if (failure.statusCode != 403) throw failure
+      realtimeConnection?.close()
+      realtimeConnection = null
+      realtimeClientId = null
+      isRealtimeAvailable = false
+      notifyDiagnostics { diagnostics.realtimeFallback(redactDiagnosticError(failure)) }
+    }
     stateMachine.connected()
     notifyDiagnostics { diagnostics.established() }
+    notifyDiagnostics { diagnostics.phase("initial_refetch") }
     val initial = refetch()
     notifyDiagnostics { diagnostics.initialRefetch(initial.size) }
     return initial
@@ -414,7 +431,7 @@ class PocketBaseControllerBridge(
     api.reportState(authenticated, active, state)
   }
 
-  fun close() { realtimeConnection?.close(); realtimeConnection = null; realtimeClientId = null }
+  fun close() { realtimeConnection?.close(); realtimeConnection = null; realtimeClientId = null; isRealtimeAvailable = false }
 
   private inline fun notifyDiagnostics(callback: () -> Unit) {
     // Diagnostics must never interfere with controller delivery or expose a credential-bearing error.
@@ -455,7 +472,7 @@ private class OkHttpRealtimeConnection(private val client: OkHttpClient, private
         val currentCall = client.newCall(request)
         call = currentCall
         currentCall.execute().use { response ->
-          if (!response.isSuccessful) throw IOException("PocketBase realtime failed (${response.code})")
+          if (!response.isSuccessful) throw ControllerHttpException(response.code)
           response.body?.charStream()?.buffered()?.use { reader ->
             consumePocketBaseSse(reader, { !closed }) { eventChannel.emit(it) }
           }
@@ -469,7 +486,9 @@ private class OkHttpRealtimeConnection(private val client: OkHttpClient, private
     val body = JSONObject().put("clientId", clientId).put("subscriptions", org.json.JSONArray().put(collection)).toString()
     val request = Request.Builder().url(auth.baseUrl.trimEnd('/') + PocketBaseControllerPaths.REALTIME)
       .header("Authorization", "Bearer ${auth.token}").post(body.toRequestBody("application/json".toMediaType())).build()
-    client.newCall(request).execute().use { response -> if (!response.isSuccessful) throw IOException("PocketBase realtime subscription failed (${response.code})") }
+    client.newCall(request).execute().use { response ->
+      if (!response.isSuccessful) throw ControllerHttpException(response.code)
+    }
   }
 
   override fun close() { closed = true; call?.cancel(); scope.cancel() }

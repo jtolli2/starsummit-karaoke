@@ -4,6 +4,18 @@
 
 ## Entries
 
+### 2026-07-22 — Controller realtime authorization recovery
+
+- Added a narrow native-companion recovery path for the retained staging PocketBase realtime
+  subscription authorization mismatch: only an HTTP 403 while subscribing falls back to a
+  two-second authenticated HTTPS command refetch loop. Other realtime failures keep the existing
+  reconnect/error behavior.
+- Added redacted endpoint/phase/fallback diagnostics and JVM coverage. The companion never exposes
+  controller credentials, session material, or Lounge pairing data in logs or its UI.
+- On retained staging, an isolated guest request was started through the normal tablet endpoint;
+  the companion polled command sequence 63 and PocketBase marked its `open_video` command
+  succeeded. A repeated tablet transition returned the server's idempotent `playing` result.
+
 ### 2026-07-21 — Tablet Operator Interface
 
 - Added the touch-first `/tablet` operator experience with constrained `tablet_admin` sign-in,

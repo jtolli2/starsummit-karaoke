@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +95,7 @@ class CompanionService : Service() {
       var attempt = 0
       while (isActive) {
         val credentials = controllerStore.loadCredentials() ?: return@launch
+        diagnosticsStore.controllerEndpoint(credentials.baseUrl)
         val lifecycleDiagnostics = controllerLifecycleLogger.listener()
         val bridge = PocketBaseControllerBridge(
           api = controllerApi,
@@ -105,6 +107,10 @@ class CompanionService : Service() {
             override fun attemptStarted() {
               diagnosticsStore.controllerAttemptStarted()
               lifecycleDiagnostics.attemptStarted()
+            }
+            override fun phase(name: String) {
+              diagnosticsStore.controllerPhase(name)
+              lifecycleDiagnostics.phase(name)
             }
             override fun established() {
               diagnosticsStore.controllerEstablished()
@@ -130,17 +136,43 @@ class CompanionService : Service() {
               diagnosticsStore.controllerSubscriptionAccepted()
               lifecycleDiagnostics.subscriptionAccepted()
             }
+            override fun realtimeFallback(errorCode: String) {
+              diagnosticsStore.controllerRealtimeFallback(errorCode)
+              lifecycleDiagnostics.realtimeFallback(errorCode)
+            }
           },
         )
         controllerBridge = bridge
         try {
           val processor = ControllerCommandProcessor(LoungeCommandExecutor(), ControllerStoreProgressAdapter(controllerStore))
           val initialCommands = bridge.establish()
-          runCatching { bridge.reportState(sanitizedControllerState()) }
+          var lastStateReportAt = 0L
+          diagnosticsStore.controllerPhase("report_state")
+          runCatching {
+            bridge.reportState(sanitizedControllerState())
+            lastStateReportAt = SystemClock.elapsedRealtime()
+          }
             .onFailure { diagnosticsStore.error(it, setErrorState = false) }
           processControllerCommands(bridge, processor, initialCommands)
           attempt = 0
-          bridge.listenRealtime { commands -> processControllerCommands(bridge, processor, commands) }
+          if (bridge.isRealtimeAvailable) {
+            diagnosticsStore.controllerPhase("listen")
+            bridge.listenRealtime { commands -> processControllerCommands(bridge, processor, commands) }
+          } else {
+            while (isActive) {
+              delay(HTTPS_COMMAND_POLL_INTERVAL_MS)
+              diagnosticsStore.controllerPhase("initial_refetch")
+              val commands = bridge.refetch()
+              processControllerCommands(bridge, processor, commands)
+              if (ControllerHeartbeatPolicy.shouldReport(lastStateReportAt, SystemClock.elapsedRealtime())) {
+                diagnosticsStore.controllerPhase("report_state")
+                runCatching {
+                  bridge.reportState(sanitizedControllerState())
+                  lastStateReportAt = SystemClock.elapsedRealtime()
+                }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
+              }
+            }
+          }
           throw IOException("PocketBase realtime stream ended")
         } catch (cancelled: CancellationException) {
           throw cancelled
@@ -343,7 +375,14 @@ class CompanionService : Service() {
     const val CHANNEL_ID = "lounge_connection"
     const val NOTIFICATION_ID = 1001
     const val CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS = 3_000L
+    const val HTTPS_COMMAND_POLL_INTERVAL_MS = 2_000L
   }
+}
+
+internal object ControllerHeartbeatPolicy {
+  const val REPORT_INTERVAL_MS = 30_000L
+
+  fun shouldReport(lastReportAt: Long, now: Long): Boolean = lastReportAt <= 0L || now - lastReportAt >= REPORT_INTERVAL_MS
 }
 
 internal class CommandCorrelation {
