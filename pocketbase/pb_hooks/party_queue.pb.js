@@ -51,7 +51,13 @@ function jsonValue(r, f, fallback) {
   if (Array.isArray(value)) return value
   if (typeof value === 'object') {
     const text = String(value)
-    if (text === '[object Object]') return value
+    if (text === '[object Object]') {
+      if (r && r.getString) {
+        const raw = r.getString(f)
+        if (raw && raw !== text) { try { return decode(raw) } catch (_) {} }
+      }
+      return value
+    }
     if (!/^(?:\[|\{|\")/.test(text)) return fallback
     try { return decode(text) } catch (_) { return fallback }
   }
