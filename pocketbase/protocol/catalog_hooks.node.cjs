@@ -12,6 +12,7 @@ const claimsMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migration
 const payloadMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512200_youtube_payloads.js'), 'utf8')
 const fieldRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512400_repair_catalog_field_presence.js'), 'utf8')
 const checkpointRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512500_repair_catalog_checkpoint_schema.js'), 'utf8')
+const offsetRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512600_repair_catalog_chunk_offset_required.js'), 'utf8')
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
   const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/replace'[\s\S]*?\n}\)/)
@@ -148,4 +149,13 @@ test('checkpoint repair restores only missing retained import fields', () => {
   assert.match(checkpointRepairMigration, /fail this migration clearly for operator repair/)
   assert.doesNotMatch(checkpointRepairMigration, /try \{ app\.save\(imports\) \} catch/)
   assert.doesNotMatch(checkpointRepairMigration, /try \{ app\.save\(chunks\) \} catch/)
+})
+
+test('forward chunk offset repair makes retained zero checkpoints writable', () => {
+  assert.match(offsetRepairMigration, /karaoke_catalog_import_chunks/)
+  assert.match(offsetRepairMigration, /offset\.type !== 'number'/)
+  assert.match(offsetRepairMigration, /offset\.required\)/)
+  assert.match(offsetRepairMigration, /offset\.required = false/)
+  assert.match(offsetRepairMigration, /app\.save\(chunks\)/)
+  assert.match(offsetRepairMigration, /without rewriting any records or other schema/)
 })
