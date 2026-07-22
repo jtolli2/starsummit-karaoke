@@ -1,22 +1,65 @@
+// Recreate a missing claims ledger and extend a partial one without touching
+// claim records. This is needed when retained migration history is irregular.
 migrate((app) => {
-  let claims = app.findCollectionByNameOrId('karaoke_youtube_claims')
-  if (!claims) {
-    claims = new Collection({ name: 'karaoke_youtube_claims', type: 'base', listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
-      fields: [
-        { name: 'claim_key', type: 'text', required: true, max: 180 },
-        { name: 'status', type: 'select', required: true, maxSelect: 1, values: ['in_progress', 'ready', 'complete', 'failed'] },
-        { name: 'batch_key', type: 'text', required: true, max: 80 },
-        { name: 'quota_day_key', type: 'text', required: true, max: 16 },
-        { name: 'reserved_units', type: 'number', min: 0, noDecimal: true, default: 0 },
-        { name: 'spent_units', type: 'number', min: 0, noDecimal: true, default: 0 },
-        { name: 'payload_json', type: 'json' },
-        { name: 'owner_token', type: 'text', max: 80 },
-        { name: 'lease_expires_at', type: 'date' },
-        { name: 'error_code', type: 'text', max: 120 },
-      ], indexes: ['CREATE UNIQUE INDEX idx_karaoke_youtube_claim_key ON karaoke_youtube_claims (claim_key)'] })
-    app.save(claims)
-  } else {
-    const add = (name, type, options = {}) => { try { claims.fields.getByName(name); return } catch (_) {} claims.fields.add(new Field({ name, type, ...options })) }
-    add('quota_day_key', 'text', { required: true, max: 16 }); add('reserved_units', 'number', { min: 0, noDecimal: true, default: 0 }); add('spent_units', 'number', { min: 0, noDecimal: true, default: 0 }); add('payload_json', 'json'); add('error_code', 'text', { max: 120 }); add('owner_token', 'text', { max: 80 }); add('lease_expires_at', 'date'); claims.fields.getByName('status').values = ['in_progress', 'ready', 'complete', 'failed']; app.save(claims)
+  const find = (name) => {
+    try { return app.findCollectionByNameOrId(name) } catch (_) { return null }
   }
-}, (app) => { const c = app.findCollectionByNameOrId('karaoke_youtube_claims'); if (c) app.delete(c) })
+  const makePrivate = (collection) => {
+    let changed = false
+    for (const key of ['listRule', 'viewRule', 'createRule', 'updateRule', 'deleteRule']) {
+      if (collection[key] !== null) { collection[key] = null; changed = true }
+    }
+    return changed
+  }
+  const ensureField = (collection, name, type, options = {}) => {
+    try { collection.fields.getByName(name); return false } catch (_) {}
+    collection.fields.add(new Field({ name, type, ...options }))
+    return true
+  }
+  const index = 'CREATE UNIQUE INDEX idx_karaoke_youtube_claim_key ON karaoke_youtube_claims (claim_key)'
+  const fields = [
+    ['claim_key', 'text', { required: true, max: 180 }],
+    ['status', 'select', { required: true, maxSelect: 1, values: ['in_progress', 'ready', 'complete', 'failed'] }],
+    ['batch_key', 'text', { required: true, max: 80 }],
+    ['quota_day_key', 'text', { required: true, max: 16 }],
+    ['reserved_units', 'number', { min: 0, noDecimal: true, default: 0 }],
+    ['spent_units', 'number', { min: 0, noDecimal: true, default: 0 }],
+    ['payload_json', 'json', {}],
+    ['owner_token', 'text', { max: 80 }],
+    ['lease_expires_at', 'date', {}],
+    ['error_code', 'text', { max: 120 }],
+  ]
+
+  let claims = find('karaoke_youtube_claims')
+  if (!claims) {
+    claims = new Collection({
+      name: 'karaoke_youtube_claims', type: 'base', listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
+      fields: fields.map(([name, type, options]) => ({ name, type, ...options })), indexes: [index],
+    })
+    app.save(claims)
+    return
+  }
+
+  let changed = makePrivate(claims)
+  for (const [name, type, options] of fields) changed = ensureField(claims, name, type, options) || changed
+  // Existing select fields may have been created by an earlier partial run.
+  // Extending the allowed values is metadata-only and leaves claim rows intact.
+  try {
+    const status = claims.fields.getByName('status')
+    const values = ['in_progress', 'ready', 'complete', 'failed']
+    if (status.type === 'select' && JSON.stringify(status.values) !== JSON.stringify(values)) {
+      status.values = values
+      changed = true
+    }
+  } catch (_) {}
+  if (changed) app.save(claims)
+
+  if (!claims.indexes.includes(index)) {
+    const indexes = claims.indexes.slice()
+    claims.indexes.push(index)
+    try { app.save(claims) } catch (_) { claims.indexes = indexes }
+  }
+}, (app) => {
+  let claims = null; try { claims = app.findCollectionByNameOrId('karaoke_youtube_claims') } catch (_) {}
+  if (claims) app.delete(claims)
+})

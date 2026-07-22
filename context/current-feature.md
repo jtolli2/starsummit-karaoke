@@ -5,7 +5,7 @@
 
 ## Status
 
-Complete
+In Progress
 
 ## Goals
 
@@ -50,3 +50,6 @@ Complete
   request claims/payloads, lease recovery, owner fencing, retry-safe metering, availability
   filtering, and idempotent empty-result replay. Fourteen focused backend contracts, production
   build, and final independent review pass. Deployment/live route validation remains pending.
+- Retained staging safely rolled back two catalog deployment attempts after revealing missing
+  historical collection state on its persistent volume. The catalog migration repair passed; the
+  quota, claim, and payload migrations are now being hardened before another backend-only deploy.

@@ -7,6 +7,9 @@ const test = require('node:test')
 
 const hook = fs.readFileSync(path.join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
 const repairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512300_repair_song_catalog_collection.js'), 'utf8')
+const quotaMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512000_youtube_quota.js'), 'utf8')
+const claimsMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512100_youtube_claims.js'), 'utf8')
+const payloadMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512200_youtube_payloads.js'), 'utf8')
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
   const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/:id\/replace'[\s\S]*?\n}\)/)
@@ -95,4 +98,19 @@ test('catalog repair keeps catalog collections private and restores field option
   assert.match(repairMigration, /const ensureField = \(collection, name, type, options = \{\}\)/)
   assert.match(repairMigration, /if \(field\.type !== type\) return false/)
   assert.match(repairMigration, /required: false, default: false/)
+})
+
+test('YouTube ledger migrations tolerate missing retained collections without record rewrites', () => {
+  for (const migration of [quotaMigration, claimsMigration, payloadMigration]) {
+    assert.match(migration, /try \{ return app\.findCollectionByNameOrId\(name\) \} catch \(_\) \{ return null \}/)
+    assert.match(migration, /const makePrivate = \(collection\)/)
+    assert.match(migration, /const ensureField = \(collection, name, type, options = \{\}\)/)
+  }
+  assert.match(quotaMigration, /idx_karaoke_youtube_quota_day/)
+  assert.match(quotaMigration, /historical duplicate[\s\S]*records remain/)
+  assert.match(claimsMigration, /idx_karaoke_youtube_claim_key/)
+  assert.match(claimsMigration, /status\.type === 'select'/)
+  assert.match(payloadMigration, /name: 'karaoke_catalog_imports'/)
+  assert.match(payloadMigration, /name: 'karaoke_catalog_import_chunks'/)
+  assert.match(payloadMigration, /relation\.collectionId = imports\.id/)
 })
