@@ -41,6 +41,14 @@ function sameInstant(left, right) {
   if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) return leftTime === rightTime
   return false
 }
+function catalogBatchMismatch(batch, expected, checkTotal) {
+  if (str(batch, 'source_fingerprint') !== expected.fingerprint) return 'fingerprint'
+  if (str(batch, 'source_url') !== expected.url) return 'url'
+  if (str(batch, 'source_terms') !== expected.terms) return 'terms'
+  if (!sameInstant(str(batch, 'source_retrieved_at'), expected.retrievedAt)) return 'retrieved_at'
+  if (checkTotal && num(batch, 'total') !== expected.total) return 'total'
+  return ''
+}
 function id(r) { return r?.id || r?.getString?.('id') }
 function name(r) { return r?.collection?.()?.name || r?.collection?.name || '' }
 function tablet(a) { return a && !a.getBool?.('revoked') && str(a, 'role') === 'tablet_admin' && ['users', '_pb_users_auth_'].includes(name(a)) }
@@ -228,7 +236,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, sameInstant, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -546,7 +554,7 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, now, future, find, set, setJson, jsonValue, sameInstant, num, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str, catalogImportFailureStage, logCatalogImportFailure } = globalThis.__partyQueue
+  const { auth, tablet, json, body, now, future, find, set, setJson, jsonValue, catalogBatchMismatch, num, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str, catalogImportFailureStage, logCatalogImportFailure } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const live = input.fetchFromYoutube === true; const canonical = input.canonical && typeof input.canonical === 'object' ? input.canonical : {}
   const batchKey = String(input.batchKey || '').trim(); let items = Array.isArray(input.items) ? input.items.slice(0, 100) : []; const offset = Number(input.offset)
@@ -561,7 +569,8 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
       ownerToken = hash(`${batchKey}:${requestFingerprint}:${random(24)}`)
       $app.runInTransaction((tx) => {
         let batch = null; try { batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }) } catch (_) {}
-        if (batch && (str(batch, 'source_fingerprint') !== manifestFingerprint || str(batch, 'source_url') !== sourceUrl || str(batch, 'source_terms') !== sourceTerms || !sameInstant(str(batch, 'source_retrieved_at'), sourceRetrievedAt) || (!live && num(batch, 'total') !== total))) throw new Error('batch_source_mismatch')
+        const mismatch = batch && catalogBatchMismatch(batch, { fingerprint: manifestFingerprint, url: sourceUrl, terms: sourceTerms, retrievedAt: sourceRetrievedAt, total }, !live)
+        if (mismatch) throw new Error(`batch_source_mismatch_${mismatch}`)
         if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', sourceUrl); set(batch, 'source_terms', sourceTerms); set(batch, 'source_retrieved_at', sourceRetrievedAt); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); tx.save(batch) }
         let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
         if (chunk) { if (str(chunk, 'chunk_fingerprint') !== requestFingerprint) throw new Error('chunk_source_mismatch'); throw new Error('chunk_replay') }
@@ -591,9 +600,10 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
       if (!existingClaim || !['ready', 'complete'].includes(str(existingClaim, 'status'))) $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (!claim || str(claim, 'owner_token') !== ownerToken) throw new Error('youtube_claim_stale_owner'); const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); const used = num(batch, 'quota_used'); if (used + spent > num(batch, 'quota_limit')) throw new Error('youtube_quota_exhausted'); set(batch, 'quota_used', used + spent); set(batch, 'total', total); set(batch, 'updated_at', now()); tx.save(batch); setJson(claim, 'payload_json', { items, total, spent }); set(claim, 'spent_units', spent); set(claim, 'status', 'ready'); tx.save(claim); const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: str(claim, 'quota_day_key') }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - num(claim, 'reserved_units'))); set(quota, 'spent', num(quota, 'spent') + spent); tx.save(quota) })
     } catch (error) {
       if (error.message === 'chunk_replay') return c.json(200, { batchKey, imported: 0, replay: true })
-      const permanent = ['batch_source_mismatch', 'chunk_source_mismatch', 'youtube_quota_exhausted'].includes(error.message)
+      const batchMismatch = String(error.message || '').startsWith('batch_source_mismatch_')
+      const permanent = batchMismatch || ['chunk_source_mismatch', 'youtube_quota_exhausted'].includes(error.message)
       try { $app.runInTransaction((tx) => { const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); if (batch) { set(batch, 'status', permanent ? 'failed' : 'paused'); set(batch, 'last_error', String(error.message || 'youtube_import_failed').slice(0, 240)); set(batch, 'updated_at', now()); tx.save(batch) } const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (claim && str(claim, 'owner_token') === ownerToken) { const reserved = num(claim, 'reserved_units'); const consumed = Math.min(reserved, Number(error.quotaCost || attemptedCost || 0)); const qday = str(claim, 'quota_day_key'); if (reserved && qday) { const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: qday }); if (quota) { set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - reserved)); if (consumed) set(quota, 'spent', num(quota, 'spent') + consumed); tx.save(quota) } } set(claim, 'reserved_units', 0); set(claim, 'spent_units', consumed); set(claim, 'status', 'failed'); set(claim, 'error_code', String(error.message || 'youtube_import_failed')); tx.save(claim) } }) } catch (_) {}
-      const code = permanent ? error.message : 'youtube_import_failed'; return json(c, code === 'batch_source_mismatch' || code === 'chunk_source_mismatch' || code === 'youtube_request_in_progress' ? 409 : 503, code, code === 'youtube_quota_exhausted' ? 'YouTube import quota is exhausted' : 'Live YouTube import failed')
+      const code = batchMismatch ? 'batch_source_mismatch' : permanent ? error.message : 'youtube_import_failed'; const extra = batchMismatch ? { mismatchField: String(error.message).replace('batch_source_mismatch_', '') } : undefined; return json(c, code === 'batch_source_mismatch' || code === 'chunk_source_mismatch' || code === 'youtube_request_in_progress' ? 409 : 503, code, code === 'youtube_quota_exhausted' ? 'YouTube import quota is exhausted' : batchMismatch ? 'Import input does not match its original manifest' : 'Live YouTube import failed', extra)
     }
   }
   const chunkFingerprint = live ? requestFingerprint : hash(JSON.stringify(canonicalize({ offset, items })))
@@ -607,7 +617,8 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
       // otherwise fail relation validation and could not be resumed.
       if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); diagnosticStage = 'batch_create'; tx.save(batch) }
       diagnosticStage = 'batch_validate'
-      if (str(batch, 'source_fingerprint') !== manifestFingerprint || num(batch, 'total') !== total || str(batch, 'source_url') !== sourceUrl || str(batch, 'source_terms') !== sourceTerms || !sameInstant(str(batch, 'source_retrieved_at'), sourceRetrievedAt)) throw new Error('batch_source_mismatch')
+      const mismatch = catalogBatchMismatch(batch, { fingerprint: manifestFingerprint, url: sourceUrl, terms: sourceTerms, retrievedAt: sourceRetrievedAt, total }, true)
+      if (mismatch) throw new Error(`batch_source_mismatch_${mismatch}`)
       let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
       if (chunk && str(chunk, 'chunk_fingerprint') !== chunkFingerprint) throw new Error('chunk_source_mismatch')
       if (chunk) return
@@ -639,7 +650,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
       const cursor = Math.max(num(batch, 'cursor'), offset + items.length); if (cursor >= total) { let all = []; try { const chunks = tx.findRecordsByFilter('karaoke_catalog_import_chunks', 'import = {:import}', '+offset', 1000, 0, { import: id(batch) }); chunks.forEach((part) => { const payload = jsonValue(part, 'payload_json', []); if (Array.isArray(payload)) all = all.concat(payload) }) } catch (_) {} const computed = catalogFinalDigest({ url: sourceUrl, terms: sourceTerms, retrievedAt: sourceRetrievedAt }, total, all); if (finalDigest && finalDigest !== computed) throw new Error('final_digest_mismatch'); set(batch, 'final_digest', computed) } set(batch, 'cursor', cursor); set(batch, 'status', cursor >= total ? 'complete' : 'paused'); set(batch, 'updated_at', now()); diagnosticStage = 'batch_finalize'; tx.save(batch)
     })
     return c.json(200, { batchKey, imported })
-  } catch (error) { if (!live) logCatalogImportFailure(diagnosticStage, offset, items.length); const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order', 'final_digest_mismatch'].includes(error.message); const extra = !live ? { failureStage: catalogImportFailureStage(diagnosticStage) } : undefined; return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed', extra) }
+  } catch (error) { if (!live) logCatalogImportFailure(diagnosticStage, offset, items.length); const batchMismatch = String(error.message || '').startsWith('batch_source_mismatch_'); const mismatch = batchMismatch || ['chunk_source_mismatch', 'chunk_out_of_order', 'final_digest_mismatch'].includes(error.message); const extra = batchMismatch ? { mismatchField: String(error.message).replace('batch_source_mismatch_', '') } : !live ? { failureStage: catalogImportFailureStage(diagnosticStage) } : undefined; return json(c, mismatch ? 409 : 500, batchMismatch ? 'batch_source_mismatch' : mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed', extra) }
 })
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/review', (c) => {

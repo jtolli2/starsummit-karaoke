@@ -74,8 +74,10 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
 test('catalog source retrieval dates compare by instant across PocketBase formatting', () => {
   assert.match(hook, /function sameInstant\(left, right\)/)
   assert.match(hook, /replace\(\/\^\(\\d\{4\}-\\d\{2\}-\\d\{2\}\)\\s\+\//)
-  assert.match(hook, /!sameInstant\(str\(batch, 'source_retrieved_at'\), sourceRetrievedAt\)/)
+  assert.match(hook, /!sameInstant\(str\(batch, 'source_retrieved_at'\), expected\.retrievedAt\)/)
   assert.doesNotMatch(hook, /str\(batch, 'source_retrieved_at'\) !== sourceRetrievedAt/)
+  assert.match(hook, /function catalogBatchMismatch\(batch, expected, checkTotal\)/)
+  assert.match(hook, /mismatchField/)
 })
 
 test('catalog completion verifies canonical content and source metadata digest', () => {
@@ -122,7 +124,7 @@ test('fixture import failures log only bounded batch diagnostics', () => {
   assert.match(hook, /diagnosticStage = 'chunk_save'; tx\.save\(chunk\)/)
   assert.match(hook, /diagnosticStage = 'batch_finalize'; tx\.save\(batch\)/)
   assert.match(hook, /logCatalogImportFailure\(diagnosticStage, offset, items\.length\)/)
-  assert.match(hook, /const extra = !live \? \{ failureStage: catalogImportFailureStage\(diagnosticStage\) \} : undefined/)
+  assert.match(hook, /!live \? \{ failureStage: catalogImportFailureStage\(diagnosticStage\) \} : undefined/)
   assert.match(hook, /'Catalog import failed', extra\)/)
   assert.doesNotMatch(hook, /failureStage:\s*(?:error|input|source|batchKey|manifestFingerprint|chunkFingerprint)/)
   assert.match(hook, /globalThis\.__partyQueue = \{[\s\S]*catalogImportFailureStage, logCatalogImportFailure \}/)
