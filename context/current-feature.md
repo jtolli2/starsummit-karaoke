@@ -101,5 +101,9 @@ Complete
 - Validation passed 65 backend tests including every pinned PocketBase 0.39.7 catalog, party,
   auth, controller, and realtime integration; 15 Vue tests; production build; hook syntax;
   retained-volume Compose config; live health; canary replay/restart; and independent review with
-  final APPROVE verdicts. Existing catalog remains 18 songs and 18 review items, all unreviewed or
-  needs-review/ineligible as previously recorded.
+  final APPROVE verdicts. Live review then exposed the Bridge alternatives field as a recursively
+  serialized numeric wrapper (7,654 byte elements, not records). It was reconstructed from the
+  authoritative canary payload as eight distinct alternatives and received an explicit
+  `alternatives_json_wrapper_repair` history event. Final catalog state is 18 songs, eight
+  alternatives, and 18 review items, all unreviewed or needs-review/ineligible as previously
+  recorded.

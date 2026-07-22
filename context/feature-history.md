@@ -247,6 +247,11 @@
 - Fixed the discovered optional-value defect by representing unavailable external classification
   as JSON `null`; final classification remains derived from video evidence and uploader/channel
   remains provenance-only. Independent review returned APPROVE after each repair.
+- Live tablet validation exposed the Bridge alternatives JSON as a recursively serialized byte
+  wrapper. Reconstructed the field from the authoritative claim as eight candidates (five karaoke,
+  two lyric fallbacks, and one live exclusion), preserved canonical Simon & Garfunkel identity and
+  distinct uploader provenance, and appended an `alternatives_json_wrapper_repair` audit event.
+  Final tablet diagnostics show 18 songs, 18 awaiting review, and eight alternatives.
 - Passed 65 backend and pinned PocketBase tests, 15 Vue tests, production build, hook syntax, and
   Compose validation. Signed product commits through `204d0f6812b32fbac029e7b82007593eebdac4c4`
   were pushed and deployed healthy to retained PocketBase (`i14gl0508juv9pjvy05x1hdz`) and frontend
