@@ -14,6 +14,11 @@ function sourceFingerprint({ query = '', items = [] }) {
   return crypto.createHash('sha256').update(JSON.stringify(canonicalize({ query, items }))).digest('hex')
 }
 
+function finalDigest({ source = {}, items = [] }) {
+  const crypto = require('node:crypto')
+  return crypto.createHash('sha256').update(JSON.stringify(canonicalize({ source: { url: String(source.url || ''), terms: String(source.terms || ''), retrievedAt: String(source.retrievedAt || '') }, total: items.length, items }))).digest('hex')
+}
+
 // YouTube's quota resets on America/Los_Angeles time, not at UTC midnight. Keep this
 // helper deterministic so callers can supply a fixed instant in tests.
 function quotaDayKey(value = new Date()) {
@@ -82,4 +87,4 @@ function validateChunk({ cursor, offset, existingFingerprint, chunkFingerprint }
   return { replay: false }
 }
 
-module.exports = { CLASSIFICATIONS, REVIEW_STATES, classify, normalize, plan, quotaDayKey, sourceFingerprint, normalized, validateChunk }
+module.exports = { CLASSIFICATIONS, REVIEW_STATES, classify, normalize, plan, quotaDayKey, sourceFingerprint, finalDigest, normalized, validateChunk }

@@ -43,6 +43,14 @@ migrate((app) => {
   ]) changed = add(name, type, options) || changed
   if (changed) app.save(songs)
 
+  let imports = null
+  try { imports = app.findCollectionByNameOrId('karaoke_catalog_imports') } catch (_) {}
+  if (imports) {
+    let digest = null
+    try { digest = imports.fields.getByName('final_digest') } catch (_) {}
+    if (!digest) { imports.fields.add(new Field({ name: 'final_digest', type: 'text', max: 64 })); app.save(imports) }
+  }
+
   // Defaults on a newly-added PocketBase field are not a reliable backfill for
   // retained records. Required select fields must therefore be populated
   // explicitly before any later operator save. Only blank values are changed;
@@ -78,7 +86,8 @@ migrate((app) => {
   if (!chunks) return
   let offsetField = null
   try { offsetField = chunks.fields.getByName('offset') } catch (_) {}
-  if (offsetField && offsetField.type === 'number' && offsetField.required) {
+  const offsetType = offsetField && (typeof offsetField.type === 'function' ? offsetField.type() : offsetField.type)
+  if (offsetField && offsetType === 'number' && offsetField.required) {
     offsetField.required = false
     app.save(chunks)
   }

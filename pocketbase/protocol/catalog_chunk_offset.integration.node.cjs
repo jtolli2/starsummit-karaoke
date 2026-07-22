@@ -38,3 +38,28 @@ test('PocketBase 0.39.7 repairs required zero offset without rewriting records',
   execFileSync(bin, ['migrate', 'up', '--dir', dataDir], { stdio: 'pipe' })
   assert.ok(true)
 })
+
+test('forward final digest repair preserves retained imports and is idempotent', { skip: !process.env.POCKETBASE_BIN }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-digest-pb-'))
+  const migrations = path.join(root, 'pb_migrations'); fs.mkdirSync(migrations)
+  fs.writeFileSync(path.join(migrations, '1784512790_seed_import.js'), `migrate((app) => {
+    const collection = new Collection({ name: 'karaoke_catalog_imports', type: 'base', fields: [
+      { name: 'batch_key', type: 'text' }, { name: 'marker', type: 'text' },
+    ] })
+    app.save(collection)
+    const record = new Record(collection); record.set('batch_key', 'retain-me'); record.set('marker', 'preserve-me'); app.save(record)
+  }, () => {})`)
+  fs.copyFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512800_repair_catalog_final_digest.js'), path.join(migrations, '1784512800_repair_catalog_final_digest.js'))
+  fs.writeFileSync(path.join(migrations, '1784512810_assert_digest_repair.js'), `migrate((app) => {
+    const collection = app.findCollectionByNameOrId('karaoke_catalog_imports')
+    const field = collection.fields.getByName('final_digest')
+    const type = typeof field.type === 'function' ? field.type() : field.type
+    if (type !== 'text') throw new Error('digest type changed')
+    const record = app.findRecordsByFilter('karaoke_catalog_imports', 'marker = "preserve-me"', '', 1, 0)[0]
+    if (!record || record.get('batch_key') !== 'retain-me' || record.get('marker') !== 'preserve-me') throw new Error('import record changed')
+  }, () => {})`)
+  const dataDir = path.join(root, 'pb_data'); const bin = process.env.POCKETBASE_BIN
+  execFileSync(bin, ['migrate', 'up', '--dir', dataDir], { stdio: 'pipe' })
+  execFileSync(bin, ['migrate', 'up', '--dir', dataDir], { stdio: 'pipe' })
+  assert.ok(true)
+})

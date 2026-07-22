@@ -37,7 +37,7 @@ migrate((app) => {
     // retained collection: an older row cannot be truthfully reconstructed.
     ['source_fingerprint', 'text', { min: 64, max: 64 }],
     ['source_url', 'text', { max: 500 }], ['source_terms', 'text', { max: 500 }],
-    ['source_retrieved_at', 'date', {}], ['cursor', 'number', { min: 0, noDecimal: true, default: 0 }],
+    ['source_retrieved_at', 'date', {}], ['final_digest', 'text', { max: 64 }], ['cursor', 'number', { min: 0, noDecimal: true, default: 0 }],
     ['status', 'select', { maxSelect: 1, values: ['pending', 'running', 'paused', 'complete', 'failed'] }],
     ['quota_used', 'number', { min: 0, noDecimal: true, default: 0 }], ['quota_limit', 'number', { min: 1, noDecimal: true, default: 10000 }],
     ['total', 'number', { min: 0, noDecimal: true, default: 0 }], ['last_error', 'text', { max: 240 }], ['updated_at', 'date', {}],
@@ -46,7 +46,7 @@ migrate((app) => {
     ['batch_key', 'text', { required: true, min: 1, max: 80 }],
     ['source_fingerprint', 'text', { required: true, min: 64, max: 64 }],
     ['source_url', 'text', { max: 500 }], ['source_terms', 'text', { max: 500 }],
-    ['source_retrieved_at', 'date', {}], ['cursor', 'number', { min: 0, noDecimal: true, default: 0 }],
+    ['source_retrieved_at', 'date', {}], ['final_digest', 'text', { max: 64 }], ['cursor', 'number', { min: 0, noDecimal: true, default: 0 }],
     ['status', 'select', { required: true, maxSelect: 1, values: ['pending', 'running', 'paused', 'complete', 'failed'] }],
     ['quota_used', 'number', { min: 0, noDecimal: true, default: 0 }], ['quota_limit', 'number', { min: 1, noDecimal: true, default: 10000 }],
     ['total', 'number', { min: 0, noDecimal: true, default: 0 }], ['last_error', 'text', { max: 240 }], ['updated_at', 'date', {}],
@@ -84,7 +84,8 @@ migrate((app) => {
   for (const [name, type, options] of chunkFields) changed = ensure(chunks, name, type, options) || changed
   try {
     const relation = chunks.fields.getByName('import')
-    if (relation && relation.type === 'relation' && relation.collectionId !== imports.id) { relation.collectionId = imports.id; changed = true }
+    const relationType = relation && (typeof relation.type === 'function' ? relation.type() : relation.type)
+    if (relation && relationType === 'relation' && relation.collectionId !== imports.id) { relation.collectionId = imports.id; changed = true }
   } catch (_) {}
   if (changed) app.save(chunks)
   ensureIndex(chunks, chunkIndex)

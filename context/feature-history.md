@@ -163,3 +163,20 @@
   return 403, preserving their credential boundaries. No import was started because no scoped
   `tablet_admin` credential and approved source manifest were available in this delivery step; no
   catalog or unrelated retained records changed, and no YouTube quota was intentionally consumed.
+
+### 2026-07-22 — Karaoke Catalog Import and Search
+
+- Added a resumable, idempotent server-side catalog importer with immutable source provenance,
+  normalized identity deduplication, durable YouTube request claims and quota ledger, batch metadata
+  validation, configurable karaoke-first scoring, explicit fallback classifications, review state,
+  replacement handling, and auditable alternatives.
+- Added constrained tablet-admin catalog review/search/approve/reject/replace/disable workflows and
+  party-independent review UI. Guest search exposes only sanitized approved/eligible songs with
+  normalized deterministic pagination; public writes and privileged YouTube access remain denied.
+- Passed importer and backend contracts, pinned PocketBase 0.39.7 migration integration, Vue tests,
+  production build, and independent review. Deployed product SHA
+  `f4801a5ef0e8e99127cce2268bf5df3733f7c17e` to both retained staging apps without replacing the
+  volume; live replay, quota, review, guest-boundary, no-party recovery, and health checks passed.
+- Live validation added two unreviewed/ineligible karaoke candidates and one rejected/ineligible
+  synthetic fixture, consuming 101 known YouTube quota units. A real reproducible popular-song
+  source and broad initial import remain intentionally deferred rather than fabricating provenance.

@@ -24,7 +24,9 @@ migrate((app) => {
       collection.fields.add(new Field({ name, type, ...options }))
       return true
     }
-    if (field.type !== type) return false
+    const actualType = typeof field.type === 'function' ? field.type() : field.type
+    // Legacy equivalent: if (field.type !== type) return false
+    if (actualType !== type) return false
     let changed = false
     for (const [key, value] of Object.entries(options)) {
       if (JSON.stringify(field[key]) !== JSON.stringify(value)) {
@@ -120,7 +122,8 @@ migrate((app) => {
   if (queue) {
     try {
       const songRelation = queue.fields.getByName('song')
-      if (songRelation.type === 'relation' && songRelation.collectionId !== songs.id) {
+      const relationType = typeof songRelation.type === 'function' ? songRelation.type() : songRelation.type
+      if (relationType === 'relation' && songRelation.collectionId !== songs.id) {
         songRelation.collectionId = songs.id
         app.save(queue)
       }
@@ -136,7 +139,7 @@ migrate((app) => {
         { name: 'batch_key', type: 'text', required: true, min: 1, max: 80 },
         { name: 'source_fingerprint', type: 'text', required: true, min: 64, max: 64 },
         { name: 'source_url', type: 'text', max: 500 }, { name: 'source_terms', type: 'text', max: 500 },
-        { name: 'source_retrieved_at', type: 'date' }, { name: 'cursor', type: 'number', min: 0, noDecimal: true, default: 0 },
+        { name: 'source_retrieved_at', type: 'date' }, { name: 'final_digest', type: 'text', max: 64 }, { name: 'cursor', type: 'number', min: 0, noDecimal: true, default: 0 },
         { name: 'status', type: 'select', required: true, maxSelect: 1, values: ['pending', 'running', 'paused', 'complete', 'failed'] },
         { name: 'quota_used', type: 'number', min: 0, noDecimal: true, default: 0 }, { name: 'quota_limit', type: 'number', min: 1, noDecimal: true, default: 10000 },
         { name: 'total', type: 'number', min: 0, noDecimal: true, default: 0 }, { name: 'last_error', type: 'text', max: 240 }, { name: 'updated_at', type: 'date' },
@@ -150,7 +153,7 @@ migrate((app) => {
     ['source_fingerprint', 'text', { required: true, min: 64, max: 64 }],
     ['source_url', 'text', { required: false, max: 500 }],
     ['source_terms', 'text', { required: false, max: 500 }],
-    ['source_retrieved_at', 'date', {}],
+    ['source_retrieved_at', 'date', {}], ['final_digest', 'text', { max: 64 }],
     ['cursor', 'number', { required: false, min: 0, noDecimal: true, default: 0 }],
     ['status', 'select', { required: true, maxSelect: 1, values: ['pending', 'running', 'paused', 'complete', 'failed'] }],
     ['quota_used', 'number', { required: false, min: 0, noDecimal: true, default: 0 }],
@@ -188,7 +191,8 @@ migrate((app) => {
     chunksChanged = ensureIndex(chunks, 'CREATE UNIQUE INDEX idx_karaoke_catalog_import_chunk ON karaoke_catalog_import_chunks (import, offset)') || chunksChanged
     try {
       const importRelation = chunks.fields.getByName('import')
-      if (importRelation.type === 'relation' && importRelation.collectionId !== imports.id) {
+      const relationType = typeof importRelation.type === 'function' ? importRelation.type() : importRelation.type
+      if (relationType === 'relation' && importRelation.collectionId !== imports.id) {
         importRelation.collectionId = imports.id
         chunksChanged = true
       }

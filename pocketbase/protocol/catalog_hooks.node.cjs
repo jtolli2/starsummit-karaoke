@@ -21,6 +21,7 @@ test('catalog callbacks resolve their helpers through the reload-safe global con
   assert.match(replacement[0], /require\(__hooks \+ '\/party_queue\.pb\.js'\)/)
   assert.match(replacement[0], /globalThis\.__partyQueue/)
   assert.match(replacement[0], /YOUTUBE_ID/)
+  assert.match(replacement[0], /body, now, id/)
   assert.match(replacement[0], /c\.request\.pathValue\('id'\)/)
 })
 
@@ -28,8 +29,9 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /totalItems, totalPages/)
   assert.match(hook, /reviewState:/)
   assert.match(hook, /reviewState: str\(song, 'review_status'\) \|\| 'unreviewed'/)
-  assert.match(hook, /return c\.json\(200, \{ id: id\(song\), reviewState, eligible:/)
-  assert.match(hook, /perPage \+ 1/)
+  assert.match(hook, /runInTransaction\(\(tx\) =>/)
+  assert.match(hook, /return c\.json\(200, result\)/)
+  assert.match(hook, /const totalItems = allRows\.length/)
   assert.match(hook, /catalog\/\{id\}\/review/)
 })
 
@@ -66,6 +68,31 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
   assert.match(hook, /fallback_audio/)
   assert.match(hook, /Persist a newly created batch before using its id/)
   assert.match(hook, /set\(batch, 'total', total\); tx\.save\(batch\)/)
+})
+
+test('catalog completion verifies canonical content and source metadata digest', () => {
+  assert.match(hook, /function catalogFinalDigest\(source, total, items\)/)
+  assert.match(hook, /source: \{ url: String\(source\?\.url/)
+  assert.match(hook, /retrievedAt: String\(source\?\.retrievedAt/)
+  assert.match(hook, /final_digest_mismatch/)
+  assert.match(hook, /catalogFinalDigest, normalized/)
+})
+
+test('identity alternatives and review history are append-only and idempotent', () => {
+  assert.match(hook, /identity_key = \{:\s*identity\}/)
+  assert.match(hook, /alternatives_json/)
+  assert.match(hook, /!list\.some\(\(candidate\) => String\(candidate\.youtubeId \|\| ''\) === youtubeId\)/)
+  assert.match(hook, /action: 'review'/)
+  assert.match(hook, /action: 'replacement'/)
+  assert.match(hook, /set\(song, 'review_history_json', events\)/)
+})
+
+test('review and replacement history mutations are transactional and untruncated', () => {
+  const review = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/review',[\s\S]*?\n}\)/)?.[0] || ''
+  const replace = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/replace',[\s\S]*?\n}\)/)?.[0] || ''
+  assert.match(review, /\$app\.runInTransaction\(\(tx\)/)
+  assert.match(replace, /\$app\.runInTransaction\(\(tx\)/)
+  assert.doesNotMatch(review + replace, /events\.slice\(/)
 })
 
 test('fixture import failures log only bounded batch diagnostics', () => {

@@ -97,3 +97,14 @@
   continuation whenever a feature adds browser realtime state.
 - **Follow-up:** Exercise the custom guest wake topic in the pinned PocketBase runtime before
   relying on it in deployment validation.
+
+### 2026-07-22 — Validate migration field access against the pinned PocketBase runtime
+
+- **Feedback:** A catalog repair migration treated PocketBase collection fields like plain objects;
+  in PocketBase 0.39.7 the field type is exposed through `field.type()`. Static checks did not catch
+  the mismatch, and retained staging surfaced it during migration execution.
+- **Improvement:** Exercise additive migration repairs against the pinned real PocketBase binary,
+  including preserved zero values and a second idempotent application, before deployment. Treat
+  collection inspection as runtime API usage rather than untyped object access.
+- **Follow-up:** Keep fixture databases non-destructive and include representative retained values
+  whenever schema-repair code branches on field type, relation target, or required-state metadata.

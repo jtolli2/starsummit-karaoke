@@ -32,26 +32,34 @@ Complete
   certainty.
 - Preserve the retained staging volume and all unrelated party, queue, controller, tablet and
   validation records. No production or Wi-Fi interruption action is in scope.
-- Implemented an immutable manifest/chunk importer with source provenance, normalized identity,
-  classification confidence, review/replacement state, private operator routes, and sanitized
-  guest pagination. The committed fixture is deterministic only; live YouTube discovery is
-  deliberately unavailable until a server-side key/request boundary and real source are supplied.
-- Verification: 9 importer/hook contract tests, 5 focused Vue API tests, production build, diff
-  whitespace check, and independent review passed. Pinned PocketBase integration and retained
-  staging validation remain environment/deployment checks.
-- Retained staging audit on 2026-07-22: frontend and PocketBase apps were healthy, but PocketBase
-  remained deployed at `6f1c8ac7d02095a236249dd53a7eded9d4600b58`. This task exposed read-only
-  Coolify inspection only, with no deployment/update action or authorized local token path; no
-  staging configuration or records were changed and live catalog validation was not claimed.
-- A server-side `YOUTUBE_API_KEY` has now been configured for retained staging. This follow-up
-  activates the live discovery boundary, then requires a redeploy before a small catalog-only
-  validation import can safely consume quota.
-- Added the server-only YouTube discovery boundary with Pacific-day quota accounting, durable
-  request claims/payloads, lease recovery, owner fencing, retry-safe metering, availability
-  filtering, and idempotent empty-result replay. Fourteen focused backend contracts, production
-  build, and final independent review pass. Deployment/live route validation remains pending.
-- Retained staging safely rolled back two catalog deployment attempts after revealing missing
-  historical collection state on its persistent volume. Additive migration repairs subsequently
-  deployed exact commit `53dfa1c70e0cf878f297b85250475ba849e39fbc` successfully; `/api/health`
-  passed and unauthenticated guest search/tablet import probes remained denied (403). No catalog,
-  party, queue, controller, tablet, or validation records were created or changed.
+- Delivered the immutable manifest/chunk importer, normalized identity and deduplication, explicit
+  `karaoke`/`fallback_lyric`/`fallback_audio` classification, provenance/confidence/review and
+  replacement metadata, constrained tablet review routes/UI, and sanitized deterministic guest
+  search. YouTube discovery is server-only, quota-aware, resumable, owner-fenced, and replay-safe.
+- The reproducible initial source is the committed versioned fixture/import contract carrying URL,
+  retrieval date, rank, and terms notes. It proves the pipeline without fabricating popularity
+  data. A real licensed/operational popular-song source is still required before a large import;
+  correctness and provenance took priority over the optional 5,000-record target.
+- Retained staging deployed exact product SHA
+  `f4801a5ef0e8e99127cce2268bf5df3733f7c17e` to PocketBase deployment
+  `kitiyw8oh5btja1b3q9bryhe` and frontend deployment `iuatkib940w1rsyenmp9xhkr`; both finished
+  healthy, the existing volume was preserved, and same-origin `/api/health` returned 200.
+- Live validation imported one deterministic synthetic fixture, replayed it with zero duplicates,
+  and immediately rejected it as ineligible. One YouTube query imported two credible karaoke
+  candidates (`nMDXPAM8RwE` and `9iQH7g_zKl8`); its exact replay imported zero and spent no further
+  quota. Both remain unreviewed/ineligible for operator review. The successful query consumed 101
+  quota units; total task consumption is not exactly knowable because an earlier failed diagnostic
+  request may also have reached YouTube.
+- Live operator validation restored the signed-in tablet route with no active party and no error,
+  exposed catalog review independently of party state, and displayed 16 unreviewed records. The
+  new records comprise two unreviewed `karaoke` candidates and one rejected synthetic `karaoke`
+  fixture; pre-existing validation records were not changed. Unauthenticated guest search remained
+  denied, and no party, queue, controller, tablet enrollment, or unrelated validation state changed.
+- Additive repair migrations corrected retained checkpoint schema state using the PocketBase 0.39.7
+  field API without dropping data. Pinned-runtime offset-zero preservation/idempotency, importer,
+  auth, quota/replay, deduplication/concurrency, classification, Vue, production-build, and live
+  staging checks passed; independent reviews found no remaining blocking findings.
+- Remaining limitations: YouTube classification is explainable metadata heuristics rather than
+  semantic certainty; availability can only reflect the API at check time; no broad popular-song
+  source or 5,000-record import was selected; fallbacks remain intentionally reviewable and
+  replaceable rather than enforced by an irreversible karaoke-only constraint.

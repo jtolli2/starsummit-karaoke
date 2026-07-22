@@ -9,7 +9,9 @@ migrate((app) => {
 
   let offset = null
   try { offset = chunks.fields.getByName('offset') } catch (_) {}
-  if (!offset || offset.type !== 'number' || !offset.required) return
+  const offsetType = offset && (typeof offset.type === 'function' ? offset.type() : offset.type)
+  // Legacy equivalent: offset.type !== 'number'
+  if (!offset || offsetType !== 'number' || !offset.required) return
 
   offset.required = false
   app.save(chunks)
