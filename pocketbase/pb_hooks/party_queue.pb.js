@@ -29,17 +29,24 @@ function num(r, f) { return r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
 function set(r, f, v) { r.set(f, v); return r }
 function setJson(r, f, v) { r.set(f, JSON.stringify(v)); return r }
 function jsonValue(r, f, fallback) {
+  const decode = (text) => {
+    const decoded = JSON.parse(text)
+    if (typeof decoded === 'string' && /^(?:\[|\{)/.test(decoded.trim())) {
+      return JSON.parse(decoded)
+    }
+    return decoded
+  }
   const value = r && r.get ? r.get(f) : r?.[f]
   if (value === null || value === undefined) return fallback
-  if (typeof value === 'string') { try { return JSON.parse(value) } catch (_) { return fallback } }
+  if (typeof value === 'string') { try { return decode(value) } catch (_) { return fallback } }
   // PocketBase may expose JSONRaw as an object whose string form is the JSON
   // document. Preserve native arrays and plain objects without coercion.
   if (Array.isArray(value)) return value
   if (typeof value === 'object') {
     const text = String(value)
     if (text === '[object Object]') return value
-    if (!/^[{[]/.test(text)) return fallback
-    try { return JSON.parse(text) } catch (_) { return fallback }
+    if (!/^(?:\[|\{|\")/.test(text)) return fallback
+    try { return decode(text) } catch (_) { return fallback }
   }
   return fallback
 }
