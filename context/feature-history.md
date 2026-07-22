@@ -224,3 +224,30 @@
   Passed 15 Vue tests, production build, 39 catalog contracts, 58 backend tests, pinned PocketBase
   catalog/party/realtime integrations, same-origin health, live report, tablet review rendering,
   and repeated independent review. Test-only fixture commit `7ab995e` was pushed afterward.
+
+### 2026-07-22 — Catalog Import Replay Compatibility and Audited Population
+
+- Added a strict PocketBase 0.39.7 JSON compatibility boundary: authoritative `getString` parsing
+  for JSONRaw wrappers, exact scalar/native-array/native-object preservation, native JSON writes,
+  deterministic digest serialization, and fail-closed handling for malformed, undefined,
+  non-finite, cyclic, or ambiguous values. Unknown retained shapes are quarantined; only the fully
+  pinned nine-item canary claim received a forward repair.
+- Made ready-claim recovery transactional and monotonic across durable chunk resume, exact replay,
+  restart reconciliation, concurrent commits, conflicts, expiration/reclaim, and quota settlement.
+  Replay count and bounded audit history are durable; inconsistent ready reservations fail closed
+  without stranding or double-releasing quota.
+- Live retained canary `dy36tlhzi17ew1p` completed from ready against its already-paid durable chunk,
+  replayed exactly, survived a PocketBase container restart, and reconciled exactly again. It kept
+  spent 101/reserved 0, created no duplicates, and consumed zero additional YouTube units.
+- The four-song representative tranche modeled 404 units and stopped on its first request under the
+  material-error policy. `Shadow Dancing` spent 101 units, imported zero, and failed closed on an
+  explicit undefined optional value; claim `rswrd2ktm5cf6yq` retained failed/spent-101/reserved-0
+  evidence and the global ledger settled at spent 404/reserved 0. No later song was attempted, no
+  candidate was approved, and the catalog/review backlog remained 18/18.
+- Fixed the discovered optional-value defect by representing unavailable external classification
+  as JSON `null`; final classification remains derived from video evidence and uploader/channel
+  remains provenance-only. Independent review returned APPROVE after each repair.
+- Passed 65 backend and pinned PocketBase tests, 15 Vue tests, production build, hook syntax, and
+  Compose validation. Signed product commits through `204d0f6812b32fbac029e7b82007593eebdac4c4`
+  were pushed and deployed healthy to retained PocketBase (`i14gl0508juv9pjvy05x1hdz`) and frontend
+  (`xzok7k4as8d5lf3bi3x86wrx`) without replacing volume `ggkfvh2tpdprcocn1sycu8zf`.

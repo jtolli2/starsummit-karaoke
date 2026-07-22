@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -62,3 +62,44 @@ In Progress
 - Stop after the first tranche if material attribution/classification errors exceed the documented
   threshold, replay evidence is incomplete, or quota accounting is uncertain. Do not bulk approve
   or pad population toward 5,000 songs.
+
+## Completion Notes
+
+- PocketBase 0.39.7 exposes retained JSON through several shapes: `getString` provides the
+  authoritative JSON document for JSONRaw/native wrappers, while `get` may expose scalars, native
+  arrays/objects, serialized strings, or byte-like arrays. The canonical boundary parses only the
+  authoritative string representation, preserves raw numeric arrays, validates native values,
+  rejects undefined/non-finite/cyclic/ambiguous values, stores validated native JSON, and uses
+  deterministic serialization only for identity and digest calculation.
+- Claims now preserve source/chunk identity, ordered candidates, payload digest, actual/reserved
+  quota, bounded audit history, and lifetime replay count. Durable ready claims resume against an
+  existing chunk, complete claims replay exactly, conflicting identity/order/digest fails closed,
+  and inconsistent nonzero ready reservations are rejected without changing either ledger.
+- Forward-only migrations quarantined unknown legacy shapes and repaired only the exact retained
+  canary `dy36tlhzi17ew1p` after validating its full claim key, source fingerprint, spend, payload
+  count, and nine-item order. No record or volume content was deleted.
+- Product commits `5ef72f3807f8452c7f5911cffb35e41557cf30d9`,
+  `76d9602b42e678d36512278cc3dfd8265f9c8ba4`,
+  `98d6ea957128b82d47dab1ae5aaa3a1e7ba91227`,
+  `29e4e05d47defad63e2919742ad74fbdd49c5698`, and
+  `204d0f6812b32fbac029e7b82007593eebdac4c4` were signed and pushed to `main`.
+- Final retained staging runs `204d0f6812b32fbac029e7b82007593eebdac4c4`: PocketBase deployment
+  `i14gl0508juv9pjvy05x1hdz` and frontend deployment `xzok7k4as8d5lf3bi3x86wrx` are healthy.
+  Volume `ggkfvh2tpdprcocn1sycu8zf` and private alias `pocketbase-staging:8090` were preserved.
+- The already-paid canary fingerprint matched `62161f11f34dc9d2688413e0b14c41c42902165eb1fac98ae658635089529d9b`.
+  Live ready-to-resumed-commit returned `resumed: true`, exact replay returned `replay: true`, and
+  post-container-restart reconciliation returned `replay: true`. Claim spend stayed 101, reserved
+  stayed 0, replay count reached 4, and no song/alternative duplication occurred.
+- The representative MusicBrainz tranche modeled 404 units for four canonical requests but stopped
+  after the first request. `Shadow Dancing` discovery spent 101 units, committed no song, and
+  failed closed because an optional YouTube classification value was `undefined`; the claim
+  `rswrd2ktm5cf6yq` is failed with reserved 0/spent 101. The daily ledger moved from 303 to 404,
+  reserved 0, exactly matching the single search+details call. No later request was attempted.
+  Commit `204d0f6` makes unavailable external classification explicitly `null` while keeping final
+  classification server-derived. The tranche was not retried or expanded because the documented
+  material-error stop applies.
+- Validation passed 65 backend tests including every pinned PocketBase 0.39.7 catalog, party,
+  auth, controller, and realtime integration; 15 Vue tests; production build; hook syntax;
+  retained-volume Compose config; live health; canary replay/restart; and independent review with
+  final APPROVE verdicts. Existing catalog remains 18 songs and 18 review items, all unreviewed or
+  needs-review/ineligible as previously recorded.
