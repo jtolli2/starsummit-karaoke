@@ -46,6 +46,24 @@ describe('tablet operator page', () => {
     ])
   })
 
+  it('shows catalog review after sign-in when there is no active party', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ songs: [{ id: 'catalog-1', title: 'Unreviewed Song', artist: 'Artist', youtubeId: 'dQw4w9WgXcQ', reviewState: 'unreviewed' }], totalPages: 1 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(wrapper.text()).toContain('Catalog review')
+    await wrapper.get('.catalog button.quiet').trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('Unreviewed Song')
+    expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
+  })
+
   it('disables starting the next song while the controller is unavailable and renders nested state', async () => {
     sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({ controller: { connected: false, connectionState: 'disconnected', state: { playerState: 'paused', videoId: 'dQw4w9WgXcQ' } } })), { status: 200 })))
