@@ -29,9 +29,12 @@ function num(r, f) { return r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
 function set(r, f, v) { r.set(f, v); return r }
 function setJson(r, f, v) { r.set(f, JSON.stringify(v)); return r }
 function sameInstant(left, right) {
-  const leftTime = Date.parse(String(left || '')); const rightTime = Date.parse(String(right || ''))
+  const canonical = (value) => String(value || '').trim().replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T')
+  const leftText = canonical(left); const rightText = canonical(right)
+  if (leftText === rightText) return true
+  const leftTime = Date.parse(leftText); const rightTime = Date.parse(rightText)
   if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) return leftTime === rightTime
-  return String(left || '') === String(right || '')
+  return false
 }
 function id(r) { return r?.id || r?.getString?.('id') }
 function name(r) { return r?.collection?.()?.name || r?.collection?.name || '' }

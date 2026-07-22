@@ -73,6 +73,7 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
 
 test('catalog source retrieval dates compare by instant across PocketBase formatting', () => {
   assert.match(hook, /function sameInstant\(left, right\)/)
+  assert.match(hook, /replace\(\/\^\(\\d\{4\}-\\d\{2\}-\\d\{2\}\)\\s\+\//)
   assert.match(hook, /!sameInstant\(str\(batch, 'source_retrieved_at'\), sourceRetrievedAt\)/)
   assert.doesNotMatch(hook, /str\(batch, 'source_retrieved_at'\) !== sourceRetrievedAt/)
 })
