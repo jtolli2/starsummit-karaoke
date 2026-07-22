@@ -4,6 +4,16 @@
 
 ## Entries
 
+### 2026-07-22 — Review resumable import invariants as an adversarial sequence
+
+- **Feedback:** Initial importer unit tests and syntax checks missed hook-VM closure use,
+  frontend/backend response drift, replays that reset curation, and out-of-order chunk completion.
+- **Improvement:** For any catalog batch workflow, independently review callback-local contracts,
+  exact replay, changed input, skipped/out-of-order chunks, approval preservation, and the actual
+  browser response shape before delivery.
+- **Follow-up:** Add a pinned PocketBase runtime import route test once the local binary is
+  available; static hook-contract checks are useful but not sufficient runtime proof.
+
 ### 2026-07-22 — Scope custom realtime hooks to their custom topic
 
 - **Feedback:** A global guest wake `onRealtimeSubscribeRequest` hook rejected every non-guest

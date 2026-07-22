@@ -4,6 +4,20 @@
 
 ## Entries
 
+### 2026-07-22 — Karaoke Catalog Import and Search
+
+- Added a private, resumable catalog import contract with immutable manifest/chunk fingerprints,
+  deterministic fixture planning, source provenance, normalized song identity, candidate
+  classification/confidence, review state, alternatives/history fields, and replacement handling.
+- Guests receive only approved eligible-song search results through their existing temporary
+  party credential; constrained `tablet_admin` users can inspect, review, and replace catalog
+  items without direct collection writes or browser YouTube credentials.
+- Karaoke is preferred. `fallback_lyric` and `fallback_audio` records remain explicitly
+  ineligible and replaceable; live YouTube discovery returns a clear unavailable response until a
+  server-only API boundary and real source are provisioned.
+- Focused importer/hook tests, Vue API tests, production build, and independent review passed.
+  Pinned PocketBase integration and retained-staging evidence are recorded separately when run.
+
 ### 2026-07-22 — Controller realtime subscription authorization fix
 
 - Corrected the guest wake hook so it authorizes only subscriptions that include

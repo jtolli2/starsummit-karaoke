@@ -6,7 +6,7 @@ export type QueueSong = {
   song: { id: string; youtubeId: string; title: string; artist: string }
 }
 
-export type LibrarySong = { id: string; youtubeId: string; title: string; artist: string }
+export type LibrarySong = { id: string; youtubeId: string; title: string; artist: string; eligible?: boolean; reviewState?: string }
 
 const credentialKey = (code: string) => `karaoke:party:${code.trim().toUpperCase()}:credential`
 
@@ -59,7 +59,7 @@ export function loadQueue(credential: string) {
 export function searchSongs(credential: string, query: string) {
   const params = new URLSearchParams()
   if (query.trim()) params.set('q', query.trim())
-  return request<{ songs: LibrarySong[] }>(`/api/karaoke/parties/songs?${params}`, {}, credential)
+  return request<{ songs: LibrarySong[]; total?: number }>(`/api/karaoke/parties/songs?${params}`, {}, credential)
 }
 
 export function requestSong(credential: string, youtubeId: string) {

@@ -18,6 +18,17 @@ export type TabletStatus = {
   } | null
 }
 
+export type CatalogSong = {
+  id: string
+  youtubeId: string
+  title: string
+  artist: string
+  eligible?: boolean
+  classification?: string
+  reviewState: 'unreviewed' | 'needs_review' | 'approved' | 'rejected'
+  reviewNote?: string
+}
+
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('accept', 'application/json')
@@ -63,5 +74,27 @@ export function transitionQueue(token: string, queueId: string, from: TabletQueu
   return request<{ id: string; status: string; idempotent?: boolean }>('/api/karaoke/queue/transition', {
     method: 'POST',
     body: JSON.stringify({ queueId, from, to, ...(failureReason ? { failureReason } : {}) }),
+  }, token)
+}
+
+export function loadCatalog(token: string, options: { review?: CatalogSong['reviewState']; classification?: string; page?: number; perPage?: number } = {}) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(options)) if (value) params.set(key, String(value))
+  return request<{ songs: CatalogSong[]; page: number; perPage: number; totalItems: number; totalPages: number }>(
+    `/api/karaoke/tablet/catalog${params.toString() ? `?${params}` : ''}`, {}, token,
+  )
+}
+
+export function reviewCatalogSong(token: string, id: string, reviewState: CatalogSong['reviewState'], note?: string) {
+  return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    body: JSON.stringify({ reviewState, ...(note?.trim() ? { note: note.trim() } : {}) }),
+  }, token)
+}
+
+export function replaceCatalogSong(token: string, id: string, candidate: { candidateId?: string; youtubeId?: string }) {
+  return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/replace`, {
+    method: 'POST',
+    body: JSON.stringify(candidate),
   }, token)
 }

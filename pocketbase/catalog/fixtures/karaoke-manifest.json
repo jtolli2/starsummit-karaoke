@@ -1,0 +1,12 @@
+{
+  "source": {
+    "url": "https://example.invalid/catalog/karaoke-fixture-v1",
+    "terms": "popular karaoke backing tracks",
+    "retrievedAt": "2026-07-22T00:00:00.000Z"
+  },
+  "items": [
+    { "id": "dQw4w9WgXcQ", "title": "Example Song Karaoke Backing Track", "artist": "Example Artist", "channelTitle": "Fixture Karaoke" },
+    { "id": "9bZkp7q19f0", "title": "Example Song Official Music Video", "artist": "Example Artist" },
+    { "id": "J---aiyznGQ", "title": "Example Song Live Concert", "artist": "Example Artist" }
+  ]
+}

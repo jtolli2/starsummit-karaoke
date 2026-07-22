@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authenticateTablet, loadActiveParty, loadTabletStatus, transitionQueue } from '@/services/tabletApi'
+import { authenticateTablet, loadActiveParty, loadCatalog, loadTabletStatus, replaceCatalogSong, reviewCatalogSong, transitionQueue } from '@/services/tabletApi'
 
 describe('tablet API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -36,5 +36,20 @@ describe('tablet API', () => {
     await loadActiveParty('tablet-token')
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/karaoke/tablet/active')
     expect(new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('authorization')).toBe('Bearer tablet-token')
+  })
+
+  it('uses the catalog review contract and pagination response fields', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ page: 2, perPage: 20, totalItems: 21, totalPages: 2, songs: [{ id: 'song-1', youtubeId: 'abcdefghijk', title: 'Song', artist: 'Artist', reviewState: 'unreviewed' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'song-1', reviewState: 'approved', eligible: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'song-1', youtubeId: 'abcdefghijk' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const catalog = await loadCatalog('tablet-token', { review: 'unreviewed', page: 2, perPage: 20 })
+    await reviewCatalogSong('tablet-token', 'song-1', 'approved', 'Looks good')
+    await replaceCatalogSong('tablet-token', 'song-1', { youtubeId: 'abcdefghijk' })
+    expect(catalog).toMatchObject({ totalItems: 21, totalPages: 2, songs: [{ reviewState: 'unreviewed' }] })
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/karaoke/tablet/catalog?review=unreviewed&page=2&perPage=20')
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ reviewState: 'approved', note: 'Looks good' })
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain('/api/karaoke/tablet/catalog/song-1/replace')
   })
 })

@@ -23,6 +23,18 @@ function id(r) { return r?.id || r?.getString?.('id') }
 function name(r) { return r?.collection?.()?.name || r?.collection?.name || '' }
 function tablet(a) { return a && !a.getBool?.('revoked') && str(a, 'role') === 'tablet_admin' && ['users', '_pb_users_auth_'].includes(name(a)) }
 function hash(v) { return typeof $security !== 'undefined' && $security.sha256 ? $security.sha256(String(v)) : String(v) }
+function canonicalize(v) { if (Array.isArray(v)) return v.map(canonicalize); if (v && typeof v === 'object') { const out = {}; Object.keys(v).sort().forEach((key) => { out[key] = canonicalize(v[key]) }); return out } return v }
+function normalized(v, max) { return String(v || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, max) }
+function classifyCatalogItem(item) {
+  const text = `${item?.title || ''} ${item?.description || ''} ${item?.channelTitle || ''}`.toLowerCase()
+  if (/\b(live|concert|performance)\b/.test(text)) return { classification: 'live', confidence: 0.98, reason: 'live_performance' }
+  if (/\bkaraoke\b|backing track|instrumental/.test(text)) return { classification: 'karaoke', confidence: /\bkaraoke\b/.test(text) ? 0.92 : 0.75, reason: 'karaoke_backing_signal' }
+  if (/\baudio only\b|\bofficial audio\b/.test(text)) return { classification: 'fallback_audio', confidence: 0.86, reason: 'audio_fallback_signal' }
+  if (/\blyrics?\b|lyric video/.test(text)) return { classification: 'fallback_lyric', confidence: 0.9, reason: 'lyric_fallback_signal' }
+  if (/\bcover\b/.test(text)) return { classification: 'cover', confidence: 0.8, reason: 'cover_signal' }
+  if (/\bofficial\b|music video/.test(text)) return { classification: 'original', confidence: 0.85, reason: 'original_signal' }
+  return { classification: 'unknown', confidence: 0.25, reason: 'insufficient_metadata' }
+}
 function random(n) { return typeof $security !== 'undefined' && $security.randomString ? $security.randomString(n) : Math.random().toString(36).slice(2) + Date.now().toString(36) }
 function code() {
   if (typeof $security !== 'undefined' && $security.randomString) {
@@ -99,7 +111,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, random, code, now, future, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, random, code, now, future, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -211,15 +223,19 @@ routerAdd('GET', '/api/karaoke/parties/songs', (c) => {
   try {
     requireGuest(c, {})
     const q = String(query(c, 'q') || '').trim().slice(0, 100)
+    const page = Math.max(1, Number(query(c, 'page') || 1) || 1)
+    const perPage = Math.min(50, Math.max(1, Number(query(c, 'perPage') || 20) || 20))
     const escaped = q.replace(/[\\%_]/g, (char) => `\\${char}`)
     const filter = escaped ? 'eligible = true && (title ~ {:q} || artist ~ {:q})' : 'eligible = true'
     let rows
     try {
-      rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+artist', 50, 0, escaped ? { q: escaped } : {})
+      rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+artist,+youtube_id', perPage + 1, (page - 1) * perPage, escaped ? { q: escaped } : {})
     } catch (_) {
       return json(c, 500, 'song_search_failed', 'Songs could not be loaded')
     }
-    return c.json(200, { songs: rows.map((song) => ({ id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') })) })
+    const hasMore = rows.length > perPage
+    const songs = rows.slice(0, perPage).map((song) => ({ id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist') }))
+    return c.json(200, { page, perPage, hasMore, songs })
   } catch (error) {
     const status = ['party_expired', 'guest_credential_expired'].includes(error.message) ? 410 : 403
     return json(c, status, error.message, 'Song access denied')
@@ -376,4 +392,96 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
     const status = error.message === 'queue_not_found' ? 404 : error.message === 'party_expired' ? 410 : 409
     return json(c, status, error.message, 'Queue transition rejected')
   }
+})
+
+// Operator-only catalog moderation. These routes intentionally expose no YouTube API
+// credentials and return only reviewable metadata.
+routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, query, records, str, id, num } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const page = Math.max(1, Number(query(c, 'page') || 1) || 1)
+  const perPage = Math.min(100, Math.max(1, Number(query(c, 'perPage') || 25) || 25))
+  const review = String(query(c, 'review') || '').trim(); const classification = String(query(c, 'classification') || '').trim()
+  const clauses = []; const params = {}
+  if (review === 'pending') clauses.push('(review_status = "unreviewed" || review_status = "needs_review")')
+  else if (review) { clauses.push('review_status = {:review}'); params.review = review }
+  if (classification) { clauses.push('classification = {:classification}'); params.classification = classification }
+  const filter = clauses.join(' && ') || ''
+  let rows = []; try { rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+youtube_id', perPage + 1, (page - 1) * perPage, params) } catch (_) { return json(c, 500, 'catalog_failed', 'Catalog could not be loaded') }
+  const hasMore = rows.length > perPage; const sliced = rows.slice(0, perPage)
+  // Extra-row pagination avoids loading an unbounded catalog while still giving
+  // the UI an accurate next-page boundary. The final page resolves its true total.
+  const totalItems = (page - 1) * perPage + sliced.length + (hasMore ? 1 : 0)
+  const totalPages = page + (hasMore ? 1 : 0)
+  return c.json(200, { page, perPage, totalItems, totalPages, songs: sliced.map((song) => ({ id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist'), eligible: song.getBool ? song.getBool('eligible') : false, classification: str(song, 'classification') || 'unknown', reviewState: str(song, 'review_status') || 'unreviewed', provenance: str(song, 'provenance'), replacementYoutubeId: str(song, 'replacement_youtube_id'), importedAt: str(song, 'imported_at') })) })
+})
+
+routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, body, now, set, num, hash, canonicalize, normalized, classifyCatalogItem, id, str } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const input = body(c); const batchKey = String(input.batchKey || '').trim(); const items = Array.isArray(input.items) ? input.items.slice(0, 100) : []; const offset = Number(input.offset)
+  const manifestFingerprint = String(input.manifestFingerprint || ''); const total = Number(input.total); const source = input.source && typeof input.source === 'object' ? input.source : {}
+  if (!batchKey || !items.length || !Number.isInteger(offset) || offset < 0 || !Number.isInteger(total) || total < offset + items.length || !/^[a-f0-9]{64}$/i.test(manifestFingerprint)) return json(c, 422, 'invalid_import', 'batchKey, manifestFingerprint, total, offset, and items are required')
+  // Fixture imports are deterministic and do not spend YouTube quota. Live API
+  // fetching is intentionally unavailable until its authenticated request boundary
+  // is implemented entirely server-side with YOUTUBE_API_KEY.
+  if (input.fetchFromYoutube) return json(c, 503, 'youtube_import_unavailable', 'Live YouTube import is not available')
+  const chunkFingerprint = hash(JSON.stringify(canonicalize({ offset, items })))
+  try {
+    let imported = 0
+    $app.runInTransaction((tx) => {
+      let batch = null; try { batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }) } catch (_) {}
+      if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total) }
+      if (str(batch, 'source_fingerprint') !== manifestFingerprint || num(batch, 'total') !== total || str(batch, 'source_url') !== String(source.url || '').slice(0, 500) || str(batch, 'source_terms') !== String(source.terms || '').slice(0, 500)) throw new Error('batch_source_mismatch')
+      let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
+      if (chunk && str(chunk, 'chunk_fingerprint') !== chunkFingerprint) throw new Error('chunk_source_mismatch')
+      if (chunk) return
+      if (offset !== num(batch, 'cursor')) throw new Error('chunk_out_of_order')
+      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+        const item = items[itemIndex]
+        if (!/^[A-Za-z0-9_-]{11}$/.test(String(item.youtubeId || item.id || ''))) continue
+        const youtubeId = String(item.youtubeId || item.id); let song = null
+        try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
+        if (song) continue // Existing catalog entries retain operator review and eligibility decisions.
+        song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))
+        const title = String(item.title || youtubeId).slice(0, 240); const artist = String(item.artist || item.channelTitle || '').slice(0, 160); const result = classifyCatalogItem(item); const normalizedTitle = normalized(title, 240); const normalizedArtist = normalized(artist, 160); set(song, 'youtube_id', youtubeId); set(song, 'title', title); set(song, 'artist', artist); set(song, 'provenance', 'fixture_import'); set(song, 'eligibility_reason', result.reason); set(song, 'source', 'fixture'); set(song, 'source_query', String(input.query || source.terms || '').slice(0, 160)); set(song, 'source_url', String(source.url || '').slice(0, 500)); set(song, 'source_retrieved_at', String(source.retrievedAt || '')); set(song, 'source_rank', offset + itemIndex + 1); set(song, 'source_terms', String(source.terms || '').slice(0, 500)); set(song, 'classification', result.classification); set(song, 'classification_confidence', result.confidence); set(song, 'review_status', 'unreviewed'); set(song, 'eligible', false); set(song, 'normalized_title', normalizedTitle); set(song, 'normalized_artist', normalizedArtist); set(song, 'identity_key', `${normalizedArtist}|${normalizedTitle}`); set(song, 'alternatives_json', []); set(song, 'review_history_json', []); set(song, 'metadata_json', { channelTitle: item.channelTitle || null, description: item.description || null }); set(song, 'import_batch', batchKey); set(song, 'imported_at', now()); tx.save(song); imported++
+      }
+      chunk = new Record(tx.findCollectionByNameOrId('karaoke_catalog_import_chunks')); set(chunk, 'import', id(batch)); set(chunk, 'offset', offset); set(chunk, 'chunk_fingerprint', chunkFingerprint); set(chunk, 'item_count', items.length); tx.save(chunk)
+      const cursor = Math.max(num(batch, 'cursor'), offset + items.length); set(batch, 'cursor', cursor); set(batch, 'status', cursor >= total ? 'complete' : 'paused'); set(batch, 'updated_at', now()); tx.save(batch)
+    })
+    return c.json(200, { batchKey, imported })
+  } catch (error) { const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'].includes(error.message); return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed') }
+})
+
+routerAdd('POST', '/api/karaoke/tablet/catalog/:id/review', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, body, now, id, str, set } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const input = body(c); const requestedReviewState = String(input.reviewState || ''); const reviewState = requestedReviewState === 'pending' ? 'unreviewed' : requestedReviewState
+  if (!['unreviewed', 'approved', 'rejected', 'needs_review'].includes(reviewState)) return json(c, 422, 'invalid_review', 'Review state is invalid')
+  try {
+    const song = $app.findRecordById('karaoke_songs', c.pathParam('id')); if (!song) return json(c, 404, 'song_not_found', 'Song was not found')
+    set(song, 'review_status', reviewState); set(song, 'reviewed_at', now()); set(song, 'reviewed_by', id(auth(c))); if (input.note !== undefined) set(song, 'eligibility_reason', String(input.note).slice(0, 240))
+    const classification = str(song, 'classification') || 'unknown'; set(song, 'eligible', reviewState === 'approved' && classification === 'karaoke'); $app.save(song)
+    return c.json(200, { id: id(song), reviewState, eligible: song.getBool ? song.getBool('eligible') : false })
+  } catch (_) { return json(c, 500, 'review_failed', 'Catalog review failed') }
+})
+
+routerAdd('POST', '/api/karaoke/tablet/catalog/:id/replace', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, body, id, str, set, YOUTUBE_ID } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const input = body(c); const candidateId = String(input.candidateId || ''); const youtubeId = String(input.youtubeId || '')
+  if (!candidateId && !YOUTUBE_ID.test(youtubeId)) return json(c, 422, 'invalid_replacement', 'A replacement candidate is required')
+  try {
+    let song = null; try { song = $app.findRecordById('karaoke_songs', c.pathParam('id')) } catch (_) {}
+    if (!song) return json(c, 404, 'song_not_found', 'Song was not found')
+    let candidate = null; try { candidate = candidateId ? $app.findRecordById('karaoke_songs', candidateId) : $app.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
+    if (!candidate || id(candidate) === id(song)) return json(c, 422, 'invalid_replacement', 'Replacement candidate was not found')
+    if (str(candidate, 'classification') !== 'karaoke' || str(candidate, 'review_status') !== 'approved' || !(candidate.getBool ? candidate.getBool('eligible') : false)) return json(c, 409, 'replacement_unavailable', 'Replacement candidate must be approved eligible karaoke')
+    set(song, 'replacement_youtube_id', str(candidate, 'youtube_id')); set(song, 'replacement_reason', String(input.reason || 'operator_replacement').slice(0, 240)); set(song, 'eligible', false); $app.save(song)
+    return c.json(200, { id: id(song), replacementYoutubeId: str(candidate, 'youtube_id'), eligible: false })
+  } catch (_) { return json(c, 500, 'replace_failed', 'Catalog replacement failed') }
 })
