@@ -42,7 +42,7 @@ migrate((app) => {
       name: 'karaoke_catalog_import_chunks', type: 'base', listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
       fields: [
         { name: 'import', type: 'relation', required: true, collectionId: imports.id, maxSelect: 1 },
-        { name: 'offset', type: 'number', required: true, min: 0, noDecimal: true },
+        { name: 'offset', type: 'number', min: 0, noDecimal: true },
         { name: 'chunk_fingerprint', type: 'text', required: true, min: 64, max: 64 },
         { name: 'item_count', type: 'number', required: true, min: 1, noDecimal: true }, { name: 'payload_json', type: 'json' },
       ], indexes: [chunkIndex],
@@ -54,7 +54,7 @@ migrate((app) => {
   let changed = makePrivate(chunks)
   for (const [name, type, options] of [
     ['import', 'relation', { required: true, collectionId: imports.id, maxSelect: 1 }],
-    ['offset', 'number', { required: true, min: 0, noDecimal: true }],
+    ['offset', 'number', { required: false, min: 0, noDecimal: true }],
     ['chunk_fingerprint', 'text', { required: true, min: 64, max: 64 }],
     ['item_count', 'number', { required: true, min: 1, noDecimal: true }],
     ['payload_json', 'json', {}],

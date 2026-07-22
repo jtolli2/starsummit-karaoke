@@ -10,13 +10,15 @@ const repairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migration
 const quotaMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512000_youtube_quota.js'), 'utf8')
 const claimsMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512100_youtube_claims.js'), 'utf8')
 const payloadMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512200_youtube_payloads.js'), 'utf8')
+const fieldRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512400_repair_catalog_field_presence.js'), 'utf8')
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
-  const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/:id\/replace'[\s\S]*?\n}\)/)
+  const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/replace'[\s\S]*?\n}\)/)
   assert.ok(replacement)
   assert.match(replacement[0], /require\(__hooks \+ '\/party_queue\.pb\.js'\)/)
   assert.match(replacement[0], /globalThis\.__partyQueue/)
   assert.match(replacement[0], /YOUTUBE_ID/)
+  assert.match(replacement[0], /c\.request\.pathValue\('id'\)/)
 })
 
 test('catalog API exposes frontend review and pagination contract', () => {
@@ -25,6 +27,7 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /reviewState: str\(song, 'review_status'\) \|\| 'unreviewed'/)
   assert.match(hook, /return c\.json\(200, \{ id: id\(song\), reviewState, eligible:/)
   assert.match(hook, /perPage \+ 1/)
+  assert.match(hook, /catalog\/\{id\}\/review/)
 })
 
 test('catalog import uses immutable manifest/chunk metadata and derived classification', () => {
@@ -37,6 +40,8 @@ test('catalog import uses immutable manifest/chunk metadata and derived classifi
   assert.match(hook, /chunk_out_of_order/)
   assert.match(hook, /fallback_lyric/)
   assert.match(hook, /fallback_audio/)
+  assert.match(hook, /Persist a newly created batch before using its id/)
+  assert.match(hook, /set\(batch, 'total', total\); tx\.save\(batch\)/)
 })
 
 test('live catalog discovery stays server-side and records quota/availability metadata', () => {
@@ -98,6 +103,20 @@ test('catalog repair keeps catalog collections private and restores field option
   assert.match(repairMigration, /const ensureField = \(collection, name, type, options = \{\}\)/)
   assert.match(repairMigration, /if \(field\.type !== type\) return false/)
   assert.match(repairMigration, /required: false, default: false/)
+})
+
+test('catalog field repairs handle PocketBase undefined field lookups', () => {
+  assert.match(repairMigration, /try \{ existing = collection\.fields\.getByName\(name\) \} catch \(_\) \{\}/)
+  assert.match(repairMigration, /if \(existing\) return false/)
+  assert.match(fieldRepairMigration, /PocketBase 0\.39 returns undefined/)
+  assert.match(fieldRepairMigration, /if \(field\) return false/)
+  assert.match(fieldRepairMigration, /\['review_status', 'select'/)
+  assert.match(fieldRepairMigration, /app\.save\(songs\)/)
+  assert.match(fieldRepairMigration, /classification = "" \|\| review_status = ""/)
+  assert.match(fieldRepairMigration, /record\.set\('classification', 'unknown'\)/)
+  assert.match(fieldRepairMigration, /record\.set\('review_status', 'unreviewed'\)/)
+  assert.match(fieldRepairMigration, /nonblank classifications and review decisions are preserved/)
+  assert.match(fieldRepairMigration, /offsetField\.required = false/)
 })
 
 test('YouTube ledger migrations tolerate missing retained collections without record rewrites', () => {

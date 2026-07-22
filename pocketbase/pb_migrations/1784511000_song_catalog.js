@@ -21,7 +21,12 @@ migrate((app) => {
     app.save(songs)
   }
   const add = (name, type, options = {}) => {
-    try { songs.fields.getByName(name); return } catch (_) {}
+    // PocketBase 0.39 returns undefined for an unknown field rather than
+    // throwing.  Treat either behavior as absent so catalog fields are not
+    // silently skipped on a clean database.
+    let existing = null
+    try { existing = songs.fields.getByName(name) } catch (_) {}
+    if (existing) return
     songs.fields.add(new Field({ name, type, ...options }))
   }
   add('source', 'text', { max: 80 })
@@ -72,7 +77,9 @@ migrate((app) => {
       name: 'karaoke_catalog_import_chunks', type: 'base', listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
       fields: [
         { name: 'import', type: 'relation', required: true, collectionId: imports.id, maxSelect: 1 },
-        { name: 'offset', type: 'number', required: true, min: 0, noDecimal: true },
+        // PocketBase treats numeric zero as blank for required fields; offset
+        // zero is the valid first resumable chunk.
+        { name: 'offset', type: 'number', min: 0, noDecimal: true },
         { name: 'chunk_fingerprint', type: 'text', required: true, min: 64, max: 64 },
         { name: 'item_count', type: 'number', required: true, min: 1, noDecimal: true },
         { name: 'payload_json', type: 'json' },

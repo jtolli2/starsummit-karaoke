@@ -7,7 +7,9 @@ migrate((app) => {
   }
 
   const addField = (collection, name, type, options = {}) => {
-    try { collection.fields.getByName(name); return false } catch (_) {}
+    let existing = null
+    try { existing = collection.fields.getByName(name) } catch (_) {}
+    if (existing) return false
     collection.fields.add(new Field({ name, type, ...options }))
     return true
   }
@@ -17,7 +19,8 @@ migrate((app) => {
   // for retained data and requires an operator-led migration.
   const ensureField = (collection, name, type, options = {}) => {
     let field
-    try { field = collection.fields.getByName(name) } catch (_) {
+    try { field = collection.fields.getByName(name) } catch (_) {}
+    if (!field) {
       collection.fields.add(new Field({ name, type, ...options }))
       return true
     }
@@ -167,7 +170,7 @@ migrate((app) => {
       createRule: null, updateRule: null, deleteRule: null,
       fields: [
         { name: 'import', type: 'relation', required: true, collectionId: imports.id, maxSelect: 1 },
-        { name: 'offset', type: 'number', required: true, min: 0, noDecimal: true },
+        { name: 'offset', type: 'number', min: 0, noDecimal: true },
         { name: 'chunk_fingerprint', type: 'text', required: true, min: 64, max: 64 },
         { name: 'item_count', type: 'number', required: true, min: 1, noDecimal: true }, { name: 'payload_json', type: 'json' },
       ], indexes: ['CREATE UNIQUE INDEX idx_karaoke_catalog_import_chunk ON karaoke_catalog_import_chunks (import, offset)'],
@@ -176,7 +179,7 @@ migrate((app) => {
     let chunksChanged = makePrivate(chunks)
     const chunkFields = [
       ['import', 'relation', { required: true, collectionId: imports.id, maxSelect: 1 }],
-      ['offset', 'number', { required: true, min: 0, noDecimal: true }],
+      ['offset', 'number', { required: false, min: 0, noDecimal: true }],
       ['chunk_fingerprint', 'text', { required: true, min: 64, max: 64 }],
       ['item_count', 'number', { required: true, min: 1, noDecimal: true }],
       ['payload_json', 'json', {}],

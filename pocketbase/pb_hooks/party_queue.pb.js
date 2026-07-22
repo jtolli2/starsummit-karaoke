@@ -516,7 +516,10 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
     let imported = 0
     $app.runInTransaction((tx) => {
       let batch = null; try { batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }) } catch (_) {}
-      if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total) }
+      // Persist a newly created batch before using its id as the chunk relation.
+      // An unsaved PocketBase Record has no id, so the first fixture chunk would
+      // otherwise fail relation validation and could not be resumed.
+      if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); tx.save(batch) }
       if (str(batch, 'source_fingerprint') !== manifestFingerprint || num(batch, 'total') !== total || str(batch, 'source_url') !== sourceUrl || str(batch, 'source_terms') !== sourceTerms) throw new Error('batch_source_mismatch')
       let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
       if (chunk && str(chunk, 'chunk_fingerprint') !== chunkFingerprint) throw new Error('chunk_source_mismatch')
@@ -540,28 +543,28 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
   } catch (error) { const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'].includes(error.message); return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed') }
 })
 
-routerAdd('POST', '/api/karaoke/tablet/catalog/:id/review', (c) => {
+routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/review', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { auth, tablet, json, body, now, id, str, set } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const requestedReviewState = String(input.reviewState || ''); const reviewState = requestedReviewState === 'pending' ? 'unreviewed' : requestedReviewState
   if (!['unreviewed', 'approved', 'rejected', 'needs_review'].includes(reviewState)) return json(c, 422, 'invalid_review', 'Review state is invalid')
   try {
-    const song = $app.findRecordById('karaoke_songs', c.pathParam('id')); if (!song) return json(c, 404, 'song_not_found', 'Song was not found')
+    const song = $app.findRecordById('karaoke_songs', c.request.pathValue('id')); if (!song) return json(c, 404, 'song_not_found', 'Song was not found')
     set(song, 'review_status', reviewState); set(song, 'reviewed_at', now()); set(song, 'reviewed_by', id(auth(c))); if (input.note !== undefined) set(song, 'eligibility_reason', String(input.note).slice(0, 240))
     const classification = str(song, 'classification') || 'unknown'; set(song, 'eligible', reviewState === 'approved' && classification === 'karaoke'); $app.save(song)
     return c.json(200, { id: id(song), reviewState, eligible: song.getBool ? song.getBool('eligible') : false })
   } catch (_) { return json(c, 500, 'review_failed', 'Catalog review failed') }
 })
 
-routerAdd('POST', '/api/karaoke/tablet/catalog/:id/replace', (c) => {
+routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/replace', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { auth, tablet, json, body, id, str, set, YOUTUBE_ID } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const candidateId = String(input.candidateId || ''); const youtubeId = String(input.youtubeId || '')
   if (!candidateId && !YOUTUBE_ID.test(youtubeId)) return json(c, 422, 'invalid_replacement', 'A replacement candidate is required')
   try {
-    let song = null; try { song = $app.findRecordById('karaoke_songs', c.pathParam('id')) } catch (_) {}
+    let song = null; try { song = $app.findRecordById('karaoke_songs', c.request.pathValue('id')) } catch (_) {}
     if (!song) return json(c, 404, 'song_not_found', 'Song was not found')
     let candidate = null; try { candidate = candidateId ? $app.findRecordById('karaoke_songs', candidateId) : $app.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
     if (!candidate || id(candidate) === id(song)) return json(c, 422, 'invalid_replacement', 'Replacement candidate was not found')
