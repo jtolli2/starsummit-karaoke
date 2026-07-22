@@ -37,14 +37,14 @@ migrate((app) => {
       const canonical = { items, total, spent }
       const payloadDigest = $security.sha256(JSON.stringify(canonicalize(canonical)))
       payload = { ...canonical, sourceFingerprint, chunkFingerprint, payloadDigest, orderedIdentity }
-      claim.set('payload_json', JSON.stringify(payload)); claim.set('source_fingerprint', sourceFingerprint)
+      claim.set('payload_json', payload); claim.set('source_fingerprint', sourceFingerprint)
       claim.set('chunk_fingerprint', chunkFingerprint); claim.set('payload_digest', payloadDigest)
-      claim.set('ordered_identity_json', JSON.stringify(orderedIdentity)); claim.set('lifecycle_reason', 'legacy_ready_backfilled')
+      claim.set('ordered_identity_json', orderedIdentity); claim.set('lifecycle_reason', 'legacy_ready_backfilled')
       marker = 'legacy_ready_backfilled'
     }
     if (events.some((event) => event && event.action === marker)) continue
     events.push({ action: marker, from: status || 'unknown', at: new Date().toISOString() })
-    claim.set('audit_json', JSON.stringify(events)); claim.set('lifecycle_version', 1); claim.set('replay_count', Number(claim.get('replay_count') || 0))
+    claim.set('audit_json', events); claim.set('lifecycle_version', 1); claim.set('replay_count', Number(claim.get('replay_count') || 0))
     if (!validPayload && ['ready', 'complete'].includes(status)) {
       // Preserve spent_units; reservation release must never erase actual spend.
       claim.set('status', 'failed'); claim.set('lifecycle_reason', 'legacy_payload_quarantined'); claim.set('error_code', 'legacy_payload_quarantined')

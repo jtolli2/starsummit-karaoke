@@ -107,3 +107,23 @@ test('real hook replays a ready claim across restart and rejects conflicts witho
   server.kill('SIGTERM'); await new Promise((r) => setTimeout(r, 150)); server = start(); await waitReady()
   const replayAfterRestart = await call('/api/karaoke/tablet/catalog/import', 'POST', request, tablet.json.token); assert.equal(replayAfterRestart.status, 200); assert.equal(replayAfterRestart.json.replay, true)
 })
+
+test('PocketBase 0.39.7 restores only the exact retained canary identity', { skip: !process.env.POCKETBASE_BIN }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-canary-repair-pb-')); const migrations = path.join(root, 'pb_migrations'); fs.mkdirSync(migrations)
+  const ids = ['KCI3qN_c3k0', 'NQ7k19pDRIw', 'iEr_Y8DKx84', 'wBz3sceWu9g', 'h0n-mYqB9WQ', '4G-YQA_bsOU', 'WrcwRt6J32o', 'eX9GAhjI2ak', '9gG9hMPvT58']
+  fs.writeFileSync(path.join(migrations, '1784513290_seed_canary.js'), `migrate((app) => {
+    const imports = new Collection({ name: 'karaoke_catalog_imports', type: 'base', fields: [{ name: 'batch_key', type: 'text' }, { name: 'source_fingerprint', type: 'text' }] }); app.save(imports)
+    const batch = new Record(imports); batch.set('batch_key', 'mb-series-b2f47574d772-0000'); batch.set('source_fingerprint', 'b2f47574d7727bb143be393691928bbb20a5a54dc1f3824748785ad205ff3993'); app.save(batch)
+    const claims = new Collection({ name: 'karaoke_youtube_claims', type: 'base', fields: [
+      { name: 'claim_key', type: 'text' }, { name: 'batch_key', type: 'text' }, { name: 'status', type: 'text' }, { name: 'error_code', type: 'text' },
+      { name: 'spent_units', type: 'number' }, { name: 'reserved_units', type: 'number' }, { name: 'payload_json', type: 'json' },
+      { name: 'source_fingerprint', type: 'text' }, { name: 'chunk_fingerprint', type: 'text' }, { name: 'payload_digest', type: 'text' },
+      { name: 'ordered_identity_json', type: 'json' }, { name: 'audit_json', type: 'json' }, { name: 'lifecycle_reason', type: 'text' },
+    ] }); app.save(claims)
+    const make = (id, order, marker) => { const claim = new Record(claims); claim.set('id', id); claim.set('claim_key', 'mb-series-b2f47574d772-0000:62161f11f34dc9d2688413e0b14c41c42902165eb1fac98ae658635089529d9b'); claim.set('batch_key', 'mb-series-b2f47574d772-0000'); claim.set('status', 'failed'); claim.set('error_code', 'legacy_payload_quarantined'); claim.set('spent_units', 101); claim.set('reserved_units', 0); claim.set('payload_json', { items: order.map((youtubeId) => ({ youtubeId })), total: 9, spent: 101 }); claim.set('lifecycle_reason', marker); app.save(claim) }
+    make('dy36tlhzi17ew1p', ${JSON.stringify(ids)}, 'exact'); make('variantclaim001', ${JSON.stringify([...ids].reverse())}, 'variant')
+  }, () => {})`)
+  fs.copyFileSync(path.join(__dirname, '..', 'pb_migrations', '1784513300_repair_retained_catalog_canary.js'), path.join(migrations, '1784513300_repair_retained_catalog_canary.js'))
+  fs.writeFileSync(path.join(migrations, '1784513310_assert_canary.js'), `migrate((app) => { const exact = app.findRecordById('karaoke_youtube_claims', 'dy36tlhzi17ew1p'); const variant = app.findRecordById('karaoke_youtube_claims', 'variantclaim001'); if (exact.get('status') !== 'ready' || exact.get('lifecycle_reason') !== 'retained_canary_repaired') throw new Error('exact canary not repaired'); if (variant.get('status') !== 'failed') throw new Error('variant was repaired') }, () => {})`)
+  const dataDir = path.join(root, 'pb_data'); execFileSync(process.env.POCKETBASE_BIN, ['migrate', 'up', '--dir', dataDir], { stdio: 'pipe' }); assert.ok(true)
+})

@@ -36,9 +36,9 @@ migrate((app) => {
     const canonical = { items, total, spent }; const payloadDigest = $security.sha256(JSON.stringify(canonicalize(canonical)))
     const repaired = { ...canonical, sourceFingerprint, chunkFingerprint, payloadDigest, orderedIdentity }
     const audit = events.concat({ action: 'legacy_wrapper_repaired', from: 'failed', to: quarantine.from, at: new Date().toISOString() }).slice(-50)
-    claim.set('payload_json', JSON.stringify(repaired)); claim.set('source_fingerprint', sourceFingerprint)
+    claim.set('payload_json', repaired); claim.set('source_fingerprint', sourceFingerprint)
     claim.set('chunk_fingerprint', chunkFingerprint); claim.set('payload_digest', payloadDigest)
-    claim.set('ordered_identity_json', JSON.stringify(orderedIdentity)); claim.set('audit_json', JSON.stringify(audit))
+    claim.set('ordered_identity_json', orderedIdentity); claim.set('audit_json', audit)
     claim.set('status', quarantine.from); claim.set('error_code', ''); claim.set('lifecycle_reason', 'legacy_wrapper_repaired')
     claim.set('reserved_units', 0); app.save(claim)
   }
