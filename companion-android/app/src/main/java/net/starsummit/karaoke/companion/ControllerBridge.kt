@@ -468,7 +468,7 @@ private class OkHttpRealtimeConnection(private val client: OkHttpClient, private
       isOpen = { !closed },
       readStream = {
         val request = Request.Builder().url(auth.baseUrl.trimEnd('/') + PocketBaseControllerPaths.REALTIME)
-          .header("Accept", "text/event-stream").header("Authorization", "Bearer ${auth.token}").build()
+          .header("Accept", "text/event-stream").header("Authorization", pocketBaseAuthorization(auth.token)).build()
         val currentCall = client.newCall(request)
         call = currentCall
         currentCall.execute().use { response ->
@@ -485,7 +485,7 @@ private class OkHttpRealtimeConnection(private val client: OkHttpClient, private
   override suspend fun subscribe(clientId: String, collection: String) = withContext(Dispatchers.IO) {
     val body = JSONObject().put("clientId", clientId).put("subscriptions", org.json.JSONArray().put(collection)).toString()
     val request = Request.Builder().url(auth.baseUrl.trimEnd('/') + PocketBaseControllerPaths.REALTIME)
-      .header("Authorization", "Bearer ${auth.token}").post(body.toRequestBody("application/json".toMediaType())).build()
+      .header("Authorization", pocketBaseAuthorization(auth.token)).post(body.toRequestBody("application/json".toMediaType())).build()
     client.newCall(request).execute().use { response ->
       if (!response.isSuccessful) throw ControllerHttpException(response.code)
     }

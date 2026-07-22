@@ -103,9 +103,12 @@ globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, J
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
+    const requested = Array.isArray(e.subscriptions) ? e.subscriptions : []
+    // This hook owns only the custom guest wake topic. Controller command subscriptions are
+    // authorized by PocketBase collection rules and must retain their controller identity.
+    if (!requested.includes(topic)) return e.next()
     try {
       const access = globalThis.__partyQueue.requireGuest({ requestInfo: () => typeof e.requestInfo === 'function' ? e.requestInfo() : e.requestInfo || {} }, {})
-      const requested = Array.isArray(e.subscriptions) ? e.subscriptions : []
       if (requested.some((item) => item !== topic)) throw new ForbiddenError('Unsupported realtime topic')
       e.subscriptions = requested.includes(topic) ? [topic] : []
       e.client.set('karaokePartyId', globalThis.__partyQueue.id(access.party))

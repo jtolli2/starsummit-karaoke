@@ -36,6 +36,11 @@ import okio.buffer
 
 class ControllerProtocolTest {
   @Test
+  fun pocketBaseAuthorizationUsesTheRawTokenForMatchingRealtimeRequests() {
+    assertEquals("controller-token", pocketBaseAuthorization("controller-token"))
+  }
+
+  @Test
   fun `controller HTTP diagnostics expose status only`() {
     val diagnostics = DiagnosticsStore()
 

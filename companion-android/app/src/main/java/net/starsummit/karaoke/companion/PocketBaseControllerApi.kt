@@ -34,6 +34,9 @@ data class SanitizedControllerState(
 
 class ControllerHttpException(val statusCode: Int) : IOException("PocketBase controller request failed ($statusCode)")
 
+/** PocketBase binds realtime GET and POST authorization by its parsed token value. */
+internal fun pocketBaseAuthorization(token: String): String = token
+
 object PocketBaseControllerPaths {
   const val ENROLL = "/api/karaoke/controllers/enroll"
   const val AUTH = "/api/collections/controller_devices/auth-with-password"
@@ -122,7 +125,7 @@ class PocketBaseControllerApi(
     val url = if (path == null) baseOrUrl else baseOrUrl.trimEnd('/') + path
     if (!url.startsWith("https://")) throw IOException("PocketBase controller requires HTTPS")
     val builder = Request.Builder().url(url).header("Accept", "application/json")
-    token?.let { builder.header("Authorization", "Bearer $it") }
+    token?.let { builder.header("Authorization", pocketBaseAuthorization(it)) }
     body?.let { builder.method(method, it.toString().toRequestBody(JSON)) } ?: builder.method(method, null)
     val response = executeCall(client.newCall(builder.build()))
     if (response.code !in 200..299) throw ControllerHttpException(response.code)
