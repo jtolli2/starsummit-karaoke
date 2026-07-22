@@ -180,3 +180,26 @@
 - Live validation added two unreviewed/ineligible karaoke candidates and one rejected/ineligible
   synthetic fixture, consuming 101 known YouTube quota units. A real reproducible popular-song
   source and broad initial import remain intentionally deferred rather than fabricating provenance.
+
+### 2026-07-22 — Popular-Song Source Selection and Initial Catalog Population
+
+- Selected ordered MusicBrainz recording series (Rolling Stone 2021 and Billboard Year-End Hot
+  100 lists) under CC0 core-data terms. Added a rate-limited, transient-retry-safe planner that
+  preserves canonical artist-credit display, stable recording/list/rank identity, retrieval time,
+  digest, genres, release year, deduplication, artist concentration, and per-song quota checkpoints.
+- Separated canonical song identity from YouTube uploader provenance throughout import, replay,
+  alternatives, review, correction, replacement, fallback, tablet reporting, and guest search.
+  Legacy rows are forward-only quarantined and audited; constrained corrections cannot silently
+  approve a song. Added coverage/quality reporting and distinct operator presentation.
+- Passed 36 backend contracts, three pinned PocketBase 0.39.7 integrations, 15 Vue tests, the
+  production build, focused source tests, syntax/whitespace checks, and two independent final
+  reviews. Whole-repository Oxlint remains red only on pre-existing hook/migration/test debt.
+- Deployed product SHA `5a9170586533352c78d45456479a5ad142fcafde` to both retained staging
+  apps. All 16 retained catalog rows, including `nMDXPAM8RwE` and `9iQH7g_zKl8`, were preserved,
+  audited, marked `needs_review`, and made ineligible. The suspect pair remains flagged for
+  constrained canonical correction/deduplication; no channel was promoted to artist.
+- A live five-song MusicBrainz manifest covered five Billboard years and modeled 505 expected
+  YouTube units. No discovery/import request was submitted without a constrained tablet-admin
+  credential, so the quality stop left zero new records and zero known new YouTube spend. The
+  retained volume and unrelated party, queue, controller, enrollment, production, and Wi-Fi state
+  were unchanged.

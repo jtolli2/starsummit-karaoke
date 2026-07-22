@@ -11,10 +11,19 @@ const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mill
 let lastRequestAt = 0
 
 async function get(path) {
-  const delay = Math.max(0, 1050 - (Date.now() - lastRequestAt)); if (delay) await wait(delay)
-  const response = await fetch(`${API_ROOT}${path}`, { headers: { accept: 'application/json', 'user-agent': userAgent } }); lastRequestAt = Date.now()
-  if (!response.ok) throw new Error(`musicbrainz_http_${response.status}`)
-  return response.json()
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const delay = Math.max(0, 1050 - (Date.now() - lastRequestAt)); if (delay) await wait(delay)
+    const response = await fetch(`${API_ROOT}${path}`, { headers: { accept: 'application/json', 'user-agent': userAgent } }); lastRequestAt = Date.now()
+    if (response.ok) return response.json()
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 3) throw new Error(`musicbrainz_http_${response.status}`)
+    const retryHeader = response.headers.get('retry-after')
+    const retrySeconds = retryHeader && /^\d+$/.test(retryHeader.trim())
+      ? Number(retryHeader)
+      : retryHeader && Number.isFinite(Date.parse(retryHeader))
+        ? Math.max(0, Math.ceil((Date.parse(retryHeader) - Date.now()) / 1000))
+        : Math.min(10, attempt + 1)
+    await wait(Math.max(1, retrySeconds) * 1000)
+  }
 }
 
 async function recordingSeries() {
