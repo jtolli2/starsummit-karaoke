@@ -9,12 +9,20 @@ migrate((app) => {
     if (value && typeof value === 'object') { const out = {}; Object.keys(value).sort().forEach((key) => { out[key] = canonicalize(value[key]) }); return out }
     return value
   }
+  const decodeJson = (record, field) => {
+    let raw = record.get(field)
+    let stored = ''; try { stored = record.getString(field) } catch (_) {}
+    if (stored && /^(?:\[|\{)/.test(stored.trim())) { try { return JSON.parse(stored) } catch (_) {} }
+    if (typeof raw === 'string') { try { return JSON.parse(raw) } catch (_) { return null } }
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw
+    try { const decoded = JSON.parse(JSON.stringify(raw)); return typeof decoded === 'string' ? JSON.parse(decoded) : decoded } catch (_) { return null }
+  }
   const records = app.findRecordsByFilter('karaoke_youtube_claims', '', '+id', 100000, 0)
   for (const claim of records) {
-    let events = claim.get('audit_json'); if (typeof events === 'string') { try { events = JSON.parse(events) } catch (_) { events = [] } }
+    let events = decodeJson(claim, 'audit_json')
     if (!Array.isArray(events)) events = []
     const status = String(claim.get('status') || '')
-    let payload = claim.get('payload_json'); if (typeof payload === 'string') { try { payload = JSON.parse(payload) } catch (_) { payload = null } }
+    let payload = decodeJson(claim, 'payload_json')
     const items = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.items) ? payload.items : null
     const total = Number(payload?.total); const spent = Number(payload?.spent)
     const orderedIdentity = items ? items.map((item) => String(item?.youtubeId || item?.id || '')) : []
