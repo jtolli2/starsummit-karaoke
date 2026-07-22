@@ -52,6 +52,10 @@ function jsonValue(r, f, fallback) {
   if (typeof value === 'object') {
     const text = String(value)
     if (text === '[object Object]') {
+      try {
+        const serialized = JSON.stringify(value)
+        if (/^"(?:\[|\{)/.test(serialized)) return decode(serialized)
+      } catch (_) {}
       if (r && r.getString) {
         const raw = r.getString(f)
         if (raw && raw !== text) { try { return decode(raw) } catch (_) {} }

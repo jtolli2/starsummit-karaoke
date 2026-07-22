@@ -113,11 +113,17 @@ test('catalog JSON decoder preserves native values and parses PocketBase raw wra
   const jsonValue = new Function(`${hook.slice(start, end)}; return jsonValue`)()
   const read = (value, fallback = 'fallback') => jsonValue({ get: () => value }, 'field', fallback)
   assert.deepEqual(read([1]), [1])
-  assert.deepEqual(read({ items: [1] }), { items: [1] })
+  const native = { items: [1] }
+  assert.equal(read(native), native)
+  const cyclic = {}; cyclic.self = cyclic
+  assert.equal(read(cyclic), cyclic)
+  const stringValue = { toJSON: () => 'hello' }
+  assert.equal(read(stringValue), stringValue)
   assert.deepEqual(read({ toString: () => '{"items":[1],"total":1}' }), { items: [1], total: 1 })
   assert.deepEqual(read({ toString: () => '"{\\"items\\":[1],\\"total\\":1}"' }), { items: [1], total: 1 })
   assert.deepEqual(read({ toString: () => '{\\"items\\":[1],\\"total\\":1}' }), { items: [1], total: 1 })
   assert.deepEqual(jsonValue({ get: () => ({}), getString: () => '{"items":[1],"total":1}' }, 'field', 'fallback'), { items: [1], total: 1 })
+  assert.deepEqual(read({ toJSON: () => '{"items":[1],"total":1}' }), { items: [1], total: 1 })
   assert.equal(read({ toString: () => '{invalid' }), 'fallback')
   assert.equal(read('not-json'), 'fallback')
 })
