@@ -31,13 +31,14 @@ function id(r) { return r?.id || r?.getString?.('id') }
 function name(r) { return r?.collection?.()?.name || r?.collection?.name || '' }
 function tablet(a) { return a && !a.getBool?.('revoked') && str(a, 'role') === 'tablet_admin' && ['users', '_pb_users_auth_'].includes(name(a)) }
 function hash(v) { return typeof $security !== 'undefined' && $security.sha256 ? $security.sha256(String(v)) : String(v) }
-function logCatalogImportFailure(batchKey, offset, itemCount, errorMessage) {
+function logCatalogImportFailure(stage, offset, itemCount) {
   // Keep retained-staging diagnostics bounded and free of request payloads or secrets.
   try {
-    const value = String(errorMessage || '')
-    const schemaErrors = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order']
-    const category = schemaErrors.includes(value) ? 'schema_validation' : value.includes('transaction') ? 'transaction_conflict' : 'unknown'
-    console.error(`Catalog import transaction failed (category=${category}, offset=${Number(offset) || 0}, itemCount=${Number(itemCount) || 0})`)
+    const stages = ['batch_create', 'batch_validate', 'song_save', 'chunk_save', 'batch_finalize']
+    const safeStage = stages.includes(stage) ? stage : 'unknown'
+    const safeOffset = Math.max(0, Math.floor(Number(offset) || 0))
+    const safeItemCount = Math.max(0, Math.min(100, Math.floor(Number(itemCount) || 0)))
+    console.error(`Catalog import transaction failed (stage=${safeStage}, offset=${safeOffset}, itemCount=${safeItemCount})`)
   } catch (_) {}
 }
 function canonicalize(v) { if (Array.isArray(v)) return v.map(canonicalize); if (v && typeof v === 'object') { const out = {}; Object.keys(v).sort().forEach((key) => { out[key] = canonicalize(v[key]) }); return out } return v }
@@ -521,6 +522,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
     }
   }
   const chunkFingerprint = live ? requestFingerprint : hash(JSON.stringify(canonicalize({ offset, items })))
+  let diagnosticStage = 'batch_create'
   try {
     let imported = 0
     $app.runInTransaction((tx) => {
@@ -528,7 +530,8 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
       // Persist a newly created batch before using its id as the chunk relation.
       // An unsaved PocketBase Record has no id, so the first fixture chunk would
       // otherwise fail relation validation and could not be resumed.
-      if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); tx.save(batch) }
+      if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', String(source.url || '').slice(0, 500)); set(batch, 'source_terms', String(source.terms || '').slice(0, 500)); set(batch, 'source_retrieved_at', String(source.retrievedAt || '')); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); diagnosticStage = 'batch_create'; tx.save(batch) }
+      diagnosticStage = 'batch_validate'
       if (str(batch, 'source_fingerprint') !== manifestFingerprint || num(batch, 'total') !== total || str(batch, 'source_url') !== sourceUrl || str(batch, 'source_terms') !== sourceTerms) throw new Error('batch_source_mismatch')
       let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
       if (chunk && str(chunk, 'chunk_fingerprint') !== chunkFingerprint) throw new Error('chunk_source_mismatch')
@@ -541,15 +544,15 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
         try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
         if (song) continue // Existing catalog entries retain operator review and eligibility decisions.
         song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))
-        const title = String(item.title || youtubeId).slice(0, 240); const artist = String(item.artist || item.channelTitle || '').slice(0, 160); const result = classifyCatalogItem(item); const normalizedTitle = normalized(title, 240); const normalizedArtist = normalized(artist, 160); set(song, 'youtube_id', youtubeId); set(song, 'title', title); set(song, 'artist', artist); set(song, 'provenance', live ? 'youtube_api_import' : 'fixture_import'); set(song, 'eligibility_reason', result.reason); set(song, 'source', live ? 'youtube' : 'fixture'); set(song, 'source_query', String(input.query || source.terms || '').slice(0, 160)); set(song, 'source_url', sourceUrl); set(song, 'source_retrieved_at', String(source.retrievedAt || now())); set(song, 'source_rank', offset + itemIndex + 1); set(song, 'source_terms', sourceTerms); set(song, 'classification', result.classification); set(song, 'classification_confidence', result.confidence); set(song, 'review_status', 'unreviewed'); set(song, 'eligible', false); set(song, 'normalized_title', normalizedTitle); set(song, 'normalized_artist', normalizedArtist); set(song, 'identity_key', `${normalizedArtist}|${normalizedTitle}`); set(song, 'alternatives_json', []); set(song, 'review_history_json', []); set(song, 'metadata_json', { channelTitle: item.channelTitle || null, description: item.description || null, embeddable: item.embeddable === true, privacyStatus: item.privacyStatus || null, uploadStatus: item.uploadStatus || null, duration: item.duration || null, viewCount: item.viewCount || null }); set(song, 'import_batch', batchKey); set(song, 'imported_at', now()); tx.save(song); imported++
+        const title = String(item.title || youtubeId).slice(0, 240); const artist = String(item.artist || item.channelTitle || '').slice(0, 160); const result = classifyCatalogItem(item); const normalizedTitle = normalized(title, 240); const normalizedArtist = normalized(artist, 160); set(song, 'youtube_id', youtubeId); set(song, 'title', title); set(song, 'artist', artist); set(song, 'provenance', live ? 'youtube_api_import' : 'fixture_import'); set(song, 'eligibility_reason', result.reason); set(song, 'source', live ? 'youtube' : 'fixture'); set(song, 'source_query', String(input.query || source.terms || '').slice(0, 160)); set(song, 'source_url', sourceUrl); set(song, 'source_retrieved_at', String(source.retrievedAt || now())); set(song, 'source_rank', offset + itemIndex + 1); set(song, 'source_terms', sourceTerms); set(song, 'classification', result.classification); set(song, 'classification_confidence', result.confidence); set(song, 'review_status', 'unreviewed'); set(song, 'eligible', false); set(song, 'normalized_title', normalizedTitle); set(song, 'normalized_artist', normalizedArtist); set(song, 'identity_key', `${normalizedArtist}|${normalizedTitle}`); set(song, 'alternatives_json', []); set(song, 'review_history_json', []); set(song, 'metadata_json', { channelTitle: item.channelTitle || null, description: item.description || null, embeddable: item.embeddable === true, privacyStatus: item.privacyStatus || null, uploadStatus: item.uploadStatus || null, duration: item.duration || null, viewCount: item.viewCount || null }); set(song, 'import_batch', batchKey); set(song, 'imported_at', now()); diagnosticStage = 'song_save'; tx.save(song); imported++
       }
-      if (!items.length) { if (live) { const emptyClaim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (emptyClaim && (!str(emptyClaim, 'owner_token') || str(emptyClaim, 'owner_token') === ownerToken)) { set(emptyClaim, 'status', 'complete'); set(emptyClaim, 'reserved_units', 0); tx.save(emptyClaim) } } set(batch, 'cursor', total); set(batch, 'status', 'complete'); set(batch, 'updated_at', now()); tx.save(batch); return }
-      chunk = new Record(tx.findCollectionByNameOrId('karaoke_catalog_import_chunks')); set(chunk, 'import', id(batch)); set(chunk, 'offset', offset); set(chunk, 'chunk_fingerprint', chunkFingerprint); set(chunk, 'item_count', items.length); set(chunk, 'payload_json', items); tx.save(chunk)
+      if (!items.length) { if (live) { const emptyClaim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (emptyClaim && (!str(emptyClaim, 'owner_token') || str(emptyClaim, 'owner_token') === ownerToken)) { set(emptyClaim, 'status', 'complete'); set(emptyClaim, 'reserved_units', 0); tx.save(emptyClaim) } } set(batch, 'cursor', total); set(batch, 'status', 'complete'); set(batch, 'updated_at', now()); diagnosticStage = 'batch_finalize'; tx.save(batch); return }
+      chunk = new Record(tx.findCollectionByNameOrId('karaoke_catalog_import_chunks')); set(chunk, 'import', id(batch)); set(chunk, 'offset', offset); set(chunk, 'chunk_fingerprint', chunkFingerprint); set(chunk, 'item_count', items.length); set(chunk, 'payload_json', items); diagnosticStage = 'chunk_save'; tx.save(chunk)
       if (live) { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (claim && (!str(claim, 'owner_token') || str(claim, 'owner_token') === ownerToken)) { set(claim, 'status', 'complete'); set(claim, 'reserved_units', 0); tx.save(claim) } }
-      const cursor = Math.max(num(batch, 'cursor'), offset + items.length); set(batch, 'cursor', cursor); set(batch, 'status', cursor >= total ? 'complete' : 'paused'); set(batch, 'updated_at', now()); tx.save(batch)
+      const cursor = Math.max(num(batch, 'cursor'), offset + items.length); set(batch, 'cursor', cursor); set(batch, 'status', cursor >= total ? 'complete' : 'paused'); set(batch, 'updated_at', now()); diagnosticStage = 'batch_finalize'; tx.save(batch)
     })
     return c.json(200, { batchKey, imported })
-  } catch (error) { if (!live) logCatalogImportFailure(batchKey, offset, items.length, error?.message); const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'].includes(error.message); return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed') }
+  } catch (error) { if (!live) logCatalogImportFailure(diagnosticStage, offset, items.length); const mismatch = ['batch_source_mismatch', 'chunk_source_mismatch', 'chunk_out_of_order'].includes(error.message); return json(c, mismatch ? 409 : 500, mismatch ? error.message : 'import_failed', error.message === 'chunk_out_of_order' ? 'Import chunks must be submitted in order' : mismatch ? 'Import input does not match its original manifest' : 'Catalog import failed') }
 })
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/review', (c) => {
