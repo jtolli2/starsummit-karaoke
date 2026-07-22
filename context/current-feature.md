@@ -41,8 +41,8 @@ Complete
   data. A real licensed/operational popular-song source is still required before a large import;
   correctness and provenance took priority over the optional 5,000-record target.
 - Retained staging deployed exact product SHA
-  `f4801a5ef0e8e99127cce2268bf5df3733f7c17e` to PocketBase deployment
-  `kitiyw8oh5btja1b3q9bryhe` and frontend deployment `iuatkib940w1rsyenmp9xhkr`; both finished
+  `8dd12a9e102ab0dc28dc94c045cf9b83c3cf7750` to PocketBase deployment
+  `hb4gibgc22o6xipil5563cue` and frontend deployment `bjpslyz1wl41dtktx7ls855i`; both finished
   healthy, the existing volume was preserved, and same-origin `/api/health` returned 200.
 - Live validation imported one deterministic synthetic fixture, replayed it with zero duplicates,
   and immediately rejected it as ineligible. One YouTube query imported two credible karaoke
@@ -56,9 +56,10 @@ Complete
   fixture; pre-existing validation records were not changed. Unauthenticated guest search remained
   denied, and no party, queue, controller, tablet enrollment, or unrelated validation state changed.
 - Additive repair migrations corrected retained checkpoint schema state using the PocketBase 0.39.7
-  field API without dropping data. Pinned-runtime offset-zero preservation/idempotency, importer,
-  auth, quota/replay, deduplication/concurrency, classification, Vue, production-build, and live
-  staging checks passed; independent reviews found no remaining blocking findings.
+  field API without dropping data and added the server-computed final digest through a forward-only
+  migration. Two pinned-runtime preservation/idempotency tests, 32 importer/backend contracts, 15
+  Vue tests, the production build, and live staging checks passed; independent final review approved
+  the result with no remaining blocking findings.
 - Remaining limitations: YouTube classification is explainable metadata heuristics rather than
   semantic certainty; availability can only reflect the API at check time; no broad popular-song
   source or 5,000-record import was selected; fallbacks remain intentionally reviewable and

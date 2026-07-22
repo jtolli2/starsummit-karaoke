@@ -173,9 +173,9 @@
 - Added constrained tablet-admin catalog review/search/approve/reject/replace/disable workflows and
   party-independent review UI. Guest search exposes only sanitized approved/eligible songs with
   normalized deterministic pagination; public writes and privileged YouTube access remain denied.
-- Passed importer and backend contracts, pinned PocketBase 0.39.7 migration integration, Vue tests,
-  production build, and independent review. Deployed product SHA
-  `f4801a5ef0e8e99127cce2268bf5df3733f7c17e` to both retained staging apps without replacing the
+- Passed 32 importer/backend contracts, two pinned PocketBase 0.39.7 migration integrations, 15 Vue
+  tests, production build, and independent final review. Deployed product SHA
+  `8dd12a9e102ab0dc28dc94c045cf9b83c3cf7750` to both retained staging apps without replacing the
   volume; live replay, quota, review, guest-boundary, no-party recovery, and health checks passed.
 - Live validation added two unreviewed/ineligible karaoke candidates and one rejected/ineligible
   synthetic fixture, consuming 101 known YouTube quota units. A real reproducible popular-song
