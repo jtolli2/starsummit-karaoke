@@ -30,7 +30,10 @@ migrate((app) => {
   for (const song of retained) {
     const history = song.get('review_history_json'); const events = Array.isArray(history) ? history : []
     events.push({ action: 'identity_quarantine', reason: 'legacy_identity_unverified', at: new Date().toISOString() })
-    song.set('review_history_json', events); song.set('identity_status', 'missing')
+    // PocketBase accepts native arrays for newly created records, but retained
+    // JSON values can be backed by raw JSON bytes. Serializing here keeps the
+    // migration valid for both representations.
+    song.set('review_history_json', JSON.stringify(events)); song.set('identity_status', 'missing')
     song.set('identity_reason', 'legacy_identity_unverified'); song.set('eligible', false)
     song.set('review_status', 'needs_review'); app.save(song)
   }
