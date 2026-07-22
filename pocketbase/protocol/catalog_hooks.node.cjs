@@ -6,6 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const hook = fs.readFileSync(path.join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
+const repairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512300_repair_song_catalog_collection.js'), 'utf8')
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
   const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/:id\/replace'[\s\S]*?\n}\)/)
@@ -79,4 +80,19 @@ test('claim cleanup is owned by the current invocation', () => {
   assert.match(hook, /youtube_claim_stale_owner/)
   assert.match(hook, /if \(!items\.length\)/)
   assert.match(hook, /\['ready', 'complete'\]\.includes\(str\(claim, 'status'\)\)/)
+})
+
+test('catalog repair preserves records while rebinding stale relation metadata', () => {
+  assert.match(repairMigration, /songRelation\.collectionId = songs\.id/)
+  assert.match(repairMigration, /app\.save\(queue\)/)
+  assert.match(repairMigration, /queue records remain[\s\S]*song ids/)
+  assert.match(repairMigration, /importRelation\.collectionId = imports\.id/)
+})
+
+test('catalog repair keeps catalog collections private and restores field options', () => {
+  assert.match(repairMigration, /const makePrivate = \(collection\)/)
+  assert.match(repairMigration, /collection\[key\] !== null/)
+  assert.match(repairMigration, /const ensureField = \(collection, name, type, options = \{\}\)/)
+  assert.match(repairMigration, /if \(field\.type !== type\) return false/)
+  assert.match(repairMigration, /required: false, default: false/)
 })

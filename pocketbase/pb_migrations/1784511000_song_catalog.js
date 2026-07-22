@@ -1,6 +1,25 @@
 // Catalog provenance/review metadata and resumable importer state.
 migrate((app) => {
-  const songs = app.findCollectionByNameOrId('karaoke_songs')
+  const find = (name) => {
+    try { return app.findCollectionByNameOrId(name) } catch (_) { return null }
+  }
+  let songs = find('karaoke_songs')
+  if (!songs) {
+    songs = new Collection({
+      name: 'karaoke_songs', type: 'base',
+      listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
+      fields: [
+        { name: 'youtube_id', type: 'text', required: true, min: 11, max: 11 },
+        { name: 'title', type: 'text', required: true, max: 240 },
+        { name: 'artist', type: 'text', max: 160 },
+        { name: 'eligible', type: 'bool', default: false },
+        { name: 'provenance', type: 'text', max: 120 },
+        { name: 'eligibility_reason', type: 'text', max: 240 },
+      ],
+      indexes: ['CREATE UNIQUE INDEX idx_karaoke_songs_youtube ON karaoke_songs (youtube_id)'],
+    })
+    app.save(songs)
+  }
   const add = (name, type, options = {}) => {
     try { songs.fields.getByName(name); return } catch (_) {}
     songs.fields.add(new Field({ name, type, ...options }))
@@ -28,7 +47,7 @@ migrate((app) => {
   add('imported_at', 'date')
   app.save(songs)
 
-  if (!app.findCollectionByNameOrId('karaoke_catalog_imports')) {
+  if (!find('karaoke_catalog_imports')) {
     app.save(new Collection({
       name: 'karaoke_catalog_imports', type: 'base', listRule: null, viewRule: null,
       createRule: null, updateRule: null, deleteRule: null,
@@ -48,7 +67,7 @@ migrate((app) => {
       ],
       indexes: ['CREATE UNIQUE INDEX idx_karaoke_catalog_import_batch ON karaoke_catalog_imports (batch_key)'],
     }))
-    const imports = app.findCollectionByNameOrId('karaoke_catalog_imports')
+    const imports = find('karaoke_catalog_imports')
     app.save(new Collection({
       name: 'karaoke_catalog_import_chunks', type: 'base', listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null,
       fields: [
@@ -61,6 +80,9 @@ migrate((app) => {
     }))
   }
 }, (app) => {
-  const chunks = app.findCollectionByNameOrId('karaoke_catalog_import_chunks'); if (chunks) app.delete(chunks)
-  const imports = app.findCollectionByNameOrId('karaoke_catalog_imports'); if (imports) app.delete(imports)
+  const find = (name) => {
+    try { return app.findCollectionByNameOrId(name) } catch (_) { return null }
+  }
+  const chunks = find('karaoke_catalog_import_chunks'); if (chunks) app.delete(chunks)
+  const imports = find('karaoke_catalog_imports'); if (imports) app.delete(imports)
 })
