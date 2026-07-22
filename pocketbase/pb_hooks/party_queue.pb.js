@@ -27,7 +27,25 @@ function future(ms) { return new Date(Date.now() + ms).toISOString() }
 function str(r, f) { return r && r.getString ? r.getString(f) : r?.[f] }
 function num(r, f) { return r && r.getFloat ? r.getFloat(f) : r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
 function set(r, f, v) { r.set(f, v); return r }
-function setJson(r, f, v) { r.set(f, JSON.stringify(v)); return r }
+function normalizeJsonValue(value, seen) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') { if (!Number.isFinite(value)) throw new Error('json_value_invalid_number'); return value }
+  if (value === undefined) throw new Error('json_value_undefined')
+  if (typeof value !== 'object') throw new Error('json_value_invalid_type')
+  const stack = seen || []
+  if (stack.includes(value)) throw new Error('json_value_cyclic')
+  stack.push(value)
+  let out
+  if (Array.isArray(value)) out = value.map((entry) => normalizeJsonValue(entry, stack))
+  else {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) throw new Error('json_value_wrapper_ambiguous')
+    out = {}; Object.keys(value).sort().forEach((key) => { out[key] = normalizeJsonValue(value[key], stack) })
+  }
+  stack.pop(); return out
+}
+function serializeJson(value) { return JSON.stringify(normalizeJsonValue(value)) }
+function setJson(r, f, v) { r.set(f, serializeJson(v)); return r }
 function jsonValue(r, f, fallback) {
   const decode = (text) => {
     let decoded
@@ -60,12 +78,62 @@ function jsonValue(r, f, fallback) {
         const raw = r.getString(f)
         if (raw && raw !== text) { try { return decode(raw) } catch (_) {} }
       }
+      // A native PocketBase object is already authoritative in-memory state;
+      // serialization is enforced by setJson at the persistence boundary.
       return value
     }
     if (!/^(?:\[|\{|\")/.test(text)) return fallback
     try { return decode(text) } catch (_) { return fallback }
   }
   return fallback
+}
+function requiredJsonValue(r, f) {
+  const raw = r && r.get ? r.get(f) : r?.[f]
+  if (raw === null || raw === undefined) throw new Error(`json_value_missing_${f}`)
+  let value
+  let stored = ''
+  try { stored = r && r.getString ? r.getString(f) : '' } catch (_) {}
+  if (stored && /^(?:\[|\{|"|true$|false$|null$|-?\d)/.test(stored.trim())) {
+    try { value = JSON.parse(stored) } catch (_) { throw new Error(`json_value_malformed_${f}`) }
+  } else if (typeof raw === 'string') {
+    try { value = JSON.parse(raw) } catch (_) { throw new Error(`json_value_malformed_${f}`) }
+  } else if (Array.isArray(raw)) {
+    value = raw
+  } else if (typeof raw === 'object') {
+    try {
+      value = JSON.parse(JSON.stringify(raw))
+      if (typeof value === 'string' && /^(?:\[|\{)/.test(value.trim())) value = JSON.parse(value)
+    } catch (_) {
+      const text = r && r.getString ? r.getString(f) : String(raw)
+      try { value = JSON.parse(text) } catch (_) { throw new Error(`json_value_wrapper_malformed_${f}`) }
+    }
+  } else throw new Error(`json_value_invalid_${f}`)
+  try { return normalizeJsonValue(value) } catch (error) { throw new Error(`${error.message}_${f}`) }
+}
+function claimTransitionAllowed(from, to) {
+  const allowed = { reserved: ['in_progress', 'failed'], in_progress: ['ready', 'failed'], ready: ['complete', 'ready'], complete: ['complete'], failed: ['in_progress', 'failed'] }
+  return Boolean(allowed[String(from || 'reserved')]?.includes(String(to)))
+}
+function validateClaimReplay(claim, payload, sourceFingerprint, chunkFingerprint) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Array.isArray(payload.items)) {
+    try { console.error(`Catalog claim payload shape invalid (type=${typeof payload}, array=${Array.isArray(payload)}, itemsArray=${Array.isArray(payload?.items)})`) } catch (_) {}
+    throw new Error('claim_payload_invalid')
+  }
+  const total = Number(payload.total)
+  const spent = Number(payload.spent)
+  if (!Number.isInteger(total) || total < 0 || total !== payload.items.length || !Number.isFinite(spent) || spent < 0) {
+    try { console.error(`Catalog claim payload invalid (total=${total}, items=${payload.items.length}, spent=${spent})`) } catch (_) {}
+    throw new Error('claim_payload_invalid')
+  }
+  const orderedIdentity = payload.items.map((item) => String(item?.youtubeId || item?.id || ''))
+  if (orderedIdentity.some((value) => !value)) throw new Error('claim_order_conflict')
+  const digest = hash(serializeJson({ items: payload.items, total, spent }))
+  const persistedOrder = requiredJsonValue(claim, 'ordered_identity_json')
+  if (str(claim, 'source_fingerprint') !== sourceFingerprint || payload.sourceFingerprint !== sourceFingerprint) throw new Error('claim_source_conflict')
+  if (str(claim, 'chunk_fingerprint') !== chunkFingerprint || payload.chunkFingerprint !== chunkFingerprint) throw new Error('claim_chunk_conflict')
+  if (str(claim, 'payload_digest') !== digest || payload.payloadDigest !== digest) throw new Error('claim_digest_conflict')
+  if (serializeJson(persistedOrder) !== serializeJson(orderedIdentity) || serializeJson(payload.orderedIdentity) !== serializeJson(orderedIdentity)) throw new Error('claim_order_conflict')
+  return { items: payload.items, total, spent }
 }
 function sameInstant(left, right) {
   const canonical = (value) => String(value || '').trim().replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T')
@@ -145,7 +213,7 @@ function catalogCheckpointHealth() {
     chunks: { present: true, hasExpectedUniqueIndex: chunksUniqueIndex, relationTargetMatches, fields: chunkFields },
   }
 }
-function canonicalize(v) { if (Array.isArray(v)) return v.map(canonicalize); if (v && typeof v === 'object') { const out = {}; Object.keys(v).sort().forEach((key) => { out[key] = canonicalize(v[key]) }); return out } return v }
+function canonicalize(v) { return normalizeJsonValue(v) }
 function catalogFinalDigest(source, total, items) {
   return hash(JSON.stringify(canonicalize({ source: { url: String(source?.url || ''), terms: String(source?.terms || ''), retrievedAt: String(source?.retrievedAt || '') }, total: Number(total), items: Array.isArray(items) ? items : [] })))
 }
@@ -270,7 +338,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -588,7 +656,7 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, now, future, find, set, setJson, jsonValue, catalogBatchMismatch, num, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str, catalogImportFailureStage, logCatalogImportFailure } = globalThis.__partyQueue
+  const { auth, tablet, json, body, now, future, find, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, serializeJson, catalogBatchMismatch, num, hash, canonicalize, catalogFinalDigest, normalized, classifyCatalogItem, fetchYoutubeCandidates, dayKey, random, id, str, catalogImportFailureStage, logCatalogImportFailure } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const live = input.fetchFromYoutube === true; const canonical = input.canonical && typeof input.canonical === 'object' ? input.canonical : {}
   const batchKey = String(input.batchKey || '').trim(); let items = Array.isArray(input.items) ? input.items.slice(0, 100) : []; const offset = Number(input.offset)
@@ -606,9 +674,21 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
         const mismatch = batch && catalogBatchMismatch(batch, { fingerprint: manifestFingerprint, url: sourceUrl, terms: sourceTerms, retrievedAt: sourceRetrievedAt, total }, !live)
         if (mismatch) throw new Error(`batch_source_mismatch_${mismatch}`)
         if (!batch) { batch = new Record(tx.findCollectionByNameOrId('karaoke_catalog_imports')); set(batch, 'batch_key', batchKey); set(batch, 'source_fingerprint', manifestFingerprint); set(batch, 'source_url', sourceUrl); set(batch, 'source_terms', sourceTerms); set(batch, 'source_retrieved_at', sourceRetrievedAt); set(batch, 'status', 'running'); set(batch, 'quota_limit', 10000); set(batch, 'quota_used', 0); set(batch, 'cursor', 0); set(batch, 'total', total); tx.save(batch) }
+        const claimKey = `${batchKey}:${requestFingerprint}`
         let chunk = null; try { chunk = tx.findFirstRecordByFilter('karaoke_catalog_import_chunks', 'import = {:import} && offset = {:offset}', { import: id(batch), offset }) } catch (_) {}
-        if (chunk) { if (str(chunk, 'chunk_fingerprint') !== requestFingerprint) throw new Error('chunk_source_mismatch'); throw new Error('chunk_replay') }
-        const claimKey = `${batchKey}:${requestFingerprint}`; let claim = null; try { claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: claimKey }) } catch (_) {}
+        if (chunk) {
+          if (str(chunk, 'chunk_fingerprint') !== requestFingerprint) throw new Error('chunk_source_mismatch')
+          let replayClaim = null; try { replayClaim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: claimKey }) } catch (_) {}
+          if (live && (!replayClaim || !['ready', 'complete'].includes(str(replayClaim, 'status')))) throw new Error('claim_state_conflict')
+          if (replayClaim) {
+            validateClaimReplay(replayClaim, requiredJsonValue(replayClaim, 'payload_json'), manifestFingerprint, requestFingerprint)
+            const events = jsonValue(replayClaim, 'audit_json', []); const audit = Array.isArray(events) ? events : []
+            audit.push({ action: 'exact_replay', at: now() }); setJson(replayClaim, 'audit_json', audit.slice(-50))
+            set(replayClaim, 'replay_count', num(replayClaim, 'replay_count') + 1); tx.save(replayClaim)
+          }
+          throw new Error('chunk_replay')
+        }
+        let claim = null; try { claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: claimKey }) } catch (_) {}
         if (claim && str(claim, 'status') === 'in_progress' && new Date(str(claim, 'lease_expires_at')).getTime() > Date.now()) throw new Error('youtube_request_in_progress')
         if (claim && str(claim, 'status') === 'in_progress') { const oldReserved = num(claim, 'reserved_units'); const oldDay = str(claim, 'quota_day_key'); if (oldReserved && oldDay) { const oldQuota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: oldDay }); set(oldQuota, 'reserved', Math.max(0, num(oldQuota, 'reserved') - oldReserved)); tx.save(oldQuota) } }
         if (claim && ['ready', 'complete'].includes(str(claim, 'status'))) {
@@ -616,12 +696,13 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
           // the subsequent chunk commit can complete the claim without turning
           // an already-finished request into a stale-owner failure.
           ownerToken = str(claim, 'owner_token') || ownerToken
-          const payload = jsonValue(claim, 'payload_json', {})
-          items = payload?.items || []
-          total = Number(payload?.total || items.length)
+          const payload = validateClaimReplay(claim, requiredJsonValue(claim, 'payload_json'), manifestFingerprint, requestFingerprint)
+          items = payload.items
+          total = payload.total
           return
         }
         if (!claim) { claim = new Record(tx.findCollectionByNameOrId('karaoke_youtube_claims')); set(claim, 'claim_key', claimKey); set(claim, 'batch_key', batchKey) }
+        set(claim, 'source_fingerprint', manifestFingerprint); set(claim, 'chunk_fingerprint', requestFingerprint)
         // Reclaimed/failed work starts a fresh quota reservation today. Only
         // ready/complete payload replays retain their persisted quota day.
         const quotaDay = dayKey(); set(claim, 'quota_day_key', quotaDay); set(claim, 'status', 'in_progress'); set(claim, 'reserved_units', 303); set(claim, 'owner_token', ownerToken); set(claim, 'lease_expires_at', future(120000)); set(claim, 'error_code', ''); tx.save(claim)
@@ -629,15 +710,17 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
         if (!quota) { quota = new Record(tx.findCollectionByNameOrId('karaoke_youtube_quota')); set(quota, 'day_key', quotaDay); set(quota, 'quota_limit', 10000); set(quota, 'reserved', 0); set(quota, 'spent', 0) }
         if (num(quota, 'spent') + num(quota, 'reserved') + 303 > num(quota, 'quota_limit')) throw new Error('youtube_quota_exhausted'); set(quota, 'reserved', num(quota, 'reserved') + 303); tx.save(quota)
       })
-      let discovery = null; const existingClaim = find('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (existingClaim && ['ready', 'complete'].includes(str(existingClaim, 'status'))) { const payload = jsonValue(existingClaim, 'payload_json', {}); items = payload?.items || []; total = Number(payload?.total || items.length); discovery = { cost: 0 } } else { discovery = fetchYoutubeCandidates(String(input.query || ''), requestedMaxResults); items = discovery.items.map((item) => ({ ...item, canonicalTitle: String(canonical.title || ''), canonicalArtist: String(canonical.artist || ''), source: String(canonical.source || ''), sourceId: String(canonical.sourceId || ''), sourceList: String(canonical.sourceList || ''), sourceRank: Number(canonical.sourceRank || 0), sourcePopularity: Number(canonical.sourcePopularity || 0), genres: Array.isArray(canonical.genres) ? canonical.genres : [], releaseYear: Number(canonical.releaseYear || 0) })); total = items.length }
+      let discovery = null; const existingClaim = find('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (existingClaim && ['ready', 'complete'].includes(str(existingClaim, 'status'))) { const payload = validateClaimReplay(existingClaim, requiredJsonValue(existingClaim, 'payload_json'), manifestFingerprint, requestFingerprint); items = payload.items; total = payload.total; discovery = { cost: 0 } } else { discovery = fetchYoutubeCandidates(String(input.query || ''), requestedMaxResults); items = discovery.items.map((item) => ({ ...item, canonicalTitle: String(canonical.title || ''), canonicalArtist: String(canonical.artist || ''), source: String(canonical.source || ''), sourceId: String(canonical.sourceId || ''), sourceList: String(canonical.sourceList || ''), sourceRank: Number(canonical.sourceRank || 0), sourcePopularity: Number(canonical.sourcePopularity || 0), genres: Array.isArray(canonical.genres) ? canonical.genres : [], releaseYear: Number(canonical.releaseYear || 0) })); total = items.length }
       const spent = discovery.cost; attemptedCost = spent
-      if (!existingClaim || !['ready', 'complete'].includes(str(existingClaim, 'status'))) $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (!claim || str(claim, 'owner_token') !== ownerToken) throw new Error('youtube_claim_stale_owner'); const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); const used = num(batch, 'quota_used'); if (used + spent > num(batch, 'quota_limit')) throw new Error('youtube_quota_exhausted'); set(batch, 'quota_used', used + spent); set(batch, 'total', total); set(batch, 'updated_at', now()); tx.save(batch); setJson(claim, 'payload_json', { items, total, spent }); set(claim, 'spent_units', spent); set(claim, 'status', 'ready'); tx.save(claim); const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: str(claim, 'quota_day_key') }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - num(claim, 'reserved_units'))); set(quota, 'spent', num(quota, 'spent') + spent); tx.save(quota) })
+      if (!existingClaim || !['ready', 'complete'].includes(str(existingClaim, 'status'))) $app.runInTransaction((tx) => { const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (!claim || str(claim, 'owner_token') !== ownerToken) throw new Error('youtube_claim_stale_owner'); if (!claimTransitionAllowed(str(claim, 'status'), 'ready')) throw new Error('youtube_claim_transition_invalid'); const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); const used = num(batch, 'quota_used'); if (used + spent > num(batch, 'quota_limit')) throw new Error('youtube_quota_exhausted'); const payloadDigest = hash(serializeJson({ items, total, spent })); set(batch, 'quota_used', used + spent); set(batch, 'total', total); set(batch, 'updated_at', now()); tx.save(batch); setJson(claim, 'payload_json', { items, total, spent, sourceFingerprint: manifestFingerprint, chunkFingerprint: requestFingerprint, payloadDigest, orderedIdentity: items.map((item) => String(item.youtubeId || '')) }); set(claim, 'source_fingerprint', manifestFingerprint); set(claim, 'chunk_fingerprint', requestFingerprint); set(claim, 'payload_digest', payloadDigest); setJson(claim, 'ordered_identity_json', items.map((item) => String(item.youtubeId || ''))); const reserved = num(claim, 'reserved_units'); set(claim, 'spent_units', num(claim, 'spent_units') + spent); set(claim, 'reserved_units', 0); set(claim, 'reservation_released_at', now()); set(claim, 'status', 'ready'); tx.save(claim); const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: str(claim, 'quota_day_key') }); set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - reserved)); set(quota, 'spent', num(quota, 'spent') + spent); tx.save(quota) })
     } catch (error) {
       if (error.message === 'chunk_replay') return c.json(200, { batchKey, imported: 0, replay: true })
+      try { console.error(`Catalog claim failed (reason=${String(error.message || 'unknown').replace(/[^a-z0-9_:-]/gi, '').slice(0, 80)})`) } catch (_) {}
       const batchMismatch = String(error.message || '').startsWith('batch_source_mismatch_')
-      const permanent = batchMismatch || ['chunk_source_mismatch', 'youtube_quota_exhausted'].includes(error.message)
-      try { $app.runInTransaction((tx) => { const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); if (batch) { set(batch, 'status', permanent ? 'failed' : 'paused'); set(batch, 'last_error', String(error.message || 'youtube_import_failed').slice(0, 240)); set(batch, 'updated_at', now()); tx.save(batch) } const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (claim && str(claim, 'owner_token') === ownerToken) { const reserved = num(claim, 'reserved_units'); const consumed = Math.min(reserved, Number(error.quotaCost || attemptedCost || 0)); const qday = str(claim, 'quota_day_key'); if (reserved && qday) { const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: qday }); if (quota) { set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - reserved)); if (consumed) set(quota, 'spent', num(quota, 'spent') + consumed); tx.save(quota) } } set(claim, 'reserved_units', 0); set(claim, 'spent_units', consumed); set(claim, 'status', 'failed'); set(claim, 'error_code', String(error.message || 'youtube_import_failed')); tx.save(claim) } }) } catch (_) {}
-      const code = batchMismatch ? 'batch_source_mismatch' : permanent ? error.message : 'youtube_import_failed'; const extra = batchMismatch ? { mismatchField: String(error.message).replace('batch_source_mismatch_', '') } : undefined; return json(c, code === 'batch_source_mismatch' || code === 'chunk_source_mismatch' || code === 'youtube_request_in_progress' ? 409 : 503, code, code === 'youtube_quota_exhausted' ? 'YouTube import quota is exhausted' : batchMismatch ? 'Import input does not match its original manifest' : 'Live YouTube import failed', extra)
+      const claimConflict = String(error.message || '').startsWith('claim_')
+      const permanent = batchMismatch || claimConflict || ['chunk_source_mismatch', 'youtube_quota_exhausted'].includes(error.message)
+      try { $app.runInTransaction((tx) => { const batch = tx.findFirstRecordByFilter('karaoke_catalog_imports', 'batch_key = {:batch}', { batch: batchKey }); if (batch) { set(batch, 'status', permanent ? 'failed' : 'paused'); set(batch, 'last_error', String(error.message || 'youtube_import_failed').slice(0, 240)); set(batch, 'updated_at', now()); tx.save(batch) } const claim = tx.findFirstRecordByFilter('karaoke_youtube_claims', 'claim_key = {:claim}', { claim: `${batchKey}:${requestFingerprint}` }); if (claim && str(claim, 'owner_token') === ownerToken) { const reserved = num(claim, 'reserved_units'); const consumed = Math.min(reserved, Number(error.quotaCost || attemptedCost || 0)); const qday = str(claim, 'quota_day_key'); if (reserved && qday) { const quota = tx.findFirstRecordByFilter('karaoke_youtube_quota', 'day_key = {:day}', { day: qday }); if (quota) { set(quota, 'reserved', Math.max(0, num(quota, 'reserved') - reserved)); if (consumed) set(quota, 'spent', num(quota, 'spent') + consumed); tx.save(quota) } } set(claim, 'reserved_units', 0); set(claim, 'spent_units', num(claim, 'spent_units') + consumed); set(claim, 'status', 'failed'); set(claim, 'error_code', String(error.message || 'youtube_import_failed')); tx.save(claim) } }) } catch (_) {}
+      const code = batchMismatch ? 'batch_source_mismatch' : permanent ? error.message : 'youtube_import_failed'; const extra = batchMismatch ? { mismatchField: String(error.message).replace('batch_source_mismatch_', '') } : undefined; return json(c, code === 'batch_source_mismatch' || code === 'chunk_source_mismatch' || code === 'youtube_request_in_progress' || claimConflict ? 409 : 503, code, code === 'youtube_quota_exhausted' ? 'YouTube import quota is exhausted' : batchMismatch || claimConflict ? 'Import input does not match its original claim' : 'Live YouTube import failed', extra)
     }
   }
   const chunkFingerprint = live ? requestFingerprint : hash(JSON.stringify(canonicalize({ offset, items })))

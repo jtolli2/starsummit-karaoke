@@ -15,6 +15,7 @@ const checkpointRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb
 const offsetRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512600_repair_catalog_chunk_offset_required.js'), 'utf8')
 const fieldApiRepairMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512700_repair_catalog_checkpoint_field_api.js'), 'utf8')
 const sourceIdentityMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784512900_catalog_source_identity.js'), 'utf8')
+const claimLifecycleMigration = fs.readFileSync(path.join(__dirname, '..', 'pb_migrations', '1784513100_repair_catalog_claim_lifecycle.js'), 'utf8')
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
   const replacement = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/\{id\}\/replace'[\s\S]*?\n}\)/)
@@ -105,15 +106,15 @@ test('identity alternatives and review history are append-only and idempotent', 
   assert.match(hook, /!list\.some\(\(candidate\) => String\(candidate\.youtubeId \|\| ''\) === youtubeId\)/)
   assert.match(hook, /action: 'review'/)
   assert.match(hook, /action: 'replacement'/)
-  assert.match(hook, /function setJson\(r, f, v\) \{ r\.set\(f, JSON\.stringify\(v\)\)/)
+  assert.match(hook, /function setJson\(r, f, v\) \{ r\.set\(f, serializeJson\(v\)\)/)
   assert.match(hook, /setJson\(song, 'review_history_json', events\)/)
   assert.match(hook, /setJson\(identity, 'alternatives_json', list\)/)
   assert.doesNotMatch(hook, /set\(song, 'review_history_json', events\)/)
   assert.match(hook, /function jsonValue\(r, f, fallback\)/)
   assert.match(hook, /try \{ decoded = JSON\.parse\(text\) \}/)
   assert.match(hook, /const text = String\(value\)/)
-  assert.match(hook, /jsonValue\(existingClaim, 'payload_json', \{\}\)/)
-  assert.match(hook, /setJson\(claim, 'payload_json', \{ items, total, spent \}\)/)
+  assert.match(hook, /requiredJsonValue\(existingClaim, 'payload_json'\)/)
+  assert.match(hook, /setJson\(claim, 'payload_json', \{ items, total, spent, sourceFingerprint:/)
 })
 
 test('catalog JSON decoder preserves native values and parses PocketBase raw wrappers', () => {
@@ -204,8 +205,18 @@ test('source identity migration is forward-only and keeps uploader fields distin
   assert.doesNotMatch(sourceIdentityMigration, /app\.delete/)
 })
 
+test('claim lifecycle repair is additive, audited, and forward-only', () => {
+  assert.match(claimLifecycleMigration, /legacy_payload_quarantined/)
+  assert.match(claimLifecycleMigration, /legacy_shape_normalized/)
+  assert.match(claimLifecycleMigration, /spent ledger is not erased|spent_units/)
+  assert.doesNotMatch(claimLifecycleMigration, /app\.delete\(/)
+})
+
 test('live claims persist payload and quota day before catalog completion', () => {
-  assert.match(hook, /payload_json', \{ items, total, spent \}/)
+  assert.match(hook, /payload_json', \{ items, total, spent, sourceFingerprint:/)
+  assert.match(hook, /validateClaimReplay\(existingClaim/)
+  assert.match(hook, /const reserved = num\(claim, 'reserved_units'\)/)
+  assert.match(hook, /set\(claim, 'reserved_units', 0\)/)
   assert.match(hook, /set\(claim, 'status', 'ready'\)/)
   assert.match(hook, /set\(claim, 'status', 'complete'\)/)
   assert.match(hook, /quota_day_key/)

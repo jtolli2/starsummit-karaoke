@@ -3,20 +3,45 @@
 const CLASSIFICATIONS = ['karaoke', 'original', 'lyric', 'live', 'cover', 'fallback_lyric', 'fallback_audio', 'other', 'unknown']
 const REVIEW_STATES = ['unreviewed', 'approved', 'rejected', 'needs_review']
 
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize)
-  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]))
-  return value
+// The importer and PocketBase hook share this boundary: only JSON values cross
+// the persistence/protocol edge.  Undefined, non-finite numbers, cyclic values,
+// and opaque/native wrappers are rejected instead of being silently coerced.
+function normalizeJsonValue(value, seen = new Set()) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('json_value_invalid_number')
+    return value
+  }
+  if (value === undefined) throw new Error('json_value_undefined')
+  if (typeof value !== 'object') throw new Error('json_value_invalid_type')
+  if (seen.has(value)) throw new Error('json_value_cyclic')
+  seen.add(value)
+  let result
+  if (Array.isArray(value)) result = value.map((entry) => normalizeJsonValue(entry, seen))
+  else {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) {
+      const raw = typeof value.toString === 'function' ? String(value) : ''
+      if (!/^(?:\[|\{|\"|null|true|false|-?\d)/.test(raw)) throw new Error('json_value_wrapper_ambiguous')
+      try { result = normalizeJsonValue(JSON.parse(raw), seen) } catch (_) { throw new Error('json_value_wrapper_malformed') }
+    } else result = Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalizeJsonValue(value[key], seen)]))
+  }
+  seen.delete(value)
+  return result
 }
+
+function canonicalize(value) { return normalizeJsonValue(value) }
+
+function serializeJson(value) { return JSON.stringify(normalizeJsonValue(value)) }
 
 function sourceFingerprint({ query = '', items = [] }) {
   const crypto = require('node:crypto')
-  return crypto.createHash('sha256').update(JSON.stringify(canonicalize({ query, items }))).digest('hex')
+  return crypto.createHash('sha256').update(serializeJson({ query, items })).digest('hex')
 }
 
 function finalDigest({ source = {}, items = [] }) {
   const crypto = require('node:crypto')
-  return crypto.createHash('sha256').update(JSON.stringify(canonicalize({ source: { url: String(source.url || ''), terms: String(source.terms || ''), retrievedAt: String(source.retrievedAt || '') }, total: items.length, items }))).digest('hex')
+  return crypto.createHash('sha256').update(serializeJson({ source: { url: String(source.url || ''), terms: String(source.terms || ''), retrievedAt: String(source.retrievedAt || '') }, total: items.length, items })).digest('hex')
 }
 
 // YouTube's quota resets on America/Los_Angeles time, not at UTC midnight. Keep this
@@ -95,4 +120,27 @@ function validateChunk({ cursor, offset, existingFingerprint, chunkFingerprint }
   return { replay: false }
 }
 
-module.exports = { CLASSIFICATIONS, REVIEW_STATES, classify, normalize, plan, quotaDayKey, sourceFingerprint, finalDigest, normalized, validateChunk }
+const CLAIM_TRANSITIONS = {
+  reserved: new Set(['in_progress', 'failed']),
+  in_progress: new Set(['ready', 'failed']),
+  ready: new Set(['complete', 'ready']),
+  complete: new Set(['complete']),
+  failed: new Set(['in_progress', 'failed']),
+}
+function validateClaimTransition(current, next) {
+  const from = String(current || 'reserved'); const to = String(next || '')
+  if (!CLAIM_TRANSITIONS[from]?.has(to)) throw new Error('claim_transition_invalid')
+  return true
+}
+function validateClaimPayload(payload, expected = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('claim_payload_invalid')
+  const normalized = normalizeJsonValue(payload)
+  if (!Array.isArray(normalized.items)) throw new Error('claim_payload_items_invalid')
+  if (expected.sourceFingerprint && normalized.sourceFingerprint !== expected.sourceFingerprint) throw new Error('claim_source_conflict')
+  if (expected.chunkFingerprint && normalized.chunkFingerprint !== expected.chunkFingerprint) throw new Error('claim_chunk_conflict')
+  if (expected.digest && normalized.digest !== expected.digest) throw new Error('claim_digest_conflict')
+  if (expected.order && JSON.stringify(normalized.order || []) !== JSON.stringify(expected.order)) throw new Error('claim_order_conflict')
+  return normalized
+}
+
+module.exports = { CLASSIFICATIONS, REVIEW_STATES, classify, normalize, plan, quotaDayKey, sourceFingerprint, finalDigest, normalized, validateChunk, normalizeJsonValue, serializeJson, validateClaimTransition, validateClaimPayload }

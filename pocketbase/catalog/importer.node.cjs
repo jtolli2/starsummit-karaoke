@@ -3,7 +3,32 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
-const { classify, normalize, plan, quotaDayKey, sourceFingerprint, validateChunk } = require('./importer.cjs')
+const { classify, normalize, plan, quotaDayKey, sourceFingerprint, validateChunk, normalizeJsonValue, serializeJson, validateClaimTransition, validateClaimPayload } = require('./importer.cjs')
+
+test('claim lifecycle is monotonic and payload identity is authoritative', () => {
+  assert.equal(validateClaimTransition('in_progress', 'ready'), true)
+  assert.equal(validateClaimTransition('ready', 'complete'), true)
+  assert.throws(() => validateClaimTransition('complete', 'in_progress'), /claim_transition_invalid/)
+  assert.deepEqual(validateClaimPayload({ items: [1], sourceFingerprint: 's', chunkFingerprint: 'c', digest: 'd', order: [0] }, { sourceFingerprint: 's', chunkFingerprint: 'c', digest: 'd', order: [0] }).items, [1])
+  assert.throws(() => validateClaimPayload({ items: [], sourceFingerprint: 'other' }, { sourceFingerprint: 's' }), /claim_source_conflict/)
+})
+
+test('canonical JSON boundary preserves scalar distinctions and deterministic object order', () => {
+  assert.equal(serializeJson(null), 'null')
+  assert.equal(serializeJson(false), 'false')
+  assert.equal(serializeJson(1), '1')
+  assert.equal(serializeJson('1'), '"1"')
+  assert.equal(serializeJson({ z: 1, a: [true, null] }), '{"a":[true,null],"z":1}')
+  assert.deepEqual(normalizeJsonValue({ b: 2, a: 1 }), { a: 1, b: 2 })
+})
+
+test('canonical JSON boundary fails malformed, ambiguous, and non-finite values', () => {
+  assert.throws(() => serializeJson(undefined), /json_value_undefined/)
+  assert.throws(() => serializeJson(Number.NaN), /json_value_invalid_number/)
+  assert.throws(() => serializeJson(new Date()), /json_value_wrapper_ambiguous/)
+  const cyclic = {}; cyclic.self = cyclic
+  assert.throws(() => serializeJson(cyclic), /json_value_cyclic/)
+})
 
 test('quota day follows the America/Los_Angeles boundary across UTC midnight', () => {
   assert.equal(quotaDayKey('2026-07-23T06:59:59.000Z'), '2026-07-22')

@@ -12,6 +12,28 @@ items. A real import must supply a legally/operationally suitable popular-song s
 note, retrieval timestamp, rank order, and its complete stable manifest fingerprint. Replaying a
 chunk is safe; changing a manifest or chunk is rejected; chunks must arrive contiguously.
 
+### Claim replay and retained-data repair
+
+Live discovery is represented by a durable `karaoke_youtube_claims` row. A `ready` or `complete`
+claim is authoritative: its persisted payload, source/chunk fingerprints, digest, spent units, and
+quota day are reused on an unchanged replay, so replay performs no YouTube request and consumes zero
+additional quota. An expired lease may be reclaimed, but reservation release is recorded separately
+from actual spend; a stale owner cannot commit or release another owner's claim. `audit_json`,
+`replay_count`, `lifecycle_reason`, and `reservation_released_at` provide bounded operator
+diagnostics without exposing query payloads or credentials.
+
+The forward-only claim repair migration (`1784513100_repair_catalog_claim_lifecycle.js`) audits
+retained rows (the preceding `1784513000_claim_audit_fields.js` adds the diagnostic fields). Legacy
+rows whose JSON payload is a native scalar, string
+wrapper, or malformed value are retained and marked `failed` with `legacy_payload_quarantined`; their
+spend ledger is not erased. Rows with a valid object payload remain replayable. Applying the migration
+twice is a no-op, and no rollback path deletes claim, quota, import, or song records. Run the pinned
+runtime proof with:
+
+```sh
+POCKETBASE_BIN=/path/to/pocketbase node --test pocketbase/protocol/catalog_replay.integration.node.cjs
+```
+
 The selected real source is ordered MusicBrainz recording series for the Rolling Stone 2021 list
 and available Billboard Year-End Hot 100 lists. See
 [catalog-source-policy.md](catalog-source-policy.md). `plan-musicbrainz-series-import.cjs` resolves
