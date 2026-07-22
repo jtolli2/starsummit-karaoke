@@ -39,3 +39,7 @@ Complete
 - Verification: 9 importer/hook contract tests, 5 focused Vue API tests, production build, diff
   whitespace check, and independent review passed. Pinned PocketBase integration and retained
   staging validation remain environment/deployment checks.
+- Retained staging audit on 2026-07-22: frontend and PocketBase apps were healthy, but PocketBase
+  remained deployed at `6f1c8ac7d02095a236249dd53a7eded9d4600b58`. This task exposed read-only
+  Coolify inspection only, with no deployment/update action or authorized local token path; no
+  staging configuration or records were changed and live catalog validation was not claimed.

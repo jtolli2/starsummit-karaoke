@@ -16,7 +16,9 @@
   ineligible and replaceable; live YouTube discovery returns a clear unavailable response until a
   server-only API boundary and real source are provisioned.
 - Focused importer/hook tests, Vue API tests, production build, and independent review passed.
-  Pinned PocketBase integration and retained-staging evidence are recorded separately when run.
+  Pinned PocketBase integration remains environment-gated. A retained-staging audit found both
+  apps healthy but PocketBase still on `6f1c8ac`; no deployment capability was available in this
+  task, so no catalog records/configuration were changed and no live catalog validation is claimed.
 
 ### 2026-07-22 — Controller realtime subscription authorization fix
 
