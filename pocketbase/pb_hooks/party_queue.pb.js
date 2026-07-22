@@ -30,7 +30,14 @@ function set(r, f, v) { r.set(f, v); return r }
 function setJson(r, f, v) { r.set(f, JSON.stringify(v)); return r }
 function jsonValue(r, f, fallback) {
   const decode = (text) => {
-    const decoded = JSON.parse(text)
+    let decoded
+    try { decoded = JSON.parse(text) }
+    catch (error) {
+      // Retained PocketBase JSON string scalars can be exposed without their
+      // outer quotes while preserving the scalar's backslash escaping.
+      if (!/^(?:\{\\"|\[\\")/.test(text)) throw error
+      decoded = JSON.parse(`"${text}"`)
+    }
     if (typeof decoded === 'string' && /^(?:\[|\{)/.test(decoded.trim())) {
       return JSON.parse(decoded)
     }
