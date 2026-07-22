@@ -4,6 +4,16 @@
 
 ## Entries
 
+### 2026-07-22 — Controller realtime subscription authorization fix
+
+- Corrected the guest wake hook so it authorizes only subscriptions that include
+  `karaoke_party_wake`; controller command subscriptions now continue to PocketBase's normal
+  controller record rules with their original identity intact.
+- Retained-staging PocketBase deployed `6f1c8ac`; the Fire companion accepted the realtime
+  subscription and processed a realtime-woken `open_video` handoff as controller sequence 64,
+  acknowledged `succeeded`. The HTTPS polling fallback remains available for unrelated future
+  subscribe-time failures.
+
 ### 2026-07-22 — Controller realtime authorization recovery
 
 - Added a narrow native-companion recovery path for the retained staging PocketBase realtime

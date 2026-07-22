@@ -4,6 +4,18 @@
 
 ## Entries
 
+### 2026-07-22 — Scope custom realtime hooks to their custom topic
+
+- **Feedback:** A global guest wake `onRealtimeSubscribeRequest` hook rejected every non-guest
+  topic, including the native controller's `controller_commands/*` subscription. The resulting
+  error obscured the real ownership boundary and forced the controller onto polling.
+- **Improvement:** Let subscriptions that do not include `karaoke_party_wake` proceed untouched;
+  retain strict guest identity and single-topic validation whenever that custom topic is present.
+  Validate the deployed hook with an actual subscribed controller command, not only a successful
+  SSE connection.
+- **Follow-up:** Keep the HTTPS fallback as recovery defense-in-depth, and ensure future custom
+  realtime topic hooks explicitly delegate unrelated topics.
+
 ### 2026-07-22 — Retain authoritative delivery when realtime subscription is rejected
 
 - **Feedback:** The retained Fire tablet could authenticate and establish a controller session, but
