@@ -44,6 +44,43 @@ function logCatalogImportFailure(stage, offset, itemCount) {
     console.error(`Catalog import transaction failed (stage=${safeStage}, offset=${safeOffset}, itemCount=${safeItemCount})`)
   } catch (_) {}
 }
+const CATALOG_CHECKPOINT_HEALTH_FIELDS = {
+  imports: [
+    ['batch_key', 'text', true], ['source_fingerprint', 'text', true], ['source_url', 'text', false], ['source_terms', 'text', false],
+    ['source_retrieved_at', 'date', false], ['cursor', 'number', false], ['status', 'select', true], ['quota_used', 'number', false],
+    ['quota_limit', 'number', false], ['total', 'number', false], ['last_error', 'text', false], ['updated_at', 'date', false],
+  ],
+  chunks: [
+    ['import', 'relation', true], ['offset', 'number', false], ['chunk_fingerprint', 'text', true], ['item_count', 'number', true], ['payload_json', 'json', false],
+  ],
+}
+const CATALOG_CHECKPOINT_HEALTH_TYPES = ['text', 'date', 'number', 'select', 'relation', 'json']
+function catalogCheckpointFieldHealth(collection, expected) {
+  const [name, expectedType, expectedRequired] = expected
+  let field = null
+  try { field = collection?.fields?.getByName(name) || null } catch (_) {}
+  const type = CATALOG_CHECKPOINT_HEALTH_TYPES.includes(String(field?.type || '')) ? String(field.type) : field ? 'other' : null
+  return { name, type, required: field?.required === true, present: Boolean(field), expectedType, expectedRequired }
+}
+function catalogCheckpointHealth() {
+  let imports = null; let chunks = null
+  try { imports = $app.findCollectionByNameOrId('karaoke_catalog_imports'); chunks = $app.findCollectionByNameOrId('karaoke_catalog_import_chunks') } catch (_) { return null }
+  if (!imports || !chunks) return null
+  const importFields = CATALOG_CHECKPOINT_HEALTH_FIELDS.imports.map((expected) => catalogCheckpointFieldHealth(imports, expected))
+  const chunkFields = CATALOG_CHECKPOINT_HEALTH_FIELDS.chunks.map((expected) => catalogCheckpointFieldHealth(chunks, expected))
+  let rawRelation = null
+  try { rawRelation = chunks.fields.getByName('import') || null } catch (_) {}
+  const relationTargetMatches = Boolean(rawRelation && rawRelation.type === 'relation' && String(rawRelation.collectionId || '') === String(imports.id || ''))
+  const hasIndex = (collection, expected) => Array.isArray(collection.indexes) && collection.indexes.some((index) => String(index).replace(/\s+/g, ' ').trim() === expected)
+  const importsUniqueIndex = hasIndex(imports, 'CREATE UNIQUE INDEX idx_karaoke_catalog_import_batch ON karaoke_catalog_imports (batch_key)')
+  const chunksUniqueIndex = hasIndex(chunks, 'CREATE UNIQUE INDEX idx_karaoke_catalog_import_chunk ON karaoke_catalog_import_chunks (import, offset)')
+  const conforms = (fields) => fields.every((field) => field.present && field.type === field.expectedType && field.required === field.expectedRequired)
+  return {
+    healthy: conforms(importFields) && conforms(chunkFields) && relationTargetMatches && importsUniqueIndex && chunksUniqueIndex,
+    imports: { present: true, hasExpectedUniqueIndex: importsUniqueIndex, fields: importFields },
+    chunks: { present: true, hasExpectedUniqueIndex: chunksUniqueIndex, relationTargetMatches, fields: chunkFields },
+  }
+}
 function canonicalize(v) { if (Array.isArray(v)) return v.map(canonicalize); if (v && typeof v === 'object') { const out = {}; Object.keys(v).sort().forEach((key) => { out[key] = canonicalize(v[key]) }); return out } return v }
 function normalized(v, max) { return String(v || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, max) }
 function classifyCatalogItem(item) {
@@ -166,7 +203,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, CONTROLLER_STATE_TTL, joinAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, canonicalize, normalized, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -451,6 +488,15 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
 
 // Operator-only catalog moderation. These routes intentionally expose no YouTube API
 // credentials and return only reviewable metadata.
+routerAdd('GET', '/api/karaoke/tablet/catalog/checkpoint-health', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, catalogCheckpointHealth } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const health = catalogCheckpointHealth()
+  if (!health) return json(c, 503, 'catalog_checkpoint_unavailable', 'Catalog import checkpoint schema is unavailable')
+  return c.json(200, health)
+})
+
 routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { auth, tablet, json, query, records, str, id, num } = globalThis.__partyQueue

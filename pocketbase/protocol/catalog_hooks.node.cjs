@@ -32,6 +32,25 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /catalog\/\{id\}\/review/)
 })
 
+test('checkpoint health is tablet-only and exposes only fixed structural metadata', () => {
+  const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/catalog\/checkpoint-health',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /require\(__hooks \+ '\/party_queue\.pb\.js'\)/)
+  assert.match(endpoint[0], /const \{ auth, tablet, json, catalogCheckpointHealth \} = globalThis\.__partyQueue/)
+  assert.match(endpoint[0], /tablet\(auth\(c\)\)/)
+  assert.match(endpoint[0], /catalog_checkpoint_unavailable/)
+  assert.match(endpoint[0], /return c\.json\(200, health\)/)
+  assert.doesNotMatch(endpoint[0], /records\(|findRecords|findFirstRecord|collection\.indexes/)
+  assert.match(hook, /const CATALOG_CHECKPOINT_HEALTH_FIELDS = \{[\s\S]*\['batch_key', 'text', true\]/)
+  assert.match(hook, /\['import', 'relation', true\]/)
+  assert.match(hook, /relationTargetMatches/)
+  assert.match(hook, /hasExpectedUniqueIndex/)
+  assert.match(hook, /String\(rawRelation\.collectionId \|\| ''\) === String\(imports\.id \|\| ''\)/)
+  assert.match(hook, /const type = CATALOG_CHECKPOINT_HEALTH_TYPES\.includes\(String\(field\?\.type \|\| ''\)\) \? String\(field\.type\) : field \? 'other' : null/)
+  assert.match(hook, /imports: \{ present: true, hasExpectedUniqueIndex: importsUniqueIndex, fields: importFields \}/)
+  assert.match(hook, /chunks: \{ present: true, hasExpectedUniqueIndex: chunksUniqueIndex, relationTargetMatches, fields: chunkFields \}/)
+})
+
 test('catalog import uses immutable manifest/chunk metadata and derived classification', () => {
   assert.match(hook, /manifestFingerprint/)
   assert.match(hook, /chunk_source_mismatch/)
