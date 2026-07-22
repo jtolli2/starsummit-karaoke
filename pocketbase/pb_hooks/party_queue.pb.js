@@ -252,7 +252,10 @@ function fetchYoutubeCandidates(queryText, maxResults) {
   const byId = Object.create(null); (Array.isArray(details.items) ? details.items : []).forEach((item) => { byId[String(item.id)] = item })
   const items = ids.map((youtubeId, index) => {
     const item = byId[youtubeId]; const snippet = item?.snippet || {}; const status = item?.status || {}
-    return { youtubeId, videoTitle: snippet.title || youtubeId, description: snippet.description || '', channelTitle: snippet.channelTitle || '', channelId: snippet.channelId || '', classification: undefined, embeddable: status.embeddable === true, privacyStatus: status.privacyStatus || 'unknown', uploadStatus: status.uploadStatus || 'unknown', duration: item?.contentDetails?.duration || '', viewCount: item?.statistics?.viewCount || '', candidateRank: index + 1 }
+    // The canonical JSON boundary rejects undefined. Optional external values
+    // are represented explicitly; classification is derived only after the
+    // authoritative response has been persisted.
+    return { youtubeId, videoTitle: snippet.title || youtubeId, description: snippet.description || '', channelTitle: snippet.channelTitle || '', channelId: snippet.channelId || '', classification: null, embeddable: status.embeddable === true, privacyStatus: status.privacyStatus || 'unknown', uploadStatus: status.uploadStatus || 'unknown', duration: item?.contentDetails?.duration || '', viewCount: item?.statistics?.viewCount || '', candidateRank: index + 1 }
   }).filter((item) => item.embeddable && item.privacyStatus === 'public' && item.uploadStatus === 'processed'); return { items, cost: meter.cost }
 }
 function random(n) { return typeof $security !== 'undefined' && $security.randomString ? $security.randomString(n) : Math.random().toString(36).slice(2) + Date.now().toString(36) }

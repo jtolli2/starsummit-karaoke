@@ -173,6 +173,8 @@ test('live catalog discovery stays server-side and records quota/availability me
   assert.match(hook, /youtube\/v3\/videos\?part=snippet,contentDetails,status,statistics/)
   assert.match(hook, /quota_used/)
   assert.match(hook, /requestedMaxResults/)
+  assert.match(hook, /classification: null/)
+  assert.doesNotMatch(hook, /classification: undefined/)
   assert.match(hook, /durableChunkOutcome === 'resumed_commit'/)
   assert.match(hook, /durableChunkOutcome === 'exact_replay'/)
   assert.match(hook, /timeout: 15/)
