@@ -416,7 +416,7 @@ routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
 // recoverable from their stored hash, so this returns only the safe hint.
 routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, records, id, str } = globalThis.__partyQueue
+  const { auth, tablet, json, records, id, str, now } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const active = records('karaoke_parties', 'created_by = {:operator} && status = "active" && expires_at > {:now}', '-expires_at', 1, { operator: id(operator), now: now() })[0] || null

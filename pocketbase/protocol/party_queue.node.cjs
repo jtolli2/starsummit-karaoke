@@ -2,6 +2,18 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+
+const hook = fs.readFileSync(path.join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
+
+test('tablet active callback resolves now through the reload-safe global contract', () => {
+  const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/active',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /const \{ auth, tablet, json, records, id, str, now \} = globalThis\.__partyQueue/)
+  assert.match(endpoint[0], /expires_at > \{:\s*now\}/)
+  assert.match(endpoint[0], /now\(\)/)
+})
 
 // Reference implementation of the server's deterministic round-robin rule.
 function chooseNext(pending, servedAt = {}) {
