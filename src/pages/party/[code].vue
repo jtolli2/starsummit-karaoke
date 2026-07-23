@@ -13,6 +13,7 @@ const indexSongs = ref<LibrarySong[]>([])
 const query = ref('')
 const loading = ref(true)
 const searching = ref(false)
+const fallbackSuggested = ref(false)
 const message = ref('')
 const errorKind = ref('')
 const pendingSongs = ref(new Set<string>())
@@ -54,18 +55,14 @@ async function reconcile() {
 async function search() {
   if (!credential.value) return
   const normalized = normalizeSearchText(query.value)
-  if (!normalized) { songs.value = indexSongs.value.slice(0, 20); return }
+  if (!normalized) { songs.value = indexSongs.value.slice(0, 20); fallbackSuggested.value = false; return }
   searching.value = true
   try {
     const local = fuse?.search(normalized, { limit: 12 }).map((result) => result.item) || []
     songs.value = local
-    // Fuse scores above 0.42 are intentionally treated as weak and may spend fallback quota.
+    // Fuse scores above 0.42 are intentionally treated as weak; offer fallback explicitly.
     const weak = local.length === 0 || (fuse?.search(normalized, { limit: 1 })[0]?.score || 1) > 0.42
-    if (weak) {
-      const response = await fallbackSearchSongs(credential.value, query.value)
-      songs.value = [...local, ...(response.songs || []).map((song) => ({ ...normalizeCatalogSong(song), source: 'youtube' as const }))].filter((song, i, all) => all.findIndex((candidate) => candidate.youtubeId === song.youtubeId) === i).slice(0, 12)
-      if (response.cached || response.replay) message.value = 'Showing a cached YouTube search.'
-    }
+    fallbackSuggested.value = weak
   } catch (error) {
     if ((error as { code?: string }).code === 'guest_credential_expired' && await rejoinOnce()) return search()
     message.value = explain(error, 'Songs could not be loaded.')
@@ -74,8 +71,23 @@ async function search() {
   }
 }
 
+async function searchFallback() {
+  if (!credential.value || !fallbackSuggested.value || !normalizeSearchText(query.value)) return
+  searching.value = true
+  try {
+    const response = await fallbackSearchSongs(credential.value, query.value)
+    songs.value = [...songs.value, ...(response.songs || []).map((song) => ({ ...normalizeCatalogSong(song), source: 'youtube' as const }))].filter((song, i, all) => all.findIndex((candidate) => candidate.youtubeId === song.youtubeId) === i).slice(0, 12)
+    fallbackSuggested.value = false
+    if (response.cached || response.replay) message.value = 'Showing a cached YouTube search.'
+  } catch (error) {
+    if ((error as { code?: string }).code === 'guest_credential_expired' && await rejoinOnce()) return searchFallback()
+    message.value = explain(error, 'Songs could not be loaded.')
+  } finally { searching.value = false }
+}
+
 function scheduleSearch() {
   if (searchTimer) clearTimeout(searchTimer)
+  fallbackSuggested.value = false
   searchTimer = setTimeout(search, 300)
 }
 
@@ -134,7 +146,7 @@ onUnmounted(() => {
     <p v-if="loading" role="status">Joining party…</p>
     <section v-else>
       <p v-if="message" class="message" :data-error="Boolean(errorKind)" role="alert">{{ message }}</p>
-      <section aria-labelledby="search-title"><h2 id="search-title">Browse songs</h2><label for="song-search">Search title or artist</label><input id="song-search" v-model="query" role="combobox" aria-controls="song-suggestions" aria-autocomplete="list" type="search" autocomplete="off" placeholder="Try a song or artist" @input="scheduleSearch" /><p v-if="searching" role="status">Searching…</p><ul v-else-if="songs.length" id="song-suggestions" role="listbox"><li v-for="song in songs" :key="song.id" role="option"><span><strong>{{ song.title }}</strong><small>{{ song.artist }}<template v-if="song.source === 'youtube'"> · YouTube fallback</template></small></span><button type="button" :disabled="song.requestable === false || pendingSongs.has(song.youtubeId)" @click="add(song)">{{ song.requestable === false ? 'Unavailable' : pendingSongs.has(song.youtubeId) ? 'Adding…' : 'Queue' }}</button></li></ul><p v-else>No eligible songs found. Try a different spelling.</p></section>
+      <section aria-labelledby="search-title"><h2 id="search-title">Browse songs</h2><label for="song-search">Search title or artist</label><input id="song-search" v-model="query" role="combobox" aria-controls="song-suggestions" aria-autocomplete="list" type="search" autocomplete="off" placeholder="Try a song or artist" @input="scheduleSearch" @keyup.enter="searchFallback" /><button v-if="fallbackSuggested && !searching" type="button" @click="searchFallback">Search YouTube</button><p v-if="searching" role="status">Searching…</p><ul v-else-if="songs.length" id="song-suggestions" role="listbox"><li v-for="song in songs" :key="song.id" role="option"><span><strong>{{ song.title }}</strong><small>{{ song.artist }}<template v-if="song.source === 'youtube'"> · YouTube fallback</template></small></span><button type="button" :disabled="song.requestable === false || pendingSongs.has(song.youtubeId)" @click="add(song)">{{ song.requestable === false ? 'Unavailable' : pendingSongs.has(song.youtubeId) ? 'Adding…' : 'Queue' }}</button></li></ul><p v-else>No eligible songs found. Try a different spelling.</p></section>
       <section aria-labelledby="queue-title"><h2 id="queue-title">Queue</h2><ul v-if="queue.length"><li v-for="item in queue" :key="item.id"><span><strong>{{ item.song.title }}</strong><small>{{ item.song.artist }}</small></span><em>{{ item.status === 'playing' ? 'Playing now' : 'Queued' }}</em></li></ul><p v-else>The queue is empty. Be the first to request a song!</p></section>
     </section>
   </main>
