@@ -56,11 +56,12 @@ In Progress
   until ingress and Coolify recover. No retained record, resource, or volume was deleted or
   replaced.
 - Retained staging was consolidated into Coolify Compose application
-  `wyxit9qifbwgskjrwibxb330` at `c725ca547d0799de8369b03da23c610b7bb2e85f` (deployment
-  `xuoywsffh6b6142s6ae6sjv0`). Raw Compose preserves the exact external volume
+  `wyxit9qifbwgskjrwibxb330` at `0b0b4e4ed6f81db4b976aa44c3aca756de9db468` (deployment
+  `f125y0ioinr462d5xiwb15to`). Raw Compose preserves the exact external volume
   `xbqbuq8gvckl7r2hgi6yabws-pocketbase-data`; explicit HTTPS labels and the single existing
-  `coolify` proxy network route the frontend and controller domains. Ten consecutive checks passed
-  for controller health, frontend HTML, and the frontend same-origin API.
+  `coolify` proxy network route the frontend and controller domains, while an internal network and
+  stack-unique alias isolate frontend-to-PocketBase traffic. Ten consecutive checks passed for
+  controller health, frontend HTML, and the frontend same-origin API after the final deployment.
 - The pre-cutover PocketBase backup `pre_compose_cutover_20260723.zip` (2.9 MB) remains visible
   after cutover, proving the retained data volume is mounted. The former frontend and PocketBase
   applications are stopped with their domains cleared as non-deleted rollback references. A
