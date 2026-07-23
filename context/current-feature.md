@@ -55,3 +55,14 @@ In Progress
   staging host stopped completing TLS/SSH/API handshakes. Remote rehearsal evidence remains open
   until ingress and Coolify recover. No retained record, resource, or volume was deleted or
   replaced.
+- Retained staging was consolidated into Coolify Compose application
+  `wyxit9qifbwgskjrwibxb330` at `c725ca547d0799de8369b03da23c610b7bb2e85f` (deployment
+  `xuoywsffh6b6142s6ae6sjv0`). Raw Compose preserves the exact external volume
+  `xbqbuq8gvckl7r2hgi6yabws-pocketbase-data`; explicit HTTPS labels and the single existing
+  `coolify` proxy network route the frontend and controller domains. Ten consecutive checks passed
+  for controller health, frontend HTML, and the frontend same-origin API.
+- The pre-cutover PocketBase backup `pre_compose_cutover_20260723.zip` (2.9 MB) remains visible
+  after cutover, proving the retained data volume is mounted. The former frontend and PocketBase
+  applications are stopped with their domains cleared as non-deleted rollback references. A
+  parser-created unused Compose storage record/volume is also retained because cleanup was not
+  authorized.

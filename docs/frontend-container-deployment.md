@@ -18,7 +18,7 @@ can be replaced without touching the PocketBase volume.
 The approved staging topology is one Coolify Docker Compose application containing separate
 `frontend` and `pocketbase` runtime containers. It reuses the exact pre-provisioned external
 PocketBase volume and does not initialize, copy, replace, or delete retained data. The frontend
-reaches PocketBase only through Compose DNS at `pocketbase:8090`.
+reaches PocketBase only through the stack-private `starsummit-pocketbase-internal:8090` alias.
 
 Before attaching the retained volume:
 
@@ -45,7 +45,10 @@ scheme. The frontend is not an independent public ingress and must not bypass Co
 controls. It sends the backend the trusted Coolify ingress peer as `X-Forwarded-For` rather than
 appending an unverified client-supplied chain; PocketBase remains private behind that boundary.
 
-For retained staging, Coolify owns both hostnames and TLS. The Compose stack must not define a
-custom network; Coolify's isolated stack network provides stable service-name resolution and
-connects its ingress proxy. No step may alter retained records, controller enrollment, tablet
-pairing, or the external volume contents except for an explicit backup.
+For retained staging, Coolify owns both hostnames and TLS. Raw Compose mode is required so Coolify
+does not rewrite the approved external volume. Because Raw Compose also omits the generated proxy
+attachment, both services join the existing external `coolify` network for their approved ingress
+routes and their Traefik labels explicitly select that network. A separate internal Compose network
+provides stack-isolated frontend-to-PocketBase DNS; the unique alias prevents collisions with
+generic service names on the shared proxy network. No step may alter retained records, controller
+enrollment, tablet pairing, or the external volume contents except for an explicit backup.

@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
     environment:
-      POCKETBASE_HOST: pocketbase:8090
+      POCKETBASE_HOST: starsummit-pocketbase-internal:8090
     depends_on:
       pocketbase:
         condition: service_healthy
@@ -19,7 +19,8 @@ services:
       - 'traefik.http.routers.starsummit-karaoke-frontend.tls.certresolver=letsencrypt'
       - 'traefik.http.services.starsummit-karaoke-frontend.loadbalancer.server.port=8080'
     networks:
-      - coolify
+      coolify:
+      karaoke_private:
   pocketbase:
     build:
       context: pocketbase
@@ -40,7 +41,10 @@ services:
       - 'traefik.http.routers.starsummit-karaoke-pocketbase.tls.certresolver=letsencrypt'
       - 'traefik.http.services.starsummit-karaoke-pocketbase.loadbalancer.server.port=8090'
     networks:
-      - coolify
+      coolify:
+      karaoke_private:
+        aliases:
+          - starsummit-pocketbase-internal
     healthcheck:
       test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8090/api/health']
       interval: 30s
@@ -53,3 +57,5 @@ volumes:
 networks:
   coolify:
     external: true
+  karaoke_private:
+    internal: true
