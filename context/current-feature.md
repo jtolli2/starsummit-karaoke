@@ -70,3 +70,8 @@ In Progress
   rendition is eligible while the remaining playlist candidates stay private pending one-at-a-time
   review. The next selected candidate must be paged into the constrained tablet UI before any
   correction or approval.
+- Further MusicBrainz-backed tablet review approved Passenger / Let Her Go, Peter, Paul & Mary /
+  Don't Think Twice It's All Right, Brooks & Dunn / Ain't Nothing 'bout You, and Anne Murray /
+  I Just Fall in Love Again. Keith Whitley / Ten Feet Away is corrected but not approved because
+  the constrained review page moved it off-screen; direct database mutation was not used. The
+  existing pager code needs deployed-runtime diagnosis before that remaining approval can proceed.
