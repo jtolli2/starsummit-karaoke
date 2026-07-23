@@ -10,6 +10,13 @@ services:
         condition: service_healthy
     expose:
       - '8080'
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.starsummit-karaoke-frontend.entrypoints=https'
+      - 'traefik.http.routers.starsummit-karaoke-frontend.rule=Host(`karaoke-test.app.starsummit.net`)'
+      - 'traefik.http.routers.starsummit-karaoke-frontend.tls=true'
+      - 'traefik.http.routers.starsummit-karaoke-frontend.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.starsummit-karaoke-frontend.loadbalancer.server.port=8080'
   pocketbase:
     build:
       context: pocketbase
@@ -21,6 +28,13 @@ services:
       - pocketbase_data:/pb/pb_data
     expose:
       - '8090'
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.starsummit-karaoke-pocketbase.entrypoints=https'
+      - 'traefik.http.routers.starsummit-karaoke-pocketbase.rule=Host(`controller-test.app.starsummit.net`)'
+      - 'traefik.http.routers.starsummit-karaoke-pocketbase.tls=true'
+      - 'traefik.http.routers.starsummit-karaoke-pocketbase.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.starsummit-karaoke-pocketbase.loadbalancer.server.port=8090'
     healthcheck:
       test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8090/api/health']
       interval: 30s
