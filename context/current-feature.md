@@ -75,3 +75,7 @@ In Progress
   I Just Fall in Love Again. Keith Whitley / Ten Feet Away is corrected but not approved because
   the constrained review page moved it off-screen; direct database mutation was not used. The
   existing pager code needs deployed-runtime diagnosis before that remaining approval can proceed.
+- The tablet pager was confirmed usable: Keith Whitley / Ten Feet Away was approved through page 2.
+  Lionel Richie / My Love has a verified operator correction and is visibly awaiting approval on
+  page 1; browser targeting became intermittent for its nested approval control, so no substitute
+  direct-record action was attempted.
