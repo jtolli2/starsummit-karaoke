@@ -51,6 +51,8 @@ test('fallback search normalizes, bounds, classifies, and caches durable candida
   assert.match(hook, /fallback_candidate_unavailable: 422, rate_limited: 429/)
   assert.match(fallbackReservationMigration, /reserved_units/)
   assert.match(fallbackReservationMigration, /quota_day_key/)
+  assert.ok(hook.includes("let song = null; try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}"))
+  assert.ok(hook.includes("if (!song) { song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))"))
 })
 
 test('fallback query normalization rejects empty and oversized token input', () => {
