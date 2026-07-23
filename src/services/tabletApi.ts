@@ -93,6 +93,22 @@ export function bindAvailableController(token: string, partyId: string) {
   }, token)
 }
 
+export function issuePlaybackCommand(
+  token: string,
+  partyId: string,
+  action: 'play' | 'pause',
+  idempotencyKey: string,
+) {
+  return request<{ id: string; action: 'play' | 'pause'; sequence: number; status: string; idempotent?: boolean }>(
+    '/api/karaoke/tablet/controller/playback',
+    {
+      method: 'POST',
+      body: JSON.stringify({ partyId, action, idempotencyKey }),
+    },
+    token,
+  )
+}
+
 export function loadActiveParty(token: string) {
   return request<{ party: TabletStatus['party'] | null }>('/api/karaoke/tablet/active', {}, token)
 }

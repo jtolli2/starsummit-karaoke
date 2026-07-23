@@ -698,6 +698,82 @@ routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
   return c.json(200, { party: { id: id(active), codeHint: str(active, 'code_hint'), expiresAt: str(active, 'expires_at'), status: str(active, 'status') } })
 })
 
+// Party-scoped transport controls. The browser never receives a controller
+// credential or chooses a device; it may only control the current video owned
+// by its active party through the bound, fresh controller session.
+routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, body, str, id, set, setJson, num, future, activeParty, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
+  const operator = auth(c)
+  if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const input = body(c)
+  const partyId = String(input.partyId || '')
+  const action = String(input.action || '')
+  const idempotencyKey = String(input.idempotencyKey || '')
+  if (!partyId || !['play', 'pause'].includes(action)) return json(c, 422, 'invalid_playback_action', 'Party and play or pause action are required')
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return json(c, 422, 'invalid_idempotency_key', 'Playback idempotency key is invalid')
+  try {
+    let result
+    $app.runInTransaction((tx) => {
+      const party = tx.findRecordById('karaoke_parties', partyId)
+      if (!party || str(party, 'created_by') !== id(operator)) throw new Error('party_not_found')
+      if (!activeParty(party)) throw new Error('party_expired')
+      let playing = null
+      try { playing = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && status = "playing"', { party: partyId }) } catch (_) {}
+      if (!playing) throw new Error('nothing_playing')
+
+      const deviceId = str(party, 'controller_device')
+      let device = null
+      try { device = deviceId ? tx.findRecordById('controller_devices', deviceId) : null } catch (_) {}
+      const revoked = device && (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))
+      const generation = device ? num(device, 'session_generation') : 0
+      let session = null
+      let controllerState = null
+      if (device && !revoked && generation > 0) {
+        try {
+          const sessions = tx.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: deviceId, generation })
+          session = sessions.find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
+          controllerState = tx.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: deviceId })
+        } catch (_) {}
+      }
+      const stateFresh = controllerState && str(controllerState, 'observed_at') && new Date(str(controllerState, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
+      if (!session || !controllerState || !stateFresh || num(controllerState, 'session_generation') !== generation || str(controllerState, 'connection_state') !== 'connected') throw new Error('controller_unavailable')
+      const song = tx.findRecordById('karaoke_songs', str(playing, 'song'))
+      if (!song || str(controllerState, 'video_id') !== str(song, 'youtube_id')) throw new Error('controller_state_mismatch')
+
+      let duplicate = null
+      try { duplicate = tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && idempotency_key = {:key}', { device: deviceId, key: idempotencyKey }) } catch (_) {}
+      if (duplicate) {
+        if (str(duplicate, 'action') !== action) throw new Error('idempotency_conflict')
+        result = { id: id(duplicate), action, sequence: num(duplicate, 'sequence'), status: str(duplicate, 'status'), idempotent: true }
+        return
+      }
+
+      const sequence = num(device, 'command_sequence') + 1
+      set(device, 'command_sequence', sequence)
+      tx.save(device)
+      const command = new Record(tx.findCollectionByNameOrId('controller_commands'))
+      set(command, 'device', deviceId)
+      set(command, 'session_generation', generation)
+      set(command, 'sequence', sequence)
+      set(command, 'idempotency_key', idempotencyKey)
+      set(command, 'action', action)
+      setJson(command, 'payload', {})
+      set(command, 'expires_at', future(30000))
+      set(command, 'status', 'pending')
+      set(command, 'issued_by', id(operator))
+      tx.save(command)
+      result = { id: id(command), action, sequence, status: 'pending', idempotent: false }
+    })
+    return c.json(result.idempotent ? 200 : 201, result)
+  } catch (error) {
+    const known = ['party_not_found', 'party_expired', 'nothing_playing', 'controller_unavailable', 'controller_state_mismatch', 'idempotency_conflict']
+    const reason = known.includes(error.message) ? error.message : 'playback_command_failed'
+    const status = reason === 'party_not_found' ? 404 : reason === 'party_expired' ? 410 : 409
+    return json(c, status, reason, 'Playback command rejected')
+  }
+})
+
 routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { auth, tablet, json, body, str, id, set, now, num, future, activeParty, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
@@ -750,7 +826,17 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
         // video id for re-request without making every terminal row collide.
         set(queue, 'active_song_key', `terminal:${id(queue)}`)
       }
-      if (input.to === 'failed') set(queue, 'failure_reason', String(input.failureReason || 'playback_failed').slice(0, 160))
+      if (input.to === 'failed') {
+        let failureField = null
+        try { failureField = tx.findCollectionByNameOrId('karaoke_queue').fields.getByName('failure_reason') } catch (_) {}
+        let failureType = ''
+        try { failureType = failureField && (typeof failureField.type === 'function' ? String(failureField.type()) : String(failureField.type || '')) } catch (_) {}
+        if (failureType === 'text') {
+          const configuredMax = Number(failureField.max || 160)
+          const reasonMax = Math.min(160, configuredMax > 0 ? configuredMax : 160)
+          set(queue, 'failure_reason', String(input.failureReason || 'playback_failed').slice(0, reasonMax))
+        }
+      }
       tx.save(queue)
       if (input.to === 'playing') {
         const guest = tx.findRecordById('karaoke_guest_identities', str(queue, 'requester')); if (guest) { set(guest, 'last_served_at', now()); tx.save(guest) }

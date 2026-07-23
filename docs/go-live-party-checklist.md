@@ -11,6 +11,9 @@
   credentials.
 - Confirm the server-side YouTube quota is available through the operator diagnostics without
   recording credential values or identifiers.
+- Confirm the primary YouTube credential is configured without displaying it. The backup credential
+  is manual development fallback only in the MVP; do not expect automatic failover or retry an
+  ambiguous request with another key.
 
 ## Start the party
 
@@ -29,6 +32,9 @@
   live, and unreviewed discoveries for later operator review rather than approving them mid-party.
 - If a guest or tablet reloads, rejoin or restore the constrained session and wait for the current
   authoritative HTTPS state; do not infer queue state from an SSE payload.
+- If the companion process restarts, wait for session establishment, accepted realtime
+  subscription, a zero-or-bounded authoritative command refetch, and unchanged current video before
+  issuing another operator transition.
 
 ## After observations
 

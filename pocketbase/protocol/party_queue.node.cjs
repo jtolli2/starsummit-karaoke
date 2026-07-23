@@ -6,6 +6,10 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const hook = fs.readFileSync(path.join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
+const failureReasonMigration = fs.readFileSync(
+  path.join(__dirname, '..', 'pb_migrations', '1784514230_repair_queue_failure_reason.js'),
+  'utf8',
+)
 
 test('tablet active callback resolves now through the reload-safe global contract', () => {
   const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/active',[\s\S]*?\n}\)/)
@@ -31,6 +35,20 @@ test('tablet can bind an unassigned party only to its single available controlle
   assert.match(endpoint[0], /last_seen_at > \{:\s*cutoff\}/)
   assert.match(endpoint[0], /cutoff: filterDate\(Date\.now\(\) - CONTROLLER_STATE_TTL\)/)
   assert.match(endpoint[0], /set\(party, 'controller_device', deviceId\)/)
+})
+
+test('tablet playback controls are party-scoped, current, monotonic, and idempotent', () => {
+  const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/controller\/playback',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /tablet\(operator\)/)
+  assert.match(endpoint[0], /created_by'\) !== id\(operator\)/)
+  assert.match(endpoint[0], /status = "playing"/)
+  assert.match(endpoint[0], /CONTROLLER_STATE_TTL/)
+  assert.match(endpoint[0], /video_id'\) !== str\(song, 'youtube_id'\)/)
+  assert.match(endpoint[0], /idempotency_key = \{:key\}/)
+  assert.match(endpoint[0], /command_sequence'\) \+ 1/)
+  assert.match(endpoint[0], /set\(command, 'action', action\)/)
+  assert.match(endpoint[0], /setJson\(command, 'payload', \{\}\)/)
 })
 
 test('controller liveness filter uses the PocketBase-normalized datetime representation', () => {
@@ -76,12 +94,21 @@ test('terminal queue rows release the video id without colliding with each other
   const transition = hook.match(/routerAdd\('POST', '\/api\/karaoke\/queue\/transition',[\s\S]*?\n}\)/)
   assert.ok(transition)
   assert.match(transition[0], /set\(queue, 'active_song_key', `terminal:\$\{id\(queue\)\}`\)/)
+  assert.match(transition[0], /failureType === 'text'/)
   assert.match(transition[0], /set\(queue, 'failure_reason'/)
   assert.match(transition[0], /reason = known\.includes\(error\.message\) \? error\.message : 'transition_failed'/)
 
   const terminalKey = (queueId) => `terminal:${queueId}`
   assert.notEqual(terminalKey('queue-a'), terminalKey('queue-b'))
   assert.notEqual(terminalKey('queue-a'), 'nMDXPAM8RwE')
+})
+
+test('failure reason compatibility cannot block authoritative terminal state', () => {
+  assert.match(failureReasonMigration, /typeof failureReason\.type === 'function'/)
+  assert.match(failureReasonMigration, /if \(fieldType !== 'text'\) return/)
+  assert.match(failureReasonMigration, /failureReason\.max = 160/)
+  assert.match(failureReasonMigration, /failureReason\.required = false/)
+  assert.match(hook, /if \(failureType === 'text'\)/)
 })
 
 // Reference for the transition guard: queue state must not advance until the

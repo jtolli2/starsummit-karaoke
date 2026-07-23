@@ -80,6 +80,31 @@ describe('tablet operator page', () => {
     expect(wrapper.text()).toContain('dQw4w9WgXcQ')
   })
 
+  it('issues party-scoped play and pause commands only for the matching active item', async () => {
+    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
+    const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(activeStatus({ queue: playingQueue })), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'command-1', action: 'play', sequence: 3, status: 'pending' }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(activeStatus({ queue: playingQueue, controller: { connected: true, connectionState: 'connected', state: { playerState: 'playing', videoId: 'dQw4w9WgXcQ' } } })), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+    await settle()
+    const play = wrapper.findAll('button').find((button) => button.text() === 'Play')
+    const pause = wrapper.findAll('button').find((button) => button.text() === 'Pause')
+    expect(play?.attributes('disabled')).toBeUndefined()
+    expect(pause?.attributes('disabled')).toBeDefined()
+    await play?.trigger('click')
+    await settle()
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/karaoke/tablet/controller/playback')
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toMatchObject({
+      partyId: 'party-1',
+      action: 'play',
+    })
+    expect(wrapper.text()).toContain('Playback resumed.')
+    expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeUndefined()
+  })
+
   it('renders expired party recovery instead of active queue controls', async () => {
     sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({ party: { id: 'party-1', codeHint: 'CD34', expiresAt: new Date(Date.now() - 1000).toISOString(), status: 'expired' } })), { status: 200 })))

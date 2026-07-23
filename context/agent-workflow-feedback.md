@@ -4,6 +4,18 @@
 
 ## Entries
 
+### 2026-07-23 — Never clear a PocketBase composite unique key to blank
+
+- **Feedback:** The first queue completion succeeded, but every later completion or failure returned
+  a generic 409. PocketBase validated the composite unique `(party, active_song_key)` constraint
+  before SQLite NULL semantics applied, so the first terminal blank value blocked all later
+  terminal rows in the party.
+- **Improvement:** Release active video identity with a per-record non-video terminal sentinel
+  (`terminal:<queue-id>`) rather than `null` or an empty string. Validate at least two terminal
+  transitions in the same party and re-request the released video ID.
+- **Follow-up:** Keep unexpected transaction details server-side and return only normalized error
+  codes to constrained clients.
+
 ### 2026-07-22 — Persist Coolify CLI and YouTube backup-key operating rules
 
 - **Feedback:** The preferred Coolify CLI workflow and the newly configured backup YouTube API key

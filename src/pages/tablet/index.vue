@@ -6,6 +6,7 @@ import {
   bindAvailableController,
   correctCatalogIdentity,
   createParty,
+  issuePlaybackCommand,
   loadActiveParty,
   loadCatalog,
   loadCatalogReport,
@@ -65,6 +66,13 @@ const controllerReady = computed(() =>
     status.value.controller.state,
   ),
 )
+const playerState = computed(() => status.value?.controller?.state?.playerState || 'unknown')
+const canPlay = computed(
+  () => controllerReady.value && Boolean(playing.value) && playerState.value === 'paused',
+)
+const canPause = computed(
+  () => controllerReady.value && Boolean(playing.value) && playerState.value === 'playing',
+)
 
 function storedSession(): StoredSession | null {
   try {
@@ -110,6 +118,10 @@ function explain(value: unknown, fallback: string) {
         party_already_playing: 'A song is already playing.',
         controller_ambiguous: 'More than one current controller is available.',
         controller_unavailable: 'No current controller is available.',
+        controller_state_mismatch:
+          'Controller playback does not match the active queue. State was refreshed.',
+        nothing_playing: 'No active queue item is available to control.',
+        idempotency_conflict: 'That playback action conflicts with an earlier request.',
       } as Record<string, string>
     )[code || ''] || fallback
   )
@@ -350,6 +362,37 @@ async function bindController() {
   }
 }
 
+function playbackIdempotencyKey(action: 'play' | 'pause') {
+  const unique =
+    typeof crypto?.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `tablet-${action}-${unique}`.slice(0, 128)
+}
+
+async function controlPlayback(action: 'play' | 'pause') {
+  if (!token.value || !partyId.value || busy.value || partyExpired.value) return
+  if ((action === 'play' && !canPlay.value) || (action === 'pause' && !canPause.value)) return
+  busy.value = true
+  try {
+    await issuePlaybackCommand(
+      token.value,
+      partyId.value,
+      action,
+      playbackIdempotencyKey(action),
+    )
+    await refresh()
+    message.value = action === 'play' ? 'Playback resumed.' : 'Playback paused.'
+    error.value = false
+  } catch (cause) {
+    await refresh()
+    message.value = explain(cause, 'Playback action was uncertain; state was refreshed.')
+    error.value = true
+  } finally {
+    busy.value = false
+  }
+}
+
 async function finish(item: TabletQueueItem, to: 'completed' | 'failed') {
   if (!token.value || busy.value || partyExpired.value) return
   busy.value = true
@@ -474,6 +517,14 @@ onUnmounted(() => {
         </p>
         <p v-if="status.controller?.state?.videoId">Video {{ status.controller.state.videoId }}</p>
         <p v-if="!controllerReady">Connect the native controller before starting a song.</p>
+        <div class="playback-controls" aria-label="Playback controls">
+          <button type="button" @click="controlPlayback('play')" :disabled="busy || !canPlay">
+            Play
+          </button>
+          <button type="button" @click="controlPlayback('pause')" :disabled="busy || !canPause">
+            Pause
+          </button>
+        </div>
         <button
           v-if="!status.controller?.device"
           type="button"
@@ -731,11 +782,15 @@ button.quiet {
 .toolbar,
 .queue-head,
 .party-card,
-.actions {
+.actions,
+.playback-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+.playback-controls {
+  justify-content: flex-start;
 }
 .party-card {
   align-items: flex-start;

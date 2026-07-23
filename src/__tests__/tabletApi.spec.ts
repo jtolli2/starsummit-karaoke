@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authenticateTablet, correctCatalogIdentity, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, replaceCatalogSong, reviewCatalogSong, transitionQueue } from '@/services/tabletApi'
+import { authenticateTablet, correctCatalogIdentity, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, replaceCatalogSong, reviewCatalogSong, transitionQueue } from '@/services/tabletApi'
 
 describe('tablet API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -18,11 +18,18 @@ describe('tablet API', () => {
     vi.stubGlobal('fetch', fetchMock)
     await loadTabletStatus('tablet-token', 'party-1')
     await transitionQueue('tablet-token', 'queue-1', 'playing', 'completed')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await issuePlaybackCommand('tablet-token', 'party-1', 'pause', 'tablet-pause-request-1')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     const statusHeaders = new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers)
     expect(statusHeaders.get('authorization')).toBe('Bearer tablet-token')
     const transitionBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
     expect(transitionBody).toEqual({ queueId: 'queue-1', from: 'playing', to: 'completed' })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/karaoke/tablet/controller/playback')
+    expect(JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body))).toEqual({
+      partyId: 'party-1',
+      action: 'pause',
+      idempotencyKey: 'tablet-pause-request-1',
+    })
   })
 
   it('exposes backend error codes for recovery messaging', async () => {

@@ -258,6 +258,25 @@
   (`xzok7k4as8d5lf3bi3x86wrx`) without replacing volume `ggkfvh2tpdprcocn1sycu8zf`.
 # 2026-07-22 — Fuzzy Local Search with Quota-Safe YouTube Fallback
 
+### 2026-07-23 — End-to-End Party Dress Rehearsal and Hardening
+
+- Consolidated retained staging into one Coolify Compose application while preserving the exact
+  external PocketBase volume, separate frontend/backend containers, explicit ingress hosts, and an
+  isolated private backend alias. Former applications, the pre-cutover backup, and the parser-created
+  unused storage artifact remain retained because cleanup was not authorized.
+- Ran a fresh four-guest party through local fuzzy search, one explicit bounded YouTube fallback and
+  cached replay, duplicate/rate/idempotency checks, deterministic requester rotation, SSE wake plus
+  authoritative refetch, tablet refresh, Compose restarts, and a controlled native companion process
+  restart. Real Lounge commands acknowledged and converged on sanitized tablet now-playing state.
+- Fixed PocketBase-normalized controller liveness filtering and a composite-unique terminal queue
+  defect. Terminal rows now receive distinct `terminal:<queue-id>` keys, releasing video IDs for
+  re-request while preserving atomic completion/failure and bounded failure reasons. Unexpected
+  transaction details are normalized before reaching clients.
+- Verified multiple completions, one failed song with a clear reason, completed-song re-request,
+  command replay safety after restart, guest identity recovery, mobile/Fire layouts, and an empty
+  final active queue. Added the repeatable go-live checklist and completed independent review.
+  Automated backup-key failover remains a separately scoped post-MVP enhancement.
+
 - Added a sanitized, deterministic approved/eligible catalog index and a Fuse.js guest search with
   local debounce, typo/alias/accent normalization, weak-match suggestions, five-minute cache refresh,
   and offline safe-index fallback.

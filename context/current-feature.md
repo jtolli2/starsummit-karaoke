@@ -17,6 +17,9 @@ In Progress
   deploy exact frontend/backend SHAs and record retained validation artifacts.
 - Deliver `docs/go-live-party-checklist.md`, complete feature records, independent review, signed
   commit/push, and a concise evidence report.
+- Add touch-focused Play and Pause controls to the constrained tablet operator, with party-scoped,
+  fresh-controller, active-video, monotonic-command, and idempotency enforcement; validate both
+  actions through the retained native companion and SmartTube.
 
 ## Constraints and Notes
 
@@ -67,3 +70,49 @@ In Progress
   applications are stopped with their domains cleared as non-deleted rollback references. A
   parser-created unused Compose storage record/volume is also retained because cleanup was not
   authorized.
+- Fresh rehearsal party `5VTUX3WJ` was created through `/tablet` for 12 hours and retained with
+  four temporary guest identities. Three independent initial guests proved exact, typo, and
+  artist/title local search; active duplicate rejection; one explicit high-confidence YouTube
+  fallback; cached exact replay; fair requester rotation; and guest SSE wake followed by
+  authoritative HTTPS refetch. One additional guest proved reload recovery without creating a
+  second identity, completed-song re-request, and the 30-second request rate limit.
+- Live rehearsal exposed two retained-runtime defects. Commit `a5161d5` canonicalizes controller
+  cutoff filter dates for PocketBase 0.39.7, allowing the party to bind the single fresh controller.
+  Commit `b45fa39` replaces blank terminal `active_song_key` values with unique
+  `terminal:<queue-id>` sentinels, restoring both completed and failed transitions after the first
+  terminal row while releasing the YouTube ID for re-request. It also restores the bounded
+  `failure_reason` write and normalizes unexpected transition errors to `transition_failed`.
+- Retained live transitions then succeeded in order: Never Gonna Give You Up completed; Bridge Over
+  Troubled Water started in fair rotation and failed once with reason `Playback failed`; the
+  high-confidence fallback started and completed; and Never Gonna Give You Up was requested and
+  started again. The fallback command and re-request command each followed realtime wake,
+  authoritative command refetch count 1, Lounge `setPlaylist` HTTP 2xx, terminal acknowledgement,
+  and refetch count 0. Authoritative video IDs converged to `PAwS5zmPrHA` and then
+  `nMDXPAM8RwE`.
+- A controlled native companion process restart preserved enrollment and Lounge pairing. It
+  re-established on attempt 1, accepted the realtime subscription, found zero pending commands,
+  retained `PAwS5zmPrHA` at 74.3 seconds, and caused no duplicate playback or queue transition.
+  Repeated Compose deployments likewise preserved the party, four guest identities, catalog,
+  queue, controller enrollment, and external volume.
+- Responsive inspection passed at a 390-by-844 guest viewport and a Fire-sized tablet viewport:
+  no horizontal overflow, readable QR, clear playing/queued/error states, and touch-sized controls.
+  The intended Vue operator surface does not expose play/pause/seek, so no unrelated controls were
+  added or invoked.
+- Latest product deployment `sehubojx93gmhadn0rj0xdrs` finished at
+  `b45fa39baf3f09bcc141e342ba5643ad88138093`; controller and same-origin health returned 200.
+  The Coolify CLI handled inspection, logs, and deployment verification. Direct API calls were used
+  only to pin and enqueue the deployment because the installed CLI has no deploy/create command.
+  No credential value was printed or persisted.
+- Final independent re-review found the terminal-sentinel, authorization, transaction, fair
+  rotation, and normalized-error design ready after one repair: `failure_reason` is now written only
+  through a verified retained text-field contract, and its forward migration changes only safe text
+  options. The remaining test caveat is that the local PocketBase 0.39.7 binary is unavailable, so
+  nine pinned-runtime cases skip; real retained staging supplied the multi-terminal, re-request,
+  process-restart, deployment-restart, and command/acknowledgement evidence instead.
+- Final local validation passed 24 Vue tests, production type-check/build, 64 backend/protocol
+  contracts with nine explicitly skipped pinned-runtime cases, hook/migration syntax, Compose
+  interpolation with non-secret placeholders, diff checks, and scoped secret scans. Android source
+  was not changed; live process restart evidence replaced an unnecessary APK rebuild.
+- The final queue was left empty after completing the re-requested Rick Astley item. Party, guest,
+  queue, fallback/search/cache, quota, catalog, controller, command, and audit records remain
+  retained; no record, application, volume, backup, enrollment, or pairing was deleted or replaced.
