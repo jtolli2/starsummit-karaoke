@@ -287,3 +287,18 @@
   unreviewed/ineligible by design. Fuse behavior is covered locally; no catalog record was approved
   to manufacture live evidence. The newly queued discovery retains missing canonical identity,
   remains unreviewed/ineligible, and stores channel/uploader provenance separately.
+
+## 2026-07-23 — Approved-local fuzzy validation follow-up
+
+- The user reviewed and approved two existing songs only: Bridge Over Troubled Water / Simon &
+  Garfunkel and Never Gonna Give You Up / Rick Astley. No other catalog, queue, party, controller,
+  or retained-volume record was changed by this follow-up.
+- Live guest validation on retained isolated party `8BDNGB7N` showed `nevver gona give you up` as
+  the approved Rick Astley result without a Search YouTube affordance. The local Fuse score is
+  0.511. This corrected a score-zero defaulting issue and raised the documented weak-match cutoff
+  from 0.42 to 0.55 so ordinary multi-character typos stay local; empty and genuinely weak results
+  still require an explicit fallback action.
+- Focused Vue/API tests (13), production build, whitespace check, and independent review passed.
+  Pushed `3f52025` (score-zero handling) and `2990ef0` (strong typo threshold), then deployed
+  frontend `2990ef05b3f3aaa10f87d6dfc8e0c4d88c93e9dc` successfully through Coolify. No YouTube
+  fallback was invoked and no additional quota was spent.

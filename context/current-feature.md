@@ -40,7 +40,7 @@ Complete — deployed to retained staging and live-validated
 
 ## Completion Notes
 
-- The guest receives a deterministic, safe catalog index and uses Fuse.js locally (0.42 weak-match
+- The guest receives a deterministic, safe catalog index and uses Fuse.js locally (0.55 weak-match
   threshold, five-minute cached-index TTL with offline fallback); live fallback is never automatic.
 - Four additive private migrations add cache, idempotency, claim/access/rate, expiry, and reservation
   state. Claims are policy-versioned, coalesced, bounded to five candidates, conservatively settle
@@ -51,14 +51,16 @@ Complete — deployed to retained staging and live-validated
 - Local verification passed: 11 focused Vue tests, 27 backend contracts, production build, hook and
   migration syntax, whitespace check, and independent security/concurrency review. The final pinned
   staging path was additionally exercised through the retained PocketBase application.
-- Product commits through `de117ca` were pushed to `main`; frontend SHA `4fcd803` and backend SHA
+- Product commits through `de117ca` were pushed to `main`; frontend SHA `2990ef0` and backend SHA
   `de117ca` are healthy on retained staging without replacing volume `ggkfvh2tpdprcocn1sycu8zf`.
   Isolated retained party `8BDNGB7N` proved an explicit cached replay for
   `bridge over troubled water karaoke`, at most four sanitized candidates, a party-scoped queue
   request, rate limit, and active duplicate rejection. The one earlier pre-repair explicit lookup
   consumed the modeled 101 units; all later replays and request retries used the durable cache.
-- The retained catalog has zero globally eligible songs (all 18 are intentionally still unreviewed),
-  so a live approved-local fuzzy hit could not be demonstrated without violating the no-approval
-  validation constraint. Focused Fuse tests cover typo, alias, accent, punctuation, reversal,
-  ranking, and weak-match behavior. No catalog record was approved; the queued fallback discovery is
-  still unreviewed and globally ineligible.
+- The user subsequently approved exactly two existing catalog records: Bridge Over Troubled Water /
+  Simon & Garfunkel and Never Gonna Give You Up / Rick Astley. The remaining retained review backlog
+  was not changed. On the isolated party `8BDNGB7N`, live query `nevver gona give you up` resolved
+  locally to the approved Rick Astley song with no fallback affordance or YouTube request. Its Fuse
+  score is 0.511, below the documented 0.55 weak-match cutoff. Focused Fuse tests cover typo, alias,
+  accent, punctuation, reversal, ranking, and weak-match behavior; queued fallback discoveries remain
+  unreviewed and globally ineligible.
