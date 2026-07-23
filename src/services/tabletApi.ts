@@ -62,6 +62,10 @@ async function request<T>(url: string, init: RequestInit = {}, token?: string): 
   const response = await fetch(url, { ...init, headers })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
+    const safeCode = String(payload.error || 'unknown')
+      .replace(/[^a-z0-9_:-]/gi, '')
+      .slice(0, 96)
+    console.warn(`Tablet API rejected ${url} (${response.status}, ${safeCode || 'unknown'})`)
     const error = new Error(payload.message || 'Request failed') as Error & { code?: string; status?: number }
     error.code = payload.error
     error.status = response.status
