@@ -723,6 +723,8 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       if (!playing) throw new Error('nothing_playing')
 
       const deviceId = str(party, 'controller_device')
+      const expectedKeyPrefix = `tablet:${partyId}:${id(playing)}:${action}:`
+      if (!idempotencyKey.startsWith(expectedKeyPrefix)) throw new Error('invalid_idempotency_scope')
       let device = null
       try { device = deviceId ? tx.findRecordById('controller_devices', deviceId) : null } catch (_) {}
       const revoked = device && (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))
@@ -743,7 +745,7 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       let duplicate = null
       try { duplicate = deviceId ? tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && idempotency_key = {:key}', { device: deviceId, key: idempotencyKey }) : null } catch (_) {}
       if (duplicate) {
-        if (str(duplicate, 'action') !== action) throw new Error('idempotency_conflict')
+        if (str(duplicate, 'action') !== action || str(duplicate, 'issued_by') !== id(operator)) throw new Error('idempotency_conflict')
         result = { id: id(duplicate), action, sequence: num(duplicate, 'sequence'), status: str(duplicate, 'status'), idempotent: true }
         return
       }
@@ -754,6 +756,12 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       if (!song || str(controllerState, 'video_id') !== str(song, 'youtube_id')) throw new Error('controller_state_mismatch')
       const playerState = str(controllerState, 'player_state')
       if ((action === 'play' && playerState !== 'paused') || (action === 'pause' && playerState !== 'playing')) throw new Error('playback_state_conflict')
+      let equivalentPending = null
+      try { equivalentPending = tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && issued_by = {:operator} && action = {:action} && status = "pending"', { device: deviceId, operator: id(operator), action }) } catch (_) {}
+      if (equivalentPending) {
+        result = { id: id(equivalentPending), action, sequence: num(equivalentPending, 'sequence'), status: str(equivalentPending, 'status'), idempotent: true }
+        return
+      }
 
       const sequence = num(device, 'command_sequence') + 1
       set(device, 'command_sequence', sequence)
@@ -773,7 +781,7 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
     })
     return c.json(result.idempotent ? 200 : 201, result)
   } catch (error) {
-    const known = ['party_not_found', 'party_expired', 'nothing_playing', 'controller_unavailable', 'controller_state_mismatch', 'playback_state_conflict', 'idempotency_conflict']
+    const known = ['party_not_found', 'party_expired', 'nothing_playing', 'invalid_idempotency_scope', 'controller_unavailable', 'controller_state_mismatch', 'playback_state_conflict', 'idempotency_conflict']
     const reason = known.includes(error.message) ? error.message : 'playback_command_failed'
     const status = reason === 'party_not_found' ? 404 : reason === 'party_expired' ? 410 : 409
     return json(c, status, reason, 'Playback command rejected')

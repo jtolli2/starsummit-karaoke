@@ -22,7 +22,14 @@ import {
 } from '@/services/tabletApi'
 
 const storageKey = 'karaoke:tablet:session'
+const playbackStorageKey = 'karaoke:tablet:pending-playback'
 type StoredSession = { token: string; partyId?: string; partyCode?: string }
+type PendingPlayback = {
+  partyId: string
+  queueId: string
+  action: 'play' | 'pause'
+  key: string
+}
 
 const token = ref<string | null>(null)
 const identity = ref('')
@@ -35,6 +42,7 @@ const message = ref('')
 const error = ref(false)
 const confirmFailure = ref<TabletQueueItem | null>(null)
 const failureReason = ref('Playback failed')
+const pendingPlayback = ref<PendingPlayback | null>(null)
 const catalog = ref<CatalogSong[]>([])
 const catalogLoading = ref(false)
 const catalogShown = ref(false)
@@ -108,7 +116,43 @@ function saveSession() {
 function clearSession() {
   try {
     sessionStorage.removeItem(storageKey)
+    sessionStorage.removeItem(playbackStorageKey)
   } catch {}
+}
+
+function loadPendingPlayback() {
+  try {
+    const raw = sessionStorage.getItem(playbackStorageKey)
+    if (!raw) return
+    const saved = JSON.parse(raw) as PendingPlayback
+    if (
+      saved.partyId === partyId.value &&
+      typeof saved.queueId === 'string' &&
+      ['play', 'pause'].includes(saved.action) &&
+      typeof saved.key === 'string'
+    )
+      pendingPlayback.value = saved
+  } catch {}
+}
+
+function savePendingPlayback(value: PendingPlayback | null) {
+  pendingPlayback.value = value
+  try {
+    if (value) sessionStorage.setItem(playbackStorageKey, JSON.stringify(value))
+    else sessionStorage.removeItem(playbackStorageKey)
+  } catch {}
+}
+
+function reconcilePendingPlayback() {
+  const pending = pendingPlayback.value
+  if (!pending || pending.partyId !== partyId.value || pending.queueId !== playing.value?.id) return ''
+  const confirmed =
+    controllerMatchesPlaying.value &&
+    ((pending.action === 'play' && playerState.value === 'playing') ||
+      (pending.action === 'pause' && playerState.value === 'paused'))
+  if (!confirmed) return `${pending.action === 'play' ? 'Play' : 'Pause'} requested; waiting for controller confirmation.`
+  savePendingPlayback(null)
+  return pending.action === 'play' ? 'Playback resumed.' : 'Playback paused.'
 }
 
 function explain(value: unknown, fallback: string) {
@@ -244,7 +288,7 @@ async function refresh() {
       error.value = true
       return
     }
-    message.value = ''
+    message.value = reconcilePendingPlayback()
     error.value = false
   } catch (cause) {
     const statusCode = (cause as { status?: number }).status
@@ -373,27 +417,35 @@ function playbackIdempotencyKey(action: 'play' | 'pause') {
     typeof crypto?.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return `tablet-${action}-${unique}`.slice(0, 128)
+  return `tablet:${partyId.value}:${playing.value?.id}:${action}:${unique}`.slice(0, 128)
 }
 
 async function controlPlayback(action: 'play' | 'pause') {
   if (!token.value || !partyId.value || busy.value || partyExpired.value) return
   if ((action === 'play' && !canPlay.value) || (action === 'pause' && !canPause.value)) return
+  const queueId = playing.value?.id
+  if (!queueId) return
+  const existing = pendingPlayback.value
+  const operation =
+    existing?.partyId === partyId.value &&
+    existing.queueId === queueId &&
+    existing.action === action
+      ? existing
+      : { partyId: partyId.value, queueId, action, key: playbackIdempotencyKey(action) }
+  savePendingPlayback(operation)
   busy.value = true
   try {
-    await issuePlaybackCommand(
-      token.value,
-      partyId.value,
-      action,
-      playbackIdempotencyKey(action),
-    )
+    await issuePlaybackCommand(token.value, partyId.value, action, operation.key)
     await refresh()
-    message.value = action === 'play' ? 'Playback resumed.' : 'Playback paused.'
+    if (pendingPlayback.value)
+      message.value = `${action === 'play' ? 'Play' : 'Pause'} requested; waiting for controller confirmation.`
     error.value = false
   } catch (cause) {
     await refresh()
-    message.value = explain(cause, 'Playback action was uncertain; state was refreshed.')
-    error.value = true
+    if (pendingPlayback.value) {
+      message.value = explain(cause, 'Playback action was uncertain; retry will reuse the same request.')
+      error.value = true
+    }
   } finally {
     busy.value = false
   }
@@ -441,6 +493,7 @@ onMounted(async () => {
     token.value = saved.token
     partyId.value = saved.partyId || ''
     if (partyId.value) {
+      loadPendingPlayback()
       status.value = {
         party: { id: partyId.value, code: saved.partyCode, expiresAt: '', status: 'active' },
         queue: [],
@@ -525,6 +578,9 @@ onUnmounted(() => {
         <p v-if="!controllerReady">Connect the native controller before starting a song.</p>
         <p v-else-if="playing && !controllerMatchesPlaying" role="status">
           Waiting for controller playback confirmation…
+        </p>
+        <p v-if="pendingPlayback" role="status">
+          {{ pendingPlayback.action === 'play' ? 'Play' : 'Pause' }} request pending.
         </p>
         <div class="playback-controls" aria-label="Playback controls">
           <button type="button" @click="controlPlayback('play')" :disabled="busy || !canPlay">

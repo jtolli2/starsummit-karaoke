@@ -105,6 +105,32 @@ describe('tablet operator page', () => {
     expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeUndefined()
   })
 
+  it('reuses an ambiguous playback request and reports it as pending until confirmed', async () => {
+    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
+    const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]
+    const paused = activeStatus({ queue: playingQueue })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
+      .mockRejectedValueOnce(new TypeError('response lost'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'command-1', action: 'play', sequence: 3, status: 'pending', idempotent: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+    await settle()
+    const play = wrapper.findAll('button').find((button) => button.text() === 'Play')
+    await play?.trigger('click')
+    await settle()
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
+    expect(wrapper.text()).toContain('retry will reuse the same request')
+    await play?.trigger('click')
+    await settle()
+    const retryBody = JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body))
+    expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey)
+    expect(firstBody.idempotencyKey).toMatch(/^tablet:party-1:queue-1:play:/)
+    expect(wrapper.text()).toContain('Play requested; waiting for controller confirmation')
+  })
+
   it('disables transport controls while controller video lags the active queue', async () => {
     sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
     const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]

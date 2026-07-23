@@ -46,6 +46,9 @@ test('tablet playback controls are party-scoped, current, monotonic, and idempot
   assert.match(endpoint[0], /CONTROLLER_STATE_TTL/)
   assert.match(endpoint[0], /video_id'\) !== str\(song, 'youtube_id'\)/)
   assert.match(endpoint[0], /idempotency_key = \{:key\}/)
+  assert.match(endpoint[0], /expectedKeyPrefix = `tablet:\$\{partyId\}:\$\{id\(playing\)\}:\$\{action\}:`/)
+  assert.match(endpoint[0], /str\(duplicate, 'issued_by'\) !== id\(operator\)/)
+  assert.match(endpoint[0], /action = \{:action\} && status = "pending"/)
   assert.ok(
     endpoint[0].indexOf('idempotency_key = {:key}') <
       endpoint[0].indexOf("const stateFresh = controllerState"),
