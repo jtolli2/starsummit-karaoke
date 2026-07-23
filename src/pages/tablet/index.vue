@@ -145,7 +145,11 @@ function savePendingPlayback(value: PendingPlayback | null) {
 
 function reconcilePendingPlayback() {
   const pending = pendingPlayback.value
-  if (!pending || pending.partyId !== partyId.value || pending.queueId !== playing.value?.id) return ''
+  if (!pending) return ''
+  if (pending.partyId !== partyId.value || pending.queueId !== playing.value?.id) {
+    savePendingPlayback(null)
+    return ''
+  }
   const confirmed =
     controllerMatchesPlaying.value &&
     ((pending.action === 'play' && playerState.value === 'playing') ||

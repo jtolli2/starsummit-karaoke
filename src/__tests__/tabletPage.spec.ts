@@ -145,6 +145,21 @@ describe('tablet operator page', () => {
     expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeDefined()
   })
 
+  it('clears a retained playback request when its queue item is no longer active', async () => {
+    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
+    sessionStorage.setItem('karaoke:tablet:pending-playback', JSON.stringify({
+      partyId: 'party-1',
+      queueId: 'old-queue',
+      action: 'pause',
+      key: 'tablet:party-1:old-queue:pause:retry-key',
+    }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus()), { status: 200 })))
+    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+    await settle()
+    expect(wrapper.text()).not.toContain('Pause request pending')
+    expect(sessionStorage.getItem('karaoke:tablet:pending-playback')).toBeNull()
+  })
+
   it('renders expired party recovery instead of active queue controls', async () => {
     sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({ party: { id: 'party-1', codeHint: 'CD34', expiresAt: new Date(Date.now() - 1000).toISOString(), status: 'expired' } })), { status: 200 })))

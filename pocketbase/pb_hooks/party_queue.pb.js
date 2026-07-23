@@ -757,7 +757,10 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       const playerState = str(controllerState, 'player_state')
       if ((action === 'play' && playerState !== 'paused') || (action === 'pause' && playerState !== 'playing')) throw new Error('playback_state_conflict')
       let equivalentPending = null
-      try { equivalentPending = tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && issued_by = {:operator} && action = {:action} && status = "pending"', { device: deviceId, operator: id(operator), action }) } catch (_) {}
+      try {
+        const pendingCommands = tx.findRecordsByFilter('controller_commands', 'device = {:device} && issued_by = {:operator} && action = {:action} && status = "pending"', '-sequence', 20, 0, { device: deviceId, operator: id(operator), action })
+        equivalentPending = pendingCommands.find((candidate) => str(candidate, 'idempotency_key').startsWith(expectedKeyPrefix)) || null
+      } catch (_) {}
       if (equivalentPending) {
         result = { id: id(equivalentPending), action, sequence: num(equivalentPending, 'sequence'), status: str(equivalentPending, 'status'), idempotent: true }
         return
