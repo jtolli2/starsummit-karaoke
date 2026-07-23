@@ -22,6 +22,14 @@ test('party creation binds exactly one active controller without guessing betwee
   assert.match(endpoint[0], /if \(controllers\.length === 1\) set\(party, 'controller_device', id\(controllers\[0\]\)\)/)
 })
 
+test('tablet can bind an unassigned party only to its single available controller', () => {
+  const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/controller\/bind',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /created_by'\) !== id\(operator\)/)
+  assert.match(endpoint[0], /controllers\.length !== 1/)
+  assert.match(endpoint[0], /set\(party, 'controller_device', deviceId\)/)
+})
+
 // Reference implementation of the server's deterministic round-robin rule.
 function chooseNext(pending, servedAt = {}) {
   const firstByRequester = new Map()

@@ -86,6 +86,13 @@ export function loadTabletStatus(token: string, partyId: string) {
   return request<TabletStatus>(`/api/karaoke/tablet/status?${params}`, {}, token)
 }
 
+export function bindAvailableController(token: string, partyId: string) {
+  return request<{ partyId: string; bound: boolean }>('/api/karaoke/tablet/controller/bind', {
+    method: 'POST',
+    body: JSON.stringify({ partyId }),
+  }, token)
+}
+
 export function loadActiveParty(token: string) {
   return request<{ party: TabletStatus['party'] | null }>('/api/karaoke/tablet/active', {}, token)
 }

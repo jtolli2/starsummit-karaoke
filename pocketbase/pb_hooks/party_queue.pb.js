@@ -654,6 +654,33 @@ routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
   })
 })
 
+// A party created before a retained controller was available can be repaired
+// without exposing controller records or guessing between multiple devices.
+routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, body, id, str, set } = globalThis.__partyQueue
+  const operator = auth(c)
+  if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const partyId = String(body(c).partyId || '')
+  if (!partyId) return json(c, 422, 'party_required', 'An active party is required')
+  try {
+    let deviceId = ''
+    $app.runInTransaction((tx) => {
+      const party = tx.findRecordById('karaoke_parties', partyId)
+      if (!party || str(party, 'created_by') !== id(operator)) throw new Error('party_not_found')
+      deviceId = str(party, 'controller_device')
+      if (deviceId) return
+      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false', '-last_seen_at', 2, 0)
+      if (controllers.length !== 1) throw new Error(controllers.length ? 'controller_ambiguous' : 'controller_unavailable')
+      deviceId = id(controllers[0]); set(party, 'controller_device', deviceId); tx.save(party)
+    })
+    return c.json(200, { partyId, bound: Boolean(deviceId) })
+  } catch (error) {
+    const code = String(error.message || 'controller_bind_failed')
+    return json(c, code === 'party_not_found' ? 404 : 409, code, 'Controller binding is unavailable')
+  }
+})
+
 // Reload recovery for a tablet account.  Party codes are intentionally not
 // recoverable from their stored hash, so this returns only the safe hint.
 routerAdd('GET', '/api/karaoke/tablet/active', (c) => {

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import QrcodeVue from 'qrcode.vue'
 import {
   authenticateTablet,
+  bindAvailableController,
   correctCatalogIdentity,
   createParty,
   loadActiveParty,
@@ -331,6 +332,22 @@ async function startNext() {
   }
 }
 
+async function bindController() {
+  if (!token.value || !partyId.value || busy.value) return
+  busy.value = true
+  try {
+    await bindAvailableController(token.value, partyId.value)
+    await refresh()
+    message.value = 'Controller binding refreshed.'
+    error.value = false
+  } catch (cause) {
+    message.value = explain(cause, 'Could not bind the available controller.')
+    error.value = true
+  } finally {
+    busy.value = false
+  }
+}
+
 async function finish(item: TabletQueueItem, to: 'completed' | 'failed') {
   if (!token.value || busy.value || partyExpired.value) return
   busy.value = true
@@ -455,6 +472,14 @@ onUnmounted(() => {
         </p>
         <p v-if="status.controller?.state?.videoId">Video {{ status.controller.state.videoId }}</p>
         <p v-if="!controllerReady">Connect the native controller before starting a song.</p>
+        <button
+          v-if="!status.controller?.device"
+          type="button"
+          :disabled="busy"
+          @click="bindController"
+        >
+          {{ busy ? 'Working…' : 'Bind available controller' }}
+        </button>
       </section>
       <section v-if="status && !partyExpired" class="card queue" aria-labelledby="queue-heading">
         <div class="queue-head">
