@@ -19,6 +19,7 @@ test('party creation binds exactly one active controller without guessing betwee
   const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/parties',[\s\S]*?\n}\)/)
   assert.ok(endpoint)
   assert.match(endpoint[0], /revoked = false && last_seen_at > \{:\s*cutoff\}/)
+  assert.match(endpoint[0], /cutoff: filterDate\(Date\.now\(\) - CONTROLLER_STATE_TTL\)/)
   assert.match(endpoint[0], /if \(controllers\.length === 1\) set\(party, 'controller_device', id\(controllers\[0\]\)\)/)
 })
 
@@ -28,7 +29,14 @@ test('tablet can bind an unassigned party only to its single available controlle
   assert.match(endpoint[0], /created_by'\) !== id\(operator\)/)
   assert.match(endpoint[0], /controllers\.length !== 1/)
   assert.match(endpoint[0], /last_seen_at > \{:\s*cutoff\}/)
+  assert.match(endpoint[0], /cutoff: filterDate\(Date\.now\(\) - CONTROLLER_STATE_TTL\)/)
   assert.match(endpoint[0], /set\(party, 'controller_device', deviceId\)/)
+})
+
+test('controller liveness filter uses the PocketBase-normalized datetime representation', () => {
+  const helper = hook.match(/function filterDate\(value = new Date\(\)\) \{[^\n]+\}/)
+  assert.ok(helper)
+  assert.match(helper[0], /toISOString\(\)\.replace\('T', ' '\)/)
 })
 
 // Reference implementation of the server's deterministic round-robin rule.

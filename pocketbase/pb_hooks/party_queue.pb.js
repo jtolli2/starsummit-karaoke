@@ -21,6 +21,10 @@ function auth(c) { return info(c).auth || null }
 function bearer(c) { const h = info(c).headers || {}; const value = h.authorization || h.Authorization || ''; return String(value).replace(/^Bearer\s+/i, '') }
 function query(c, key) { const value = info(c).query?.[key]; return Array.isArray(value) ? value[0] : value }
 function now() { return new Date().toISOString() }
+// PocketBase normalizes stored datetime fields to "YYYY-MM-DD HH:mm:ss.SSSZ".
+// Use the same canonical form for filter parameters: in 0.39.7 an RFC3339
+// `T` separator can fail a comparison against a normalized datetime value.
+function filterDate(value = new Date()) { return new Date(value).toISOString().replace('T', ' ') }
 function dayKey(value = new Date()) {
   // America/Los_Angeles reset boundary (DST-aware, independent of host TZ).
   const instant = value instanceof Date ? value : new Date(value); const year = instant.getUTCFullYear()
@@ -348,7 +352,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -392,7 +396,7 @@ onRecordAfterUpdateSuccess((e) => {
 
 routerAdd('POST', '/api/karaoke/parties', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { PARTY_TTL, CONTROLLER_STATE_TTL, auth, tablet, json, find, code, hash, set, future, id, str } = globalThis.__partyQueue
+  const { PARTY_TTL, CONTROLLER_STATE_TTL, auth, tablet, json, find, code, hash, set, future, filterDate, id, str } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   let result
   try {
@@ -400,7 +404,7 @@ routerAdd('POST', '/api/karaoke/parties', (c) => {
       let plain; let party
       for (let i = 0; i < 8; i++) { plain = code(); if (!find('karaoke_parties', 'code_hash = {:hash}', { hash: hash(plain) })) break }
       party = new Record(tx.findCollectionByNameOrId('karaoke_parties'))
-      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: new Date(Date.now() - CONTROLLER_STATE_TTL).toISOString() })
+      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: filterDate(Date.now() - CONTROLLER_STATE_TTL) })
       set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0)
       // Never guess between multiple enrolled devices. A single retained,
       // non-revoked controller can safely become the party controller.
@@ -658,7 +662,7 @@ routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
 // without exposing controller records or guessing between multiple devices.
 routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, id, str, set, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
+  const { auth, tablet, json, body, id, str, set, filterDate, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const partyId = String(body(c).partyId || '')
@@ -670,7 +674,7 @@ routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
       if (!party || str(party, 'created_by') !== id(operator)) throw new Error('party_not_found')
       deviceId = str(party, 'controller_device')
       if (deviceId) return
-      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: new Date(Date.now() - CONTROLLER_STATE_TTL).toISOString() })
+      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: filterDate(Date.now() - CONTROLLER_STATE_TTL) })
       if (controllers.length !== 1) throw new Error(controllers.length ? 'controller_ambiguous' : 'controller_unavailable')
       deviceId = id(controllers[0]); set(party, 'controller_device', deviceId); tx.save(party)
     })
