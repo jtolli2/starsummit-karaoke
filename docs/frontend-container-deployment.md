@@ -13,23 +13,29 @@ configurable for deployments where the backend has a different private DNS name,
 reads so PocketBase SSE events reach browsers immediately. The frontend image is stateless and
 can be replaced without touching the PocketBase volume.
 
-## Retained staging application (approval-gated)
+## Retained staging Compose cutover
 
-The existing `starsummit-pocketbase-test` Coolify application is PocketBase-only and must remain
-untouched. Its records, controller enrollment, tablet state, and predefined persistent volume are
-retained as-is. Do not add a public frontend route, replace its volume, or mutate its deployment
-without separate written approval.
+The approved staging topology is one Coolify Docker Compose application containing separate
+`frontend` and `pocketbase` runtime containers. It reuses the exact pre-provisioned external
+PocketBase volume and does not initialize, copy, replace, or delete retained data. The frontend
+reaches PocketBase only through Compose DNS at `pocketbase:8090`.
 
-Before any staging browser validation, choose and approve exactly one migration path:
+Before attaching the retained volume:
 
-1. Create a new same-stack frontend + PocketBase composition and perform a reviewed data/volume
-   migration with a backup and rollback plan; or
-2. Create a separate frontend application attached to the existing private network, configured
-   with the full renamed PocketBase container name (not a guessed short service name), while
-   leaving the existing application and volume unchanged.
+1. Generate and verify a PocketBase backup on the existing volume.
+2. Configure the Compose application with the exact external volume name and server-only YouTube
+   variables.
+3. Build the new stack without starting PocketBase.
+4. Stop the standalone PocketBase application, then start the Compose stack so only one PocketBase
+   process can ever mount the SQLite volume.
+5. Route `karaoke-test.app.starsummit.net` to `frontend:8080` and
+   `controller-test.app.starsummit.net` to `pocketbase:8090`.
+6. Verify volume identity, backup presence, retained records, controller enrollment/session
+   recovery, same-origin API/SSE, and both public health checks.
 
-The staging plan is documentation only. DNS, Coolify applications, networks, volumes, secrets,
-deployments, and records are approval-gated and are intentionally not changed by this repository.
+Keep the former applications stopped as rollback references until the Compose rehearsal succeeds.
+Their deletion and any volume cleanup remain separately approval-gated and are not part of the
+cutover.
 
 ## Header and access boundary
 
@@ -39,10 +45,7 @@ scheme. The frontend is not an independent public ingress and must not bypass Co
 controls. It sends the backend the trusted Coolify ingress peer as `X-Forwarded-For` rather than
 appending an unverified client-supplied chain; PocketBase remains private behind that boundary.
 
-For retained staging, the proposed unique frontend hostname is
-`karaoke-test.app.starsummit.net` (approval required). Before execution, read-only verification
-must confirm the current Coolify project, private network, frontend service port, and exact
-PocketBase container DNS name. The approved runbook would then create the frontend application,
-attach it to that predefined network, set `POCKETBASE_HOST` to the full renamed PocketBase
-container name plus port 8090, configure hostname/TLS, and run the healthcheck. No step may edit
-the retained PocketBase application, records, controller enrollment, tablet state, or volume.
+For retained staging, Coolify owns both hostnames and TLS. The Compose stack must not define a
+custom network; Coolify's isolated stack network provides stable service-name resolution and
+connects its ingress proxy. No step may alter retained records, controller enrollment, tablet
+pairing, or the external volume contents except for an explicit backup.
