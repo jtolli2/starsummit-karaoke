@@ -65,3 +65,8 @@ In Progress
   additional `needs_review`/ineligible candidates (9 unavailable audit outcomes). One candidate,
   Toni Braxton / Un-Break My Heart, received an audited MusicBrainz-backed operator identity
   correction but remains unapproved and ineligible pending a refreshed-card review.
+- The operator independently checked the corrected KaraFun rendition and approved Toni Braxton /
+  Un-Break My Heart. Retained staging now reports three approved catalog records; this approved
+  rendition is eligible while the remaining playlist candidates stay private pending one-at-a-time
+  review. The next selected candidate must be paged into the constrained tablet UI before any
+  correction or approval.
