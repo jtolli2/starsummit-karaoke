@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress — retained-staging deployment and live validation pending
+Complete — deployed to retained staging and live-validated
 
 ## Goals
 
@@ -48,6 +48,17 @@ In Progress — retained-staging deployment and live validation pending
 - Selected fallback records retain YouTube presentation text only as `video_title`; canonical identity
   remains explicitly missing, unreviewed, and globally ineligible. Queueing retains normal rotation,
   duplicate, rate, idempotency, and wake/refetch contracts.
-- Local verification passed: 9 focused Vue tests, 27 backend contracts, production build, hook and
-  migration syntax, whitespace check, and independent security/concurrency review. No pinned runtime
-  integration, commit/push, retained-staging deployment, or live quota validation was performed yet.
+- Local verification passed: 11 focused Vue tests, 27 backend contracts, production build, hook and
+  migration syntax, whitespace check, and independent security/concurrency review. The final pinned
+  staging path was additionally exercised through the retained PocketBase application.
+- Product commits through `de117ca` were pushed to `main`; frontend SHA `4fcd803` and backend SHA
+  `de117ca` are healthy on retained staging without replacing volume `ggkfvh2tpdprcocn1sycu8zf`.
+  Isolated retained party `8BDNGB7N` proved an explicit cached replay for
+  `bridge over troubled water karaoke`, at most four sanitized candidates, a party-scoped queue
+  request, rate limit, and active duplicate rejection. The one earlier pre-repair explicit lookup
+  consumed the modeled 101 units; all later replays and request retries used the durable cache.
+- The retained catalog has zero globally eligible songs (all 18 are intentionally still unreviewed),
+  so a live approved-local fuzzy hit could not be demonstrated without violating the no-approval
+  validation constraint. Focused Fuse tests cover typo, alias, accent, punctuation, reversal,
+  ranking, and weak-match behavior. No catalog record was approved; the queued fallback discovery is
+  still unreviewed and globally ineligible.

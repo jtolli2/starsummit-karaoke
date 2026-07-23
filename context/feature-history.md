@@ -270,3 +270,20 @@
 - Local evidence: 9 focused Vue tests, 27 backend contracts, production build, hook/migration syntax,
   whitespace, and independent security/concurrency review. Pinned PocketBase runtime, commit/push,
   retained staging deployment, and live quota/cache validation remain pending.
+
+## 2026-07-22 — Fuzzy Local Search staging completion
+
+- Pushed product repairs through `de117ca` and deployed retained PocketBase staging SHA `de117ca`;
+  the frontend remains healthy at SHA `4fcd803`. Coolify CLI deployment preserved volume
+  `ggkfvh2tpdprcocn1sycu8zf`.
+- Isolated party `8BDNGB7N` replayed the cached exact query `bridge over troubled water karaoke`
+  without a new YouTube lookup, showed four sanitized high-confidence karaoke candidates, queued one
+  candidate through the party-scoped path, then proved the 30-second guest rate limit and the active
+  duplicate rejection. The original representative lookup spent the modeled 101 YouTube units once.
+- The fallback queue path now handles absent PocketBase finder results and unique-index races
+  transactionally, returning idempotent replay or correct rate/duplicate responses. Independent
+  follow-up review approved the final repair; focused pinned contracts passed 27/27.
+- No approved local hit exists to exercise in retained staging: all 18 catalog records remain
+  unreviewed/ineligible by design. Fuse behavior is covered locally; no catalog record was approved
+  to manufacture live evidence. The newly queued discovery retains missing canonical identity,
+  remains unreviewed/ineligible, and stores channel/uploader provenance separately.
