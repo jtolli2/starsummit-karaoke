@@ -558,6 +558,7 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
         $app.runInTransaction((tx) => { const queue = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(access.party), requester: q.id(access.guest), key: requestKey }); replay = q.songView(queue, tx.findRecordById('karaoke_songs', q.str(queue, 'song'))) })
         if (replay) return c.json(200, replay)
       } catch (_) {}
+      let retryError = null
       try {
         let retry = null; let replayed = false
         $app.runInTransaction((tx) => {
@@ -569,7 +570,9 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
           const sequence = q.num(party, 'queue_sequence') + 1; q.set(party, 'queue_sequence', sequence); tx.save(party); const queue = new Record(tx.findCollectionByNameOrId('karaoke_queue')); q.set(queue, 'party', q.id(party)); q.set(queue, 'song', q.id(song)); q.set(queue, 'requester', q.id(guest)); q.set(queue, 'status', 'queued'); q.set(queue, 'active_song_key', youtubeId); q.set(queue, 'request_key', requestKey); q.set(queue, 'sequence', sequence); q.set(queue, 'requested_at', q.now()); tx.save(queue); q.set(guest, 'last_request_at', q.now()); q.set(guest, 'request_count', q.num(guest, 'request_count') + 1); tx.save(guest); retry = q.songView(queue, song)
         })
         if (retry) return c.json(replayed ? 200 : 201, retry)
-      } catch (_) {}
+      } catch (error) { retryError = error }
+      const retryReason = String(retryError && retryError.message || '')
+      if (['party_expired', 'fallback_candidate_unavailable', 'rate_limited'].includes(retryReason)) return q.json(c, { party_expired: 410, fallback_candidate_unavailable: 422, rate_limited: 429 }[retryReason], retryReason, 'Fallback request rejected')
       return q.json(c, 409, 'duplicate_song', 'Song is already queued')
     }
     const status = { party_expired: 410, duplicate_song: 409, fallback_candidate_unavailable: 422, rate_limited: 429 }[reason] || 500; return q.json(c, status, reason, 'Fallback request rejected')

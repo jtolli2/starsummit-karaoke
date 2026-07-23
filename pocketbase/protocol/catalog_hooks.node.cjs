@@ -57,6 +57,7 @@ test('fallback search normalizes, bounds, classifies, and caches durable candida
   assert.match(hook, /reason\.toLowerCase\(\)\.includes\('unique'\)/)
   assert.match(hook, /return c\.json\(200, replay\)/)
   assert.match(hook, /if \(retry\) return c\.json\(replayed \? 200 : 201, retry\)/)
+  assert.match(hook, /\['party_expired', 'fallback_candidate_unavailable', 'rate_limited'\]\.includes\(retryReason\)/)
   assert.ok(hook.includes("if (!song) { song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))"))
 })
 
