@@ -56,6 +56,7 @@ test('fallback search normalizes, bounds, classifies, and caches durable candida
   assert.ok(hook.includes("let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}'"))
   assert.match(hook, /reason\.toLowerCase\(\)\.includes\('unique'\)/)
   assert.match(hook, /return c\.json\(200, replay\)/)
+  assert.match(hook, /if \(retry\) return c\.json\(replayed \? 200 : 201, retry\)/)
   assert.ok(hook.includes("if (!song) { song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))"))
 })
 
