@@ -52,3 +52,12 @@ In Progress
   HTTP operation code was deployed to distinguish source authorization/availability from importer
   state. The existing authenticated tablet session was recovered after redeploy; the next bounded
   canary can use that retained session without a new sign-in.
+- The initial KaraFun general playlist was rejected by the authoritative API ownership check and
+  remains retained only as a failed, non-destructive claim. The runtime allowlist was corrected to
+  the official channel uploads playlist, which passed owner verification. A bounded first-page
+  import retained 23 `needs_review`/ineligible candidates and 2 unavailable audit outcomes; it
+  created no approvals and did not change the guest catalog.
+- Playlist transport now uses the worker-safe hook helper, reserves the bounded retry maximum
+  (six preview / nine import calls), records actual operation attempts, and settles unused
+  reservation. Further population is deliberately paused for canonical MusicBrainz/operator
+  review integration rather than bulk-approving title parses.
