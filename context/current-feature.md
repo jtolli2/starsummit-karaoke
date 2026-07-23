@@ -17,6 +17,9 @@ In Progress
   before approval and guest-catalog eligibility.
 - Add constrained tablet review/preview/report support and tests for parsing, pagination, replay,
   quota accounting, authorization, curation preservation, and sanitization.
+- Add a bounded, explicitly selected tablet batch-approval action (maximum 20 records) that
+  preserves the existing karaoke/identity gates, confirms the selected count, and writes a
+  per-song batch audit event. Blanket or filter-based approval remains out of scope.
 - Deploy and validate the exact product SHA on retained Compose staging, run a bounded canary and
   quality-gated import/review suitable for Saturday without deleting or replacing retained data.
 
@@ -83,3 +86,8 @@ In Progress
   My Immortal, and Whitney Houston / I Have Nothing were each MusicBrainz-verified, corrected,
   and approved. The retained review backlog is now 47; no bulk approval or direct record write
   was used.
+- Selected-only batch approval is implemented with a maximum of 20 records, exact-name native
+  confirmation, UI/server parity for high-confidence karaoke and no alternatives, transactional
+  collision revalidation, per-song audit events, and one retained batch-summary audit event.
+  Independent review approved the implementation; behavioral pinned-runtime and Vue interaction
+  coverage remain a follow-up beyond the current static/focused suite.

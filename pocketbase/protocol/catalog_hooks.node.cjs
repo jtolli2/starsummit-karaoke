@@ -201,6 +201,17 @@ test('review and replacement history mutations are transactional and untruncated
   assert.doesNotMatch(review + replace, /events\.slice\(/)
 })
 
+test('selected batch approval is bounded, atomic, and never filter-based', () => {
+  const batch = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/catalog\/review\/batch',[\s\S]*?\n}\)/)?.[0] || ''
+  assert.match(batch, /ids\.length > 20/)
+  assert.match(batch, /\$app\.runInTransaction\(\(tx\)/)
+  assert.match(batch, /batch_song_ineligible/)
+  assert.match(batch, /\['verified_source', 'operator_corrected'\]/)
+  assert.match(batch, /str\(song, 'classification'\) !== 'karaoke'/)
+  assert.match(batch, /action: 'batch_review'/)
+  assert.doesNotMatch(batch, /findRecordsByFilter\('karaoke_songs', ''/)
+})
+
 test('fixture import failures log only bounded batch diagnostics', () => {
   assert.match(hook, /function catalogImportFailureStage\(stage\)/)
   assert.match(hook, /function logCatalogImportFailure\(stage, offset, itemCount\)/)

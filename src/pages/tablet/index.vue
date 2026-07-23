@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import QrcodeVue from 'qrcode.vue'
 import {
   authenticateTablet,
+  approveCatalogSongs,
   bindAvailableController,
   correctCatalogIdentity,
   createParty,
@@ -55,6 +56,7 @@ const catalogTotalPages = ref(1)
 const catalogReport = ref<CatalogReport | null>(null)
 const correction = ref<Record<string, { title: string; artist: string; reason: string }>>({})
 const replacementId = ref<Record<string, string>>({})
+const selectedApprovals = ref<string[]>([])
 const playlistSourceKey = ref('')
 const playlistPreview = ref<PlaylistImportPreview | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
@@ -62,6 +64,8 @@ let refreshTimer: ReturnType<typeof setInterval> | undefined
 const activeQueue = computed(() => status.value?.queue || [])
 const playing = computed(() => activeQueue.value.find((item) => item.status === 'playing'))
 const nextQueued = computed(() => activeQueue.value.find((item) => item.status === 'queued'))
+const selectedApprovalCount = computed(() => selectedApprovals.value.length)
+const selectedApprovalNames = computed(() => catalog.value.filter((song) => selectedApprovals.value.includes(song.id)).map((song) => `${song.artist} — ${song.title}`))
 const partyCode = computed(() => status.value?.party?.code || '')
 const joinUrl = computed(() =>
   partyCode.value ? `${window.location.origin}/party/${partyCode.value}` : '',
@@ -214,6 +218,7 @@ async function refreshCatalog() {
       loadCatalogReport(token.value),
     ])
     catalog.value = result.songs || []
+    selectedApprovals.value = selectedApprovals.value.filter((songId) => catalog.value.some((song) => song.id === songId))
     catalogTotalPages.value = result.totalPages || 1
     catalogReport.value = report
     for (const song of catalog.value)
@@ -249,16 +254,19 @@ async function correctIdentity(song: CatalogSong) {
 
 function changeCatalogReview() {
   catalogPage.value = 1
+  selectedApprovals.value = []
   void refreshCatalog()
 }
 
 function previousCatalogPage() {
   catalogPage.value--
+  selectedApprovals.value = []
   void refreshCatalog()
 }
 
 function nextCatalogPage() {
   catalogPage.value++
+  selectedApprovals.value = []
   void refreshCatalog()
 }
 
@@ -270,9 +278,29 @@ async function setCatalogReview(
   catalogLoading.value = true
   try {
     await reviewCatalogSong(token.value, song.id, reviewState)
+    selectedApprovals.value = selectedApprovals.value.filter((songId) => songId !== song.id)
     await refreshCatalog()
   } catch (cause) {
     message.value = explain(cause, 'Catalog review could not be saved.')
+    error.value = true
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+async function approveSelectedCatalogSongs() {
+  if (!token.value || !selectedApprovals.value.length || catalogLoading.value) return
+  const count = selectedApprovals.value.length
+  if (!window.confirm(`Approve ${count} selected rendition${count === 1 ? '' : 's'}?\n\n${selectedApprovalNames.value.join('\n')}`)) return
+  catalogLoading.value = true
+  try {
+    const result = await approveCatalogSongs(token.value, selectedApprovals.value)
+    selectedApprovals.value = []
+    message.value = `Approved ${result.approved} selected karaoke rendition${result.approved === 1 ? '' : 's'}.`
+    error.value = false
+    await refreshCatalog()
+  } catch (cause) {
+    message.value = explain(cause, 'Selected songs could not be approved.')
     error.value = true
   } finally {
     catalogLoading.value = false
@@ -709,11 +737,28 @@ onUnmounted(() => {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
+          <div class="batch-review">
+            <span>{{ selectedApprovalCount }} selected</span>
+            <button
+              type="button"
+              @click="approveSelectedCatalogSongs"
+              :disabled="catalogLoading || !selectedApprovalCount"
+            >
+              Approve selected ({{ selectedApprovalCount }})
+            </button>
+          </div>
           <p v-if="catalogLoading" role="status">Loading catalog…</p>
           <p v-else-if="!catalog.length">No songs match this review state.</p>
           <ul v-else>
             <li v-for="song in catalog" :key="song.id">
               <div class="catalog-details">
+                <label
+                v-if="song.reviewState !== 'approved' && song.classification === 'karaoke' && (song.classificationConfidence || 0) >= 0.8 && !song.alternativeCount && ['verified_source', 'operator_corrected'].includes(song.identityStatus || '')"
+                  class="batch-select"
+                >
+                  <input v-model="selectedApprovals" type="checkbox" :value="song.id" :disabled="catalogLoading" />
+                  Select for approval
+                </label>
                 <strong>{{ song.title }}</strong
                 ><small
                   >Canonical artist: {{ song.artist || 'Missing' }} ·

@@ -26,6 +26,7 @@ export type CatalogSong = {
   eligible?: boolean
   classification?: string
   classificationConfidence?: number
+  alternativeCount?: number
   classificationReason?: string
   source?: string
   sourceId?: string
@@ -146,6 +147,13 @@ export function reviewCatalogSong(token: string, id: string, reviewState: Catalo
   return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/review`, {
     method: 'POST',
     body: JSON.stringify({ reviewState, ...(note?.trim() ? { note: note.trim() } : {}) }),
+  }, token)
+}
+
+export function approveCatalogSongs(token: string, ids: string[]) {
+  return request<{ approved: number; ids: string[]; batchId: string }>('/api/karaoke/tablet/catalog/review/batch', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
   }, token)
 }
 
