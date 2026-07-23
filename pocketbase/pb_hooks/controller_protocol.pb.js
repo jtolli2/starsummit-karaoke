@@ -184,7 +184,10 @@ routerAdd('POST', '/api/karaoke/controllers/sessions', (c) => {
       if (previous && (string(previous, 'device') !== recordId(txAuth) || new Date(string(previous, 'expires_at')).getTime() <= Date.now())) throw new Error('session_not_resumable')
       const currentGeneration = number(txAuth, 'session_generation')
       if (previous && number(previous, 'generation') === currentGeneration) {
+        // A resumed authenticated session is a fresh liveness observation too. Queue
+        // admission deliberately uses this field rather than trusting an old session.
         set(previous, 'expires_at', future(15 * 60 * 1000)); txApp.save(previous)
+        set(txAuth, 'last_seen_at', now()); txApp.save(txAuth)
         result = { id: recordId(previous), generation: currentGeneration, expiresAt: string(previous, 'expires_at'), resumed: true }
         return
       }
@@ -327,6 +330,9 @@ routerAdd('PUT', '/api/karaoke/controllers/state', (c) => {
       const generation = Number(body.generation)
       if (string(session, 'device') !== recordId(device) || number(session, 'generation') !== generation || number(device, 'session_generation') !== generation) throw new Error('stale_session')
       if (new Date(string(session, 'expires_at')).getTime() <= Date.now()) throw new Error('session_expired')
+      // A valid state report is the controller heartbeat used by party binding and
+      // start-next. Keep device liveness in the same transaction as state persistence.
+      set(device, 'last_seen_at', now()); txApp.save(device)
       let state
       try { state = txApp.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: recordId(device) }) } catch (_) { state = new Record(txApp.findCollectionByNameOrId('controller_state')) }
       set(state, 'device', recordId(device)); set(state, 'session_generation', generation); set(state, 'connection_state', sanitized.connectionState); set(state, 'video_id', sanitized.videoId || ''); set(state, 'player_state', sanitized.playerState); set(state, 'position_seconds', sanitized.positionSeconds); set(state, 'duration_seconds', sanitized.durationSeconds); set(state, 'last_command_sequence', sanitized.lastCommandSequence); set(state, 'observed_at', now()); txApp.save(state)

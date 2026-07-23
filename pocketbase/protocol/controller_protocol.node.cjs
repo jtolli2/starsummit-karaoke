@@ -31,10 +31,16 @@ test('resume keeps the current generation while a new session stales the old one
   const grant = store.createEnrollmentGrant()
   const enrolled = store.enroll({ token: grant.token, deviceName: 'tablet' })
   const first = store.startSession(enrolled.device.id)
+  assert.equal(store.devices.get(enrolled.device.id).lastSeenAt, 1000)
+  clock += 91_000
+  store.reportState({ deviceId: enrolled.device.id, sessionId: first.id, generation: first.generation })
+  assert.equal(store.devices.get(enrolled.device.id).lastSeenAt, 92_000)
+  clock += 91_000
   const resumed = store.startSession(enrolled.device.id, first.id)
   assert.equal(resumed.resumed, true)
   assert.equal(resumed.id, first.id)
   assert.equal(resumed.generation, first.generation)
+  assert.equal(store.devices.get(enrolled.device.id).lastSeenAt, 183_000)
   const second = store.startSession(enrolled.device.id)
   assert.equal(second.generation, first.generation + 1)
   assert.throws(() => store.assertSession(enrolled.device.id, first.id, first.generation), /stale_session/)

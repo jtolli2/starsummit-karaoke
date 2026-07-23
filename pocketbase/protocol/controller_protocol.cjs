@@ -145,7 +145,7 @@ class ProtocolStore {
     if (!grant || grant.usedAt || grant.expiresAt <= this.now()) throw new Error('enrollment_grant_invalid')
     const deviceKey = `device_${randomSecret(18)}`
     const deviceSecret = randomSecret(32)
-    const device = { id: randomSecret(12), deviceKey, secretHash: hashSecret(deviceSecret), deviceName, revoked: false }
+    const device = { id: randomSecret(12), deviceKey, secretHash: hashSecret(deviceSecret), deviceName, revoked: false, lastSeenAt: null }
     this.devices.set(device.id, device)
     grant.usedAt = this.now()
     return { device: clone(device), deviceKey, deviceSecret }
@@ -159,10 +159,12 @@ class ProtocolStore {
     const currentGeneration = this.sequence.get(`generation:${deviceId}`) || 0
     if (previous && previous.generation === currentGeneration) {
       previous.expiresAt = this.now() + 15 * 60 * 1000
+      device.lastSeenAt = this.now()
       return { ...previous, resumed: true }
     }
     const generation = currentGeneration + 1
     this.sequence.set(`generation:${deviceId}`, generation)
+    device.lastSeenAt = this.now()
     for (const command of this.commands.values()) {
       if (command.deviceId === deviceId && command.sessionGeneration < generation && command.status === 'pending') {
         command.status = 'failed'
@@ -180,6 +182,13 @@ class ProtocolStore {
     const current = this.sequence.get(`generation:${deviceId}`)
     if (session.generation !== generation || current !== generation) throw new Error('stale_session')
     return session
+  }
+
+  reportState({ deviceId, sessionId, generation }) {
+    this.assertSession(deviceId, sessionId, generation)
+    const device = this.devices.get(deviceId)
+    device.lastSeenAt = this.now()
+    return clone(device)
   }
 
   issueCommand({ deviceId, sessionGeneration, action, payload, idempotencyKey, expiresInMs = 30000 }) {
