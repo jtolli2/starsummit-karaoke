@@ -44,3 +44,6 @@ In Progress
 - The feature deliberately has no Saturday-specific application quota or reserve. Imported videos
   remain `needs_review` and ineligible unless existing constrained canonical correction and review
   paths establish their identity and approve karaoke quality.
+- Retained staging exposed a recorded initial migration without the new private playlist schema.
+  The forward-only `1784600010` repair ensures the missing private collections and additive song
+  provenance fields without changing any retained records.
