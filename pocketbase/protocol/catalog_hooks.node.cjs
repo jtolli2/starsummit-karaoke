@@ -52,6 +52,7 @@ test('fallback search normalizes, bounds, classifies, and caches durable candida
   assert.match(fallbackReservationMigration, /reserved_units/)
   assert.match(fallbackReservationMigration, /quota_day_key/)
   assert.ok(hook.includes("let song = null; try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}"))
+  assert.ok(hook.includes("let duplicate = null; try { duplicate = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && active_song_key = {:key}', { party: q.id(party), key: youtubeId }) } catch (_) {}"))
   assert.ok(hook.includes("if (!song) { song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))"))
 })
 
