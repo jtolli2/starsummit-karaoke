@@ -181,6 +181,18 @@ function explain(value: unknown, fallback: string) {
           'Controller playback does not match the active queue. State was refreshed.',
         nothing_playing: 'No active queue item is available to control.',
         idempotency_conflict: 'That playback action conflicts with an earlier request.',
+        youtube_http_401: 'The configured YouTube source rejected server authentication.',
+        youtube_http_403: 'The configured YouTube source denied this server request.',
+        youtube_http_404: 'The configured YouTube playlist is no longer available.',
+        youtube_http_429: 'YouTube is rate-limiting playlist retrieval. Try again later.',
+        youtube_http_500: 'YouTube is temporarily unavailable. Try again later.',
+        youtube_http_503: 'YouTube is temporarily unavailable. Try again later.',
+        playlist_owner_mismatch: 'Playlist ownership or public visibility no longer matches the allowlist.',
+        playlist_preview_stale: 'The playlist changed after preview. Review the refreshed preview first.',
+        playlist_import_in_progress: 'An identical playlist fetch is already running.',
+        youtube_quota_exhausted: 'The configured YouTube request limit has been reached.',
+        playlist_claim_failed: 'The playlist fetch could not reserve its operation ledger entry.',
+        playlist_import_failed: 'Trusted playlist retrieval failed safely before any songs were approved.',
       } as Record<string, string>
     )[code || ''] || fallback
   )

@@ -47,3 +47,8 @@ In Progress
 - Retained staging exposed a recorded initial migration without the new private playlist schema.
   The forward-only `1784600010` repair ensures the missing private collections and additive song
   provenance fields without changing any retained records.
+- Staging now contains the repaired private schema and exact final diagnostic deployment. The
+  allowlisted preview still fails closed before any song record is created; a sanitized upstream
+  HTTP operation code was deployed to distinguish source authorization/availability from importer
+  state. The existing authenticated tablet session was recovered after redeploy; the next bounded
+  canary can use that retained session without a new sign-in.
