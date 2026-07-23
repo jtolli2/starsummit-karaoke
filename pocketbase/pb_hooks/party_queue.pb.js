@@ -541,7 +541,7 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
     let result
     $app.runInTransaction((tx) => {
       const party = tx.findRecordById('karaoke_parties', q.id(access.party)); const guest = tx.findRecordById('karaoke_guest_identities', q.id(access.guest)); if (!q.activeParty(party)) throw new Error('party_expired')
-      const prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }); if (prior) { result = q.songView(prior, tx.findRecordById('karaoke_songs', q.str(prior, 'song'))); return }
+      let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }) } catch (_) {} if (prior) { result = q.songView(prior, tx.findRecordById('karaoke_songs', q.str(prior, 'song'))); return }
       const grants = tx.findRecordsByFilter('karaoke_youtube_search_access', 'party = {:party} && guest = {:guest} && expires_at > {:now}', '-expires_at', 100, 0, { party: q.id(party), guest: q.id(guest), now: q.now() }); let candidate = null; for (const grant of grants) { const claim = tx.findRecordById('karaoke_youtube_search_claims', q.str(grant, 'claim')); const payload = claim ? q.jsonValue(claim, 'payload_json', []) : []; if (Array.isArray(payload)) { candidate = payload.find((item) => String(item.youtubeId) === youtubeId && item.classification === 'karaoke' && Number(item.confidence) >= 0.8); if (candidate) break } } if (!candidate) throw new Error('fallback_candidate_unavailable')
       if (q.str(guest, 'last_request_at') && Date.now() - new Date(q.str(guest, 'last_request_at')).getTime() < q.REQUEST_GAP) throw new Error('rate_limited'); const recent = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && requested_at >= {:cutoff}', '', q.PARTY_REQUEST_LIMIT + 1, 0, { party: q.id(party), cutoff: new Date(Date.now() - q.REQUEST_GAP).toISOString() }); if (recent.length >= q.PARTY_REQUEST_LIMIT) throw new Error('rate_limited')
       let song = null; try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
@@ -550,7 +550,18 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
       const sequence = q.num(party, 'queue_sequence') + 1; q.set(party, 'queue_sequence', sequence); tx.save(party); const queue = new Record(tx.findCollectionByNameOrId('karaoke_queue')); q.set(queue, 'party', q.id(party)); q.set(queue, 'song', q.id(song)); q.set(queue, 'requester', q.id(guest)); q.set(queue, 'status', 'queued'); q.set(queue, 'active_song_key', youtubeId); q.set(queue, 'request_key', requestKey); q.set(queue, 'sequence', sequence); q.set(queue, 'requested_at', q.now()); tx.save(queue); q.set(guest, 'last_request_at', q.now()); q.set(guest, 'request_count', q.num(guest, 'request_count') + 1); tx.save(guest); result = q.songView(queue, song)
     })
     return c.json(201, result)
-  } catch (error) { const status = { party_expired: 410, duplicate_song: 409, fallback_candidate_unavailable: 422, rate_limited: 429 }[error.message] || 500; return q.json(c, status, error.message, 'Fallback request rejected') }
+  } catch (error) {
+    const reason = String(error && error.message || error)
+    if (reason.toLowerCase().includes('unique')) {
+      try {
+        let replay = null
+        $app.runInTransaction((tx) => { const queue = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(access.party), requester: q.id(access.guest), key: requestKey }); replay = q.songView(queue, tx.findRecordById('karaoke_songs', q.str(queue, 'song'))) })
+        if (replay) return c.json(200, replay)
+      } catch (_) {}
+      return q.json(c, 409, 'duplicate_song', 'Song is already queued')
+    }
+    const status = { party_expired: 410, duplicate_song: 409, fallback_candidate_unavailable: 422, rate_limited: 429 }[reason] || 500; return q.json(c, status, reason, 'Fallback request rejected')
+  }
 })
 
 routerAdd('POST', '/api/karaoke/requests', (c) => {
