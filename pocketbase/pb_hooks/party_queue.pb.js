@@ -677,7 +677,8 @@ routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
     return c.json(200, { partyId, bound: Boolean(deviceId) })
   } catch (error) {
     const code = String(error.message || 'controller_bind_failed')
-    return json(c, code === 'party_not_found' ? 404 : 409, code, 'Controller binding is unavailable')
+    const message = code === 'controller_ambiguous' ? 'More than one current controller is available' : code === 'controller_unavailable' ? 'No current controller is available' : 'Controller binding is unavailable'
+    return json(c, code === 'party_not_found' ? 404 : 409, code, message)
   }
 })
 

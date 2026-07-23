@@ -108,6 +108,8 @@ function explain(value: unknown, fallback: string) {
         stale_transition: 'The queue changed on another device. State was refreshed.',
         not_next: 'Fair rotation selected another song. State was refreshed.',
         party_already_playing: 'A song is already playing.',
+        controller_ambiguous: 'More than one current controller is available.',
+        controller_unavailable: 'No current controller is available.',
       } as Record<string, string>
     )[code || ''] || fallback
   )
