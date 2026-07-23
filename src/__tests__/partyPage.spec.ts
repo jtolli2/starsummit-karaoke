@@ -86,4 +86,18 @@ describe('party page', () => {
     expect(wrapper.text()).not.toContain('Search YouTube')
   })
 
+  it('keeps an ordinary multi-character typo in the local catalog flow', async () => {
+    vi.useFakeTimers()
+    api.loadCatalogIndex.mockResolvedValue({ version: 'test', songs: [{ id: 's2', youtubeId: 'zyxwvutsrqp', title: 'Never Gonna Give You Up', artist: 'Rick Astley' }] })
+    const wrapper = mount(PartyPage)
+    await flushPromises()
+    await wrapper.get('#song-search').setValue('nevver gona give you up')
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Never Gonna Give You Up')
+    expect(wrapper.text()).not.toContain('Search YouTube')
+    expect(api.fallbackSearchSongs).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
 })
