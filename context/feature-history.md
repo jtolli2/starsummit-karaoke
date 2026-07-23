@@ -276,6 +276,11 @@
   command replay safety after restart, guest identity recovery, mobile/Fire layouts, and an empty
   final active queue. Added the repeatable go-live checklist and completed independent review.
   Automated backup-key failover remains a separately scoped post-MVP enhancement.
+- Added tablet Play/Pause controls backed by party-owned, active-video, fresh-controller,
+  monotonic-command enforcement. Durable operation keys survive ambiguous browser retries, replay
+  and equivalent-pending reuse are party/queue/operator scoped, and the UI distinguishes requested
+  from authoritatively confirmed state. Live Fire/SmartTube pause and resume both completed through
+  realtime wake, refetch, Lounge 2xx, acknowledgement, and authoritative state convergence.
 
 - Added a sanitized, deterministic approved/eligible catalog index and a Fuse.js guest search with
   local debounce, typo/alias/accent normalization, weak-match suggestions, five-minute cache refresh,

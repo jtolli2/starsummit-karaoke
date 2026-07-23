@@ -23,6 +23,9 @@
 - Before starting a song, verify the tablet shows a fresh controller heartbeat. Start the next item
   once and wait for the companion acknowledgement and now-playing state before issuing another
   action.
+- Use tablet Play or Pause only after the controller video matches the active queue item. Treat
+  “requested” as pending; wait for the authoritative player state and opposite enabled control
+  before repeating an action. An uncertain retry reuses the same durable operation identity.
 
 ## During the party
 
@@ -35,6 +38,9 @@
 - If the companion process restarts, wait for session establishment, accepted realtime
   subscription, a zero-or-bounded authoritative command refetch, and unchanged current video before
   issuing another operator transition.
+- If an acknowledged Open Video command does not converge to the selected video, use the companion
+  or Fire remote manual Open Video fallback, then refresh the tablet and verify the matching video
+  ID before using Play or Pause. Record the non-convergence without exposing Lounge credentials.
 
 ## After observations
 

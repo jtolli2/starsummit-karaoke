@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -96,8 +96,8 @@ In Progress
   queue, controller enrollment, and external volume.
 - Responsive inspection passed at a 390-by-844 guest viewport and a Fire-sized tablet viewport:
   no horizontal overflow, readable QR, clear playing/queued/error states, and touch-sized controls.
-  The intended Vue operator surface does not expose play/pause/seek, so no unrelated controls were
-  added or invoked.
+  The tablet now exposes only Play and Pause for the matching active video. Controls remain disabled
+  while the controller is stale, unavailable, on another video, or already in the requested state.
 - Latest product deployment `sehubojx93gmhadn0rj0xdrs` finished at
   `b45fa39baf3f09bcc141e342ba5643ad88138093`; controller and same-origin health returned 200.
   The Coolify CLI handled inspection, logs, and deployment verification. Direct API calls were used
@@ -116,3 +116,23 @@ In Progress
 - The final queue was left empty after completing the re-requested Rick Astley item. Party, guest,
   queue, fallback/search/cache, quota, catalog, controller, command, and audit records remain
   retained; no record, application, volume, backup, enrollment, or pairing was deleted or replaced.
+- Tablet transport hardening was completed in signed commits `ddc2853`, `2ef0fda`, `65e0ef2`, and
+  `8c6700d`. The endpoint binds each request to the tablet-owned active party, playing queue item,
+  current controller generation, matching video, expected player state, operator, and a durable
+  party/queue/action idempotency scope. Exact ambiguous retries reuse their persisted browser
+  operation key; equivalent pending commands cannot cross party or queue scope; transient UI says
+  requested until authoritative state confirms the action.
+- Deployment `p12fz9ocnsd58frv8fwqd6to` finished at exact product SHA
+  `8c6700d5f1c4d1e837daa53f61e83fb76548f42e`; both retained hostnames returned 200. Live Bridge
+  validation showed Pause then Play as realtime wake, authoritative refetch count 1, Lounge command
+  HTTP 2xx, terminal acknowledgement, and refetch count 0. Controller state converged from playing
+  to paused and back to playing before Bridge was completed, leaving the active queue empty.
+- The earlier automatic `open_video` command was acknowledged but SmartTube stayed on the completed
+  fallback video. The approved manual companion Open Video fallback aligned Bridge
+  (`KCI3qN_c3k0`), after which authoritative state and the new controls worked normally. This
+  non-convergence remains a go-live observation rather than hidden success.
+- Final validation passed 28 Vue tests, production type-check/build, 66 backend/protocol contracts
+  with nine explicitly skipped pinned-runtime cases, hook/migration syntax, Compose validation,
+  diff checks, and a scoped secret scan. Independent review returned APPROVE after repairs for
+  durable retry identity, cross-party replay scope, old pending-command scope, stale pending UI,
+  and pending-versus-confirmed messaging.
