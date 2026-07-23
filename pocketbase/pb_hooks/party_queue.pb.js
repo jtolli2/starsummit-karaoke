@@ -741,7 +741,12 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
         })[0]
         if (!candidate || id(candidate) !== id(queue)) throw new Error('not_next')
       }
-      set(queue, 'status', input.to); if (input.to === 'playing') set(queue, 'started_at', now()); else { set(queue, 'completed_at', now()); set(queue, 'active_song_key', null) } if (input.to === 'failed') set(queue, 'failure_reason', String(input.failureReason || 'playback_failed').slice(0, 160)); tx.save(queue)
+      set(queue, 'status', input.to); if (input.to === 'playing') set(queue, 'started_at', now()); else { set(queue, 'completed_at', now()); set(queue, 'active_song_key', null) }
+      // A retained deployment can carry an incompatible legacy optional
+      // failure_reason field. Never let that annotation block the authoritative
+      // state transition that releases the active song; the operator confirms
+      // the bounded reason before issuing this command.
+      tx.save(queue)
       if (input.to === 'playing') {
         const guest = tx.findRecordById('karaoke_guest_identities', str(queue, 'requester')); if (guest) { set(guest, 'last_served_at', now()); tx.save(guest) }
         const deviceId = party && str(party, 'controller_device')
