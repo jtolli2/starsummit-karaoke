@@ -741,11 +741,16 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
         })[0]
         if (!candidate || id(candidate) !== id(queue)) throw new Error('not_next')
       }
-      set(queue, 'status', input.to); if (input.to === 'playing') set(queue, 'started_at', now()); else { set(queue, 'completed_at', now()); set(queue, 'active_song_key', null) }
-      // A retained deployment can carry an incompatible legacy optional
-      // failure_reason field. Never let that annotation block the authoritative
-      // state transition that releases the active song; the operator confirms
-      // the bounded reason before issuing this command.
+      set(queue, 'status', input.to)
+      if (input.to === 'playing') set(queue, 'started_at', now())
+      else {
+        set(queue, 'completed_at', now())
+        // PocketBase validates the composite unique index before SQLite can
+        // apply NULL semantics. A distinct terminal sentinel releases the
+        // video id for re-request without making every terminal row collide.
+        set(queue, 'active_song_key', `terminal:${id(queue)}`)
+      }
+      if (input.to === 'failed') set(queue, 'failure_reason', String(input.failureReason || 'playback_failed').slice(0, 160))
       tx.save(queue)
       if (input.to === 'playing') {
         const guest = tx.findRecordById('karaoke_guest_identities', str(queue, 'requester')); if (guest) { set(guest, 'last_served_at', now()); tx.save(guest) }
@@ -771,8 +776,10 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
     // Keep operational diagnosis non-secret: the client still receives only a
     // normalized code, while the retained server log has a bounded reason.
     try { console.error(`Queue transition failed (reason=${String(error?.message || 'unknown').replace(/[^a-z0-9_:-]/gi, '').slice(0, 80)})`) } catch (_) {}
-    const status = error.message === 'queue_not_found' ? 404 : error.message === 'party_expired' ? 410 : 409
-    return json(c, status, error.message, 'Queue transition rejected')
+    const known = ['queue_not_found', 'party_expired', 'stale_transition', 'controller_unavailable', 'party_already_playing', 'not_next']
+    const reason = known.includes(error.message) ? error.message : 'transition_failed'
+    const status = reason === 'queue_not_found' ? 404 : reason === 'party_expired' ? 410 : 409
+    return json(c, status, reason, 'Queue transition rejected')
   }
 })
 

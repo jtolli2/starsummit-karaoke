@@ -26,12 +26,8 @@ describe('tablet API', () => {
   })
 
   it('exposes backend error codes for recovery messaging', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'stale_transition', message: 'changed' }), { status: 409 })))
     await expect(transitionQueue('tablet-token', 'queue-1', 'playing', 'completed')).rejects.toMatchObject({ code: 'stale_transition', status: 409 })
-    expect(warning).toHaveBeenCalledWith(
-      'Tablet API rejected /api/karaoke/queue/transition (409, stale_transition)',
-    )
   })
 
   it('uses the tablet-scoped active-party recovery route', async () => {

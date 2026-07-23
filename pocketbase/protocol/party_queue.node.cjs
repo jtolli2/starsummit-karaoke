@@ -72,6 +72,18 @@ test('completed songs are not considered duplicates', () => {
   assert.equal(active('queued'), true)
 })
 
+test('terminal queue rows release the video id without colliding with each other', () => {
+  const transition = hook.match(/routerAdd\('POST', '\/api\/karaoke\/queue\/transition',[\s\S]*?\n}\)/)
+  assert.ok(transition)
+  assert.match(transition[0], /set\(queue, 'active_song_key', `terminal:\$\{id\(queue\)\}`\)/)
+  assert.match(transition[0], /set\(queue, 'failure_reason'/)
+  assert.match(transition[0], /reason = known\.includes\(error\.message\) \? error\.message : 'transition_failed'/)
+
+  const terminalKey = (queueId) => `terminal:${queueId}`
+  assert.notEqual(terminalKey('queue-a'), terminalKey('queue-b'))
+  assert.notEqual(terminalKey('queue-a'), 'nMDXPAM8RwE')
+})
+
 // Reference for the transition guard: queue state must not advance until the
 // party is live and the controller has a current connected state report.
 const CONTROLLER_STATE_TTL = 90 * 1000
