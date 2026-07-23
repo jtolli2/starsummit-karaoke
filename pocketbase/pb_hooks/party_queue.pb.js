@@ -392,7 +392,7 @@ onRecordAfterUpdateSuccess((e) => {
 
 routerAdd('POST', '/api/karaoke/parties', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { PARTY_TTL, auth, tablet, json, find, code, hash, set, future, id, str } = globalThis.__partyQueue
+  const { PARTY_TTL, CONTROLLER_STATE_TTL, auth, tablet, json, find, code, hash, set, future, id, str } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   let result
   try {
@@ -400,7 +400,7 @@ routerAdd('POST', '/api/karaoke/parties', (c) => {
       let plain; let party
       for (let i = 0; i < 8; i++) { plain = code(); if (!find('karaoke_parties', 'code_hash = {:hash}', { hash: hash(plain) })) break }
       party = new Record(tx.findCollectionByNameOrId('karaoke_parties'))
-      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false', '-last_seen_at', 2, 0)
+      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: new Date(Date.now() - CONTROLLER_STATE_TTL).toISOString() })
       set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0)
       // Never guess between multiple enrolled devices. A single retained,
       // non-revoked controller can safely become the party controller.
@@ -658,7 +658,7 @@ routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
 // without exposing controller records or guessing between multiple devices.
 routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, id, str, set } = globalThis.__partyQueue
+  const { auth, tablet, json, body, id, str, set, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const partyId = String(body(c).partyId || '')
@@ -670,7 +670,7 @@ routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
       if (!party || str(party, 'created_by') !== id(operator)) throw new Error('party_not_found')
       deviceId = str(party, 'controller_device')
       if (deviceId) return
-      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false', '-last_seen_at', 2, 0)
+      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: new Date(Date.now() - CONTROLLER_STATE_TTL).toISOString() })
       if (controllers.length !== 1) throw new Error(controllers.length ? 'controller_ambiguous' : 'controller_unavailable')
       deviceId = id(controllers[0]); set(party, 'controller_device', deviceId); tx.save(party)
     })
