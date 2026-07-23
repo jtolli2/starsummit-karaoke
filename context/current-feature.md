@@ -79,3 +79,7 @@ In Progress
   Lionel Richie / My Love has a verified operator correction and is visibly awaiting approval on
   page 1; browser targeting became intermittent for its nested approval control, so no substitute
   direct-record action was attempted.
+- Tablet review continued with stable card-scoped controls: Lionel Richie / My Love, Evanescence /
+  My Immortal, and Whitney Houston / I Have Nothing were each MusicBrainz-verified, corrected,
+  and approved. The retained review backlog is now 47; no bulk approval or direct record write
+  was used.
