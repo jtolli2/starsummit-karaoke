@@ -97,3 +97,7 @@ In Progress
   unreviewed-or-needs-review backlog, guarded by the catalog protocol contract. The same runtime
   check exposed a missing worker-local `jsonValue` binding in the catalog route's newly added
   alternatives count; the callback now explicitly loads that helper before serializing rows.
+- After the retained staging deployment of those repairs, the refreshed authenticated tablet
+  review again rendered its 20-row actionable page. MusicBrainz-backed corrections and approvals
+  then added Forrest Frank / `GOOD DAY` and Slipknot / `Vermilion, Pt. 2`; no batch approval,
+  fallback approval, direct database edit, deletion, or extra YouTube search was used.
