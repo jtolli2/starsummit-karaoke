@@ -28,6 +28,7 @@ services:
     environment:
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:?Set the server-only primary YouTube API key}
       YOUTUBE_API_KEY_BACKUP: ${YOUTUBE_API_KEY_BACKUP:-}
+      KARAOKE_PLAYLIST_ALLOWLIST_JSON: ${KARAOKE_PLAYLIST_ALLOWLIST_JSON:-[]}
     volumes:
       - pocketbase_data:/pb/pb_data
     expose:
