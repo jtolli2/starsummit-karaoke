@@ -94,4 +94,6 @@ In Progress
 - A freshly deployed tablet bundle exposed a review-list compatibility defect: the visible
   `Needs review` filter sent that state while the server's combined actionable backlog was only
   available under its retained `pending` alias. The server now maps both values to the same
-  unreviewed-or-needs-review backlog, guarded by the catalog protocol contract.
+  unreviewed-or-needs-review backlog, guarded by the catalog protocol contract. The same runtime
+  check exposed a missing worker-local `jsonValue` binding in the catalog route's newly added
+  alternatives count; the callback now explicitly loads that helper before serializing rows.

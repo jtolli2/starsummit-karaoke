@@ -89,6 +89,8 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /const totalItems = allRows\.length/)
   assert.match(hook, /catalog\/\{id\}\/review/)
   assert.match(hook, /review === 'pending' \|\| review === 'needs_review'/)
+  const catalogRoute = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/catalog',\s*\(c\) => \{[\s\S]*?\n\}\)/)?.[0] || ''
+  assert.match(catalogRoute, /num, jsonValue \} = globalThis\.__partyQueue/)
 })
 
 test('numeric reader preserves PocketBase decimal confidence and integer counters', () => {

@@ -905,7 +905,7 @@ routerAdd('GET', '/api/karaoke/tablet/catalog/checkpoint-health', (c) => {
 
 routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, query, records, str, id, num } = globalThis.__partyQueue
+  const { auth, tablet, json, query, records, str, id, num, jsonValue } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const page = Math.max(1, Number(query(c, 'page') || 1) || 1)
   const perPage = Math.min(100, Math.max(1, Number(query(c, 'perPage') || 25) || 25))
