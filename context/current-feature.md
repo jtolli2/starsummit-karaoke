@@ -43,3 +43,15 @@ In Progress
   live rehearsal remain open.
 - Local evidence: 44 backend contracts passed (9 pinned-runtime tests skipped without
   `POCKETBASE_BIN`), 24 Vue tests passed, and the production build passed.
+- Rehearsal hardening deployed: `ba1c595` refreshes controller device liveness only from an
+  authenticated session resume or authenticated state report, transactionally with the persisted
+  state. This repairs the 90-second availability cutoff without changing enrollment or public
+  access. The independent review also confirmed the prior state-report mutex repair.
+- Staging proxy hardening deployed as `289745a`: the separately hosted PocketBase upstream now
+  receives its own ingress host and TLS SNI, preventing same-origin `/api` requests from looping
+  back to the frontend. Local Nginx syntax, Vue tests, and production build passed.
+- The backend deployment `s14r0bxkr26cp75n6x2wen7b` finished at `ba1c595`. Frontend deployment
+  `ptxi9xswsbgplge2i0qd2isz` was queued at `289745a`; while it was rebuilding, the retained
+  staging host stopped completing TLS/SSH/API handshakes. Remote rehearsal evidence remains open
+  until ingress and Coolify recover. No retained record, resource, or volume was deleted or
+  replaced.
