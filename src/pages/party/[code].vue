@@ -61,7 +61,7 @@ async function search() {
     const local = fuse?.search(normalized, { limit: 12 }).map((result) => result.item) || []
     songs.value = local
     // Fuse scores above 0.42 are intentionally treated as weak; offer fallback explicitly.
-    const weak = local.length === 0 || (fuse?.search(normalized, { limit: 1 })[0]?.score || 1) > 0.42
+    const weak = local.length === 0 || (fuse?.search(normalized, { limit: 1 })[0]?.score ?? 1) > 0.42
     fallbackSuggested.value = weak
   } catch (error) {
     if ((error as { code?: string }).code === 'guest_credential_expired' && await rejoinOnce()) return search()

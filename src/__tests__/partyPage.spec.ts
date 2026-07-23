@@ -77,4 +77,13 @@ describe('party page', () => {
     vi.useRealTimers()
   })
 
+  it('does not suggest fallback for an exact local Fuse match with score zero', async () => {
+    const wrapper = mount(PartyPage)
+    await flushPromises()
+    await wrapper.get('input').setValue('Song')
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Search YouTube')
+  })
+
 })
