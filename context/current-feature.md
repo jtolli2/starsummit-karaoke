@@ -91,3 +91,7 @@ In Progress
   collision revalidation, per-song audit events, and one retained batch-summary audit event.
   Independent review approved the implementation; behavioral pinned-runtime and Vue interaction
   coverage remain a follow-up beyond the current static/focused suite.
+- A freshly deployed tablet bundle exposed a review-list compatibility defect: the visible
+  `Needs review` filter sent that state while the server's combined actionable backlog was only
+  available under its retained `pending` alias. The server now maps both values to the same
+  unreviewed-or-needs-review backlog, guarded by the catalog protocol contract.

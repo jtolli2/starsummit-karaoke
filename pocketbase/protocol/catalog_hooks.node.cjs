@@ -88,6 +88,7 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /return c\.json\(200, result\)/)
   assert.match(hook, /const totalItems = allRows\.length/)
   assert.match(hook, /catalog\/\{id\}\/review/)
+  assert.match(hook, /review === 'pending' \|\| review === 'needs_review'/)
 })
 
 test('numeric reader preserves PocketBase decimal confidence and integer counters', () => {

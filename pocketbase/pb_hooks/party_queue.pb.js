@@ -911,7 +911,10 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   const perPage = Math.min(100, Math.max(1, Number(query(c, 'perPage') || 25) || 25))
   const review = String(query(c, 'review') || '').trim(); const classification = String(query(c, 'classification') || '').trim()
   const clauses = []; const params = {}
-  if (review === 'pending') clauses.push('(review_status = "unreviewed" || review_status = "needs_review")')
+  // The tablet's "Needs review" view is the actionable backlog: both records
+  // awaiting their first decision and identity-corrected records returned to
+  // review. Keep the legacy pending query alias for retained callers.
+  if (review === 'pending' || review === 'needs_review') clauses.push('(review_status = "unreviewed" || review_status = "needs_review")')
   else if (review) { clauses.push('review_status = {:review}'); params.review = review }
   if (classification) { clauses.push('classification = {:classification}'); params.classification = classification }
   const filter = clauses.join(' && ') || ''
