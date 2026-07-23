@@ -15,6 +15,9 @@ Read `context/overview.md`, `context/project-overview.md`, `context/coding-stand
 - Keep direct public queue writes disabled. Route submissions through `POST /api/karaoke/requests` and atomically validate party access, expiry, identity, duplicates, rate, and fair placement.
 - Use `vite-plugin-pages` routes under `src/pages/`; treat the current empty router as pre-implementation scaffolding.
 - Keep the frontend and PocketBase in separate containers within this repository, with Coolify routing same-origin `/api` and realtime traffic to PocketBase.
+- Prefer the Coolify CLI for supported Coolify inspection and approved mutations. Use the read-only Coolify MCP for discovery/verification and direct API calls only when the CLI lacks the required operation.
+- Treat `YOUTUBE_API_KEY_BACKUP` as server-only manual development fallback until automated
+  failover is implemented as a separately scoped enhancement. Never expose key values.
 - Account for real-time conflicts. Queue transitions must be atomic and must not silently lose concurrent guest submissions.
 - Implement only the active feature's goals. Record unresolved product choices instead of inventing behavior.
 

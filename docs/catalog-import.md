@@ -53,6 +53,15 @@ and stores only filtered public, processed, embeddable candidates plus availabil
 Transient API failures are retried briefly and recorded as a redacted run error; the key is never
 returned or logged.
 
+Coolify also supplies `YOUTUBE_API_KEY_BACKUP`. Automated application support for this variable is
+deferred; when it is implemented, it must treat it
+as a quota-exhaustion fallback only: select the primary by default, switch only after a definitive
+primary-key quota response, and account for reservations and spend in separate ledgers identified by
+non-secret aliases. An ambiguous request must remain charged/reconcilable against the key that began
+it and must not be repeated with the backup. Authentication, permission, validation, network, and
+malformed-response failures do not authorize failover. Neither key value may enter records, browser
+responses, logs, diagnostics, or commits.
+
 Canonical title and artist are mandatory for live discovery. They come from the source manifest or
 an audited operator correction. YouTube `snippet.title`, `channelTitle`, and `channelId` are stored
 separately as video provenance and may affect matching/classification only; they never populate or

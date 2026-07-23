@@ -400,7 +400,12 @@ routerAdd('POST', '/api/karaoke/parties', (c) => {
       let plain; let party
       for (let i = 0; i < 8; i++) { plain = code(); if (!find('karaoke_parties', 'code_hash = {:hash}', { hash: hash(plain) })) break }
       party = new Record(tx.findCollectionByNameOrId('karaoke_parties'))
-      set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0); tx.save(party)
+      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false', '-last_seen_at', 2, 0)
+      set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0)
+      // Never guess between multiple enrolled devices. A single retained,
+      // non-revoked controller can safely become the party controller.
+      if (controllers.length === 1) set(party, 'controller_device', id(controllers[0]))
+      tx.save(party)
       result = { id: id(party), code: plain, expiresAt: str(party, 'expires_at') }
     })
   } catch (_) { return json(c, 500, 'party_create_failed', 'Party could not be created') }

@@ -15,6 +15,13 @@ test('tablet active callback resolves now through the reload-safe global contrac
   assert.match(endpoint[0], /now\(\)/)
 })
 
+test('party creation binds exactly one active controller without guessing between devices', () => {
+  const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/parties',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /findRecordsByFilter\('controller_devices', 'revoked = false', '-last_seen_at', 2, 0\)/)
+  assert.match(endpoint[0], /if \(controllers\.length === 1\) set\(party, 'controller_device', id\(controllers\[0\]\)\)/)
+})
+
 // Reference implementation of the server's deterministic round-robin rule.
 function chooseNext(pending, servedAt = {}) {
   const firstByRequester = new Map()

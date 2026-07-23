@@ -6,6 +6,10 @@
 
 The Hetzner server currently runs Coolify at `app.starsummit.net` and hosts other applications. Karaoke will be containerized and initially managed by Coolify at `karaoke.app.starsummit.net`. If it moves outside Coolify later, use an externally managed Docker Compose stack with Traefik; an additional Traefik/Nginx cannot independently claim ports 80/443 while Coolify's ingress uses them.
 
+Use the Coolify CLI as the preferred interface for supported inspection and approved mutations.
+Use the read-only Coolify MCP for discovery/verification and direct API calls only when the CLI does
+not support the required operation.
+
 ## Working Product Decisions
 
 Guests enter through a QR URL containing a party code, receive party-scoped temporary identities, can read the sanitized active queue, and submit song requests through a validated server endpoint. Parties expire after 12 hours; duplicate songs are blocked while queued or playing but may be requested again after completion. Fair rotation is preferred. The initial library target is about 5,000 songs. Karaoke backing tracks are strongly preferred; live, misleading, unrelated, and ordinary non-karaoke covers are excluded. A controlled, ineligible `fallback_lyric` or `fallback_audio` may be retained only for operator review and later replacement. Catalog records retain source provenance, confidence, review/replacement history, and eligibility metadata.
@@ -19,6 +23,10 @@ Starsummit Karaoke is a private multi-user karaoke system for parties. Guests us
 ## Intended Architecture
 
 PocketBase runs as a separate stateful backend container on the Hetzner VPS. A stateless frontend container serves the Vue application. Coolify routes same-origin `/api` and realtime traffic to PocketBase, which provides SQLite-backed party, queue, and library data plus the protected YouTube API proxy. The Vue app must not contain API keys or PocketBase superuser credentials.
+
+Coolify provides `YOUTUBE_API_KEY` as the current server-only YouTube credential and retains
+`YOUTUBE_API_KEY_BACKUP` for manual development use. Automated backup-key failover is deferred
+to a separately scoped enhancement.
 
 The guest client searches a cached song library with Fuse.js and may request a fallback search through PocketBase. Queue submissions go through a server-side endpoint that validates the party code, expiry, temporary identity, payload, duplicates, rate, and fair placement atomically.
 

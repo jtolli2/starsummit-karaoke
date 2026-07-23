@@ -4,6 +4,26 @@
 
 ## Entries
 
+### 2026-07-22 — Persist Coolify CLI and YouTube backup-key operating rules
+
+- **Feedback:** The preferred Coolify CLI workflow and the newly configured backup YouTube API key
+  were not present in durable project guidance.
+- **Improvement:** Prefer the Coolify CLI for supported operations, retain the MCP as a read-only
+  discovery/verification path, and use direct API calls only for CLI gaps. Treat
+  `YOUTUBE_API_KEY_BACKUP` as a server-only fallback after definitive primary quota exhaustion with
+  separate non-secret quota accounting and no ambiguous retry.
+- **Follow-up:** Implement and validate backup-key selection before relying on it during a party;
+  the current PocketBase hook reads only `YOUTUBE_API_KEY`.
+
+### 2026-07-22 — Defer automated backup-key failover from the MVP
+
+- **Feedback:** The party rehearsal needs a reliable primary-key path sooner than the broader
+  alias-scoped failover design can be safely delivered.
+- **Improvement:** Keep both credentials server-only, use the primary at runtime, and reserve the
+  backup for manual development intervention until automated failover is implemented as a dedicated
+  enhancement with durable per-alias accounting and real-runtime evidence.
+- **Follow-up:** Do not imply automatic backup use in MVP operational documentation.
+
 ### 2026-07-22 — Review resumable import invariants as an adversarial sequence
 
 - **Feedback:** Initial importer unit tests and syntax checks missed hook-VM closure use,

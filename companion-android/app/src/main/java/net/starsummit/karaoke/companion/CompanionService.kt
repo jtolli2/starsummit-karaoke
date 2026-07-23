@@ -156,8 +156,24 @@ class CompanionService : Service() {
           processControllerCommands(bridge, processor, initialCommands)
           attempt = 0
           if (bridge.isRealtimeAvailable) {
-            diagnosticsStore.controllerPhase("listen")
-            bridge.listenRealtime { commands -> processControllerCommands(bridge, processor, commands) }
+            coroutineScope {
+              val heartbeat = launch {
+                while (isActive) {
+                  delay(ControllerHeartbeatPolicy.REPORT_INTERVAL_MS)
+                  diagnosticsStore.controllerPhase("report_state")
+                  runCatching {
+                    bridge.reportState(sanitizedControllerState())
+                    lastStateReportAt = SystemClock.elapsedRealtime()
+                  }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
+                }
+              }
+              try {
+                diagnosticsStore.controllerPhase("listen")
+                bridge.listenRealtime { commands -> processControllerCommands(bridge, processor, commands) }
+              } finally {
+                heartbeat.cancel()
+              }
+            }
           } else {
             while (isActive) {
               delay(HTTPS_COMMAND_POLL_INTERVAL_MS)

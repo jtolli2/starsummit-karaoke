@@ -28,3 +28,11 @@ Use TypeScript and Vue single-file components with two-space indentation, LF end
 ## Feature Workflow & Delivery
 
 Use the project-local feature workflow at `.agents/skills/feature/` and its `context/` files to load, implement, test, review, and explain scoped work. Keep commits short and imperative, matching the existing history. Pull requests should describe user-visible behavior, tests run, relevant issue links, and screenshots for UI changes. Obtain explicit approval before committing, pushing, merging, or deleting a branch.
+
+Prefer the Coolify CLI for Coolify inspection and approved mutations when it supports the required
+operation. Use the read-only Coolify MCP for discovery or verification, and fall back to direct API
+calls only when the CLI cannot perform the operation. Never print or persist Coolify credentials.
+
+PocketBase receives YouTube credentials only through server environment variables. Use
+`YOUTUBE_API_KEY` is the current runtime credential. `YOUTUBE_API_KEY_BACKUP` is retained for
+manual development use; automated failover is a deferred enhancement. Never expose either value.

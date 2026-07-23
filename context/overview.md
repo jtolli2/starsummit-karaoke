@@ -43,6 +43,9 @@
 
 - The Hetzner server currently runs a Coolify instance at `app.starsummit.net` and hosts other applications.
 - The karaoke app will be containerized and Coolify will manage it for the initial deployment at `karaoke.app.starsummit.net`.
+- Prefer the Coolify CLI for supported Coolify inspection and approved mutations. Use the read-only
+  Coolify MCP for discovery/verification and direct API calls only when the CLI cannot perform the
+  required operation.
 - If deployment moves outside Coolify later, use an externally managed Docker Compose stack and Traefik; do not introduce that second ingress during the initial Coolify deployment.
 - Coolify's existing ingress likely owns the host's public ports 80/443. An independent Traefik or Nginx cannot bind those ports at the same time; it would need to sit behind Coolify's ingress, or replace/reconfigure ingress for every app on the server.
 - Any shared-server design must define resource limits, persistent storage, backups, secret management, TLS/DNS ownership, and a failure boundary so a karaoke deployment cannot disrupt existing apps.
@@ -72,6 +75,9 @@
 - Model a party token, expiry, temporary requester identity, queue status, monotonic sequence, and failure reason. Enforce no duplicate active `(party, song)` records server-side.
 - Use file-based Vue routing through `vite-plugin-pages`: `/party/:code` for guests, `/admin` for controls/settings, and `/tablet` for a playback-focused display. Share the constrained admin session between the protected routes. The current empty router is scaffolding, not a manual-routing decision.
 - Use write-through caching: search the local library first, call YouTube only for misses, normalize and save selected results, and debounce requests. Keep API keys in Coolify secrets and enforce server-side rate limiting even without a hard user-facing cap.
+- Coolify provides server-only `YOUTUBE_API_KEY` and `YOUTUBE_API_KEY_BACKUP` values. The primary
+  key is the current runtime credential; the backup is retained for manual development use.
+  Automated failover is deferred to a separately scoped enhancement. Never expose either value.
 - Prototype SmartTube pairing and playback-state detection in a native Fire tablet companion before
   building the full queue UI. Store durable Lounge pairing material with Android Keystore-backed
   encryption, reconnect by refetching current state, and make transitions idempotent. Lounge
