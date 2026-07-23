@@ -763,6 +763,9 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
     })
     return c.json(200, result)
   } catch (error) {
+    // Keep operational diagnosis non-secret: the client still receives only a
+    // normalized code, while the retained server log has a bounded reason.
+    try { console.error(`Queue transition failed (reason=${String(error?.message || 'unknown').replace(/[^a-z0-9_:-]/gi, '').slice(0, 80)})`) } catch (_) {}
     const status = error.message === 'queue_not_found' ? 404 : error.message === 'party_expired' ? 410 : 409
     return json(c, status, error.message, 'Queue transition rejected')
   }
