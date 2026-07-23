@@ -105,6 +105,20 @@ describe('tablet operator page', () => {
     expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeUndefined()
   })
 
+  it('disables transport controls while controller video lags the active queue', async () => {
+    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
+    const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({
+      queue: playingQueue,
+      controller: { connected: true, connectionState: 'connected', state: { playerState: 'playing', videoId: 'different01' } },
+    })), { status: 200 })))
+    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+    await settle()
+    expect(wrapper.text()).toContain('Waiting for controller playback confirmation')
+    expect(wrapper.findAll('button').find((button) => button.text() === 'Play')?.attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeDefined()
+  })
+
   it('renders expired party recovery instead of active queue controls', async () => {
     sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({ party: { id: 'party-1', codeHint: 'CD34', expiresAt: new Date(Date.now() - 1000).toISOString(), status: 'expired' } })), { status: 200 })))

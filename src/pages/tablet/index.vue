@@ -67,11 +67,17 @@ const controllerReady = computed(() =>
   ),
 )
 const playerState = computed(() => status.value?.controller?.state?.playerState || 'unknown')
+const controllerMatchesPlaying = computed(() =>
+  Boolean(
+    playing.value?.song?.youtubeId &&
+      status.value?.controller?.state?.videoId === playing.value.song.youtubeId,
+  ),
+)
 const canPlay = computed(
-  () => controllerReady.value && Boolean(playing.value) && playerState.value === 'paused',
+  () => controllerReady.value && controllerMatchesPlaying.value && playerState.value === 'paused',
 )
 const canPause = computed(
-  () => controllerReady.value && Boolean(playing.value) && playerState.value === 'playing',
+  () => controllerReady.value && controllerMatchesPlaying.value && playerState.value === 'playing',
 )
 
 function storedSession(): StoredSession | null {
@@ -517,6 +523,9 @@ onUnmounted(() => {
         </p>
         <p v-if="status.controller?.state?.videoId">Video {{ status.controller.state.videoId }}</p>
         <p v-if="!controllerReady">Connect the native controller before starting a song.</p>
+        <p v-else-if="playing && !controllerMatchesPlaying" role="status">
+          Waiting for controller playback confirmation…
+        </p>
         <div class="playback-controls" aria-label="Playback controls">
           <button type="button" @click="controlPlayback('play')" :disabled="busy || !canPlay">
             Play

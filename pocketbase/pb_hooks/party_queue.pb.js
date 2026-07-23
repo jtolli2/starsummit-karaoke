@@ -736,18 +736,24 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
           controllerState = tx.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: deviceId })
         } catch (_) {}
       }
-      const stateFresh = controllerState && str(controllerState, 'observed_at') && new Date(str(controllerState, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
-      if (!session || !controllerState || !stateFresh || num(controllerState, 'session_generation') !== generation || str(controllerState, 'connection_state') !== 'connected') throw new Error('controller_unavailable')
-      const song = tx.findRecordById('karaoke_songs', str(playing, 'song'))
-      if (!song || str(controllerState, 'video_id') !== str(song, 'youtube_id')) throw new Error('controller_state_mismatch')
 
+      // Resolve an exact durable replay before consulting volatile playback
+      // state. This prevents an ambiguous client retry from creating a second
+      // command merely because the first command already changed that state.
       let duplicate = null
-      try { duplicate = tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && idempotency_key = {:key}', { device: deviceId, key: idempotencyKey }) } catch (_) {}
+      try { duplicate = deviceId ? tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && idempotency_key = {:key}', { device: deviceId, key: idempotencyKey }) : null } catch (_) {}
       if (duplicate) {
         if (str(duplicate, 'action') !== action) throw new Error('idempotency_conflict')
         result = { id: id(duplicate), action, sequence: num(duplicate, 'sequence'), status: str(duplicate, 'status'), idempotent: true }
         return
       }
+
+      const stateFresh = controllerState && str(controllerState, 'observed_at') && new Date(str(controllerState, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
+      if (!session || !controllerState || !stateFresh || num(controllerState, 'session_generation') !== generation || str(controllerState, 'connection_state') !== 'connected') throw new Error('controller_unavailable')
+      const song = tx.findRecordById('karaoke_songs', str(playing, 'song'))
+      if (!song || str(controllerState, 'video_id') !== str(song, 'youtube_id')) throw new Error('controller_state_mismatch')
+      const playerState = str(controllerState, 'player_state')
+      if ((action === 'play' && playerState !== 'paused') || (action === 'pause' && playerState !== 'playing')) throw new Error('playback_state_conflict')
 
       const sequence = num(device, 'command_sequence') + 1
       set(device, 'command_sequence', sequence)
@@ -767,7 +773,7 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
     })
     return c.json(result.idempotent ? 200 : 201, result)
   } catch (error) {
-    const known = ['party_not_found', 'party_expired', 'nothing_playing', 'controller_unavailable', 'controller_state_mismatch', 'idempotency_conflict']
+    const known = ['party_not_found', 'party_expired', 'nothing_playing', 'controller_unavailable', 'controller_state_mismatch', 'playback_state_conflict', 'idempotency_conflict']
     const reason = known.includes(error.message) ? error.message : 'playback_command_failed'
     const status = reason === 'party_not_found' ? 404 : reason === 'party_expired' ? 410 : 409
     return json(c, status, reason, 'Playback command rejected')
