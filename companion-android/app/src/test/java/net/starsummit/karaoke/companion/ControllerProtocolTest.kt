@@ -156,6 +156,29 @@ class ControllerProtocolTest {
     assertTrue(ControllerHeartbeatPolicy.shouldReport(0L, 90_001L))
   }
 
+  @Test
+  fun `heartbeat state report cannot overlap a post-command report`() = runTest {
+    val reporter = SerializedControllerStateReporter()
+    val entered = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val events = mutableListOf<String>()
+    val heartbeat = launch {
+      reporter.report {
+        events += "heartbeat-start"
+        entered.complete(Unit)
+        release.await()
+        events += "heartbeat-end"
+      }
+    }
+    entered.await()
+    val command = launch { reporter.report { events += "command" } }
+    assertEquals(listOf("heartbeat-start"), events)
+    release.complete(Unit)
+    heartbeat.join()
+    command.join()
+    assertEquals(listOf("heartbeat-start", "heartbeat-end", "command"), events)
+  }
+
   private val future = System.currentTimeMillis() + 60_000
   private val session = ControllerSession("session", 4, future)
 

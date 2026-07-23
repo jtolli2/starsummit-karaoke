@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import java.io.IOException
@@ -31,6 +33,7 @@ import java.io.IOException
 class CompanionService : Service() {
   private val binder = CompanionBinder()
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+  private val controllerStateReporter = SerializedControllerStateReporter()
   private lateinit var pairingStore: PairingStore
   private lateinit var controllerStore: ControllerStore
   private lateinit var controllerApi: PocketBaseControllerApi
@@ -149,7 +152,7 @@ class CompanionService : Service() {
           var lastStateReportAt = 0L
           diagnosticsStore.controllerPhase("report_state")
           runCatching {
-            bridge.reportState(sanitizedControllerState())
+            reportControllerState(bridge)
             lastStateReportAt = SystemClock.elapsedRealtime()
           }
             .onFailure { diagnosticsStore.error(it, setErrorState = false) }
@@ -162,7 +165,7 @@ class CompanionService : Service() {
                   delay(ControllerHeartbeatPolicy.REPORT_INTERVAL_MS)
                   diagnosticsStore.controllerPhase("report_state")
                   runCatching {
-                    bridge.reportState(sanitizedControllerState())
+                    reportControllerState(bridge)
                     lastStateReportAt = SystemClock.elapsedRealtime()
                   }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
                 }
@@ -183,7 +186,7 @@ class CompanionService : Service() {
               if (ControllerHeartbeatPolicy.shouldReport(lastStateReportAt, SystemClock.elapsedRealtime())) {
                 diagnosticsStore.controllerPhase("report_state")
                 runCatching {
-                  bridge.reportState(sanitizedControllerState())
+                  reportControllerState(bridge)
                   lastStateReportAt = SystemClock.elapsedRealtime()
                 }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
               }
@@ -215,7 +218,7 @@ class CompanionService : Service() {
       val result = bridge.processCommand(processor, command, diagnosticsStore.snapshot.value.nowPlaying)
       if (result is CommandResult.Failed) diagnosticsStore.error(IllegalStateException(result.errorCode), setErrorState = false)
       runCatching {
-        bridge.reportState(sanitizedControllerState())
+        reportControllerState(bridge)
       }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
     }
   }
@@ -229,6 +232,11 @@ class CompanionService : Service() {
       playback = now.copy(state = now.state?.let(::sanitizeLoungePlayerState)),
       lastCommandSequence = progress.lastCommandSequence,
     )
+  }
+
+  /** A heartbeat must never race a post-command report and regress playback state. */
+  private suspend fun reportControllerState(bridge: PocketBaseControllerBridge) {
+    controllerStateReporter.report { bridge.reportState(sanitizedControllerState()) }
   }
 
   private inner class LoungeCommandExecutor : CommandExecutor {
@@ -399,6 +407,12 @@ internal object ControllerHeartbeatPolicy {
   const val REPORT_INTERVAL_MS = 30_000L
 
   fun shouldReport(lastReportAt: Long, now: Long): Boolean = lastReportAt <= 0L || now - lastReportAt >= REPORT_INTERVAL_MS
+}
+
+internal class SerializedControllerStateReporter {
+  private val mutex = Mutex()
+
+  suspend fun report(block: suspend () -> Unit) = mutex.withLock { block() }
 }
 
 internal class CommandCorrelation {
