@@ -61,3 +61,7 @@ In Progress
   (six preview / nine import calls), records actual operation attempts, and settles unused
   reservation. Further population is deliberately paused for canonical MusicBrainz/operator
   review integration rather than bulk-approving title parses.
+- A second verified KaraFun `All Time Top 50` source passed ownership preview and retained 16
+  additional `needs_review`/ineligible candidates (9 unavailable audit outcomes). One candidate,
+  Toni Braxton / Un-Break My Heart, received an audited MusicBrainz-backed operator identity
+  correction but remains unapproved and ineligible pending a refreshed-card review.
