@@ -10,13 +10,16 @@ import {
   loadActiveParty,
   loadCatalog,
   loadCatalogReport,
+  importTrustedPlaylist,
   loadNext,
   loadTabletStatus,
   replaceCatalogSong,
+  previewTrustedPlaylist,
   reviewCatalogSong,
   transitionQueue,
   type CatalogReport,
   type CatalogSong,
+  type PlaylistImportPreview,
   type TabletQueueItem,
   type TabletStatus,
 } from '@/services/tabletApi'
@@ -52,6 +55,8 @@ const catalogTotalPages = ref(1)
 const catalogReport = ref<CatalogReport | null>(null)
 const correction = ref<Record<string, { title: string; artist: string; reason: string }>>({})
 const replacementId = ref<Record<string, string>>({})
+const playlistSourceKey = ref('')
+const playlistPreview = ref<PlaylistImportPreview | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
 const activeQueue = computed(() => status.value?.queue || [])
@@ -257,6 +262,27 @@ async function setCatalogReview(
   } finally {
     catalogLoading.value = false
   }
+}
+
+async function previewPlaylist() {
+  if (!token.value || !playlistSourceKey.value.trim()) return
+  catalogLoading.value = true
+  try {
+    playlistPreview.value = await previewTrustedPlaylist(token.value, playlistSourceKey.value.trim())
+    message.value = `Playlist preview: ${playlistPreview.value.expectedItems} items; modeled ${playlistPreview.value.modeledCost.total} API units.`
+    error.value = false
+  } catch (cause) { message.value = explain(cause, 'Playlist preview could not be loaded.'); error.value = true } finally { catalogLoading.value = false }
+}
+
+async function importPlaylist() {
+  if (!token.value || !playlistPreview.value || catalogLoading.value) return
+  catalogLoading.value = true
+  try {
+    const result = await importTrustedPlaylist(token.value, playlistPreview.value.source.sourceKey, playlistPreview.value.snapshotFingerprint, 25, playlistPreview.value.pageToken)
+    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable retained in audit.`
+    error.value = false
+    await refreshCatalog()
+  } catch (cause) { message.value = explain(cause, 'Playlist import could not be completed.'); error.value = true } finally { catalogLoading.value = false }
 }
 
 async function replaceSong(song: CatalogSong) {
@@ -640,6 +666,16 @@ onUnmounted(() => {
           <button type="button" class="quiet" @click="refreshCatalog" :disabled="catalogLoading">
             {{ catalogShown ? 'Refresh' : 'Review songs' }}
           </button>
+        </div>
+        <div class="playlist-import">
+          <label for="playlist-source">Trusted playlist source key</label>
+          <input id="playlist-source" v-model="playlistSourceKey" placeholder="channelId:playlistId" />
+          <button type="button" @click="previewPlaylist" :disabled="catalogLoading || !playlistSourceKey.trim()">Preview trusted playlist</button>
+          <p v-if="playlistPreview" role="status">
+            {{ playlistPreview.source.channelName || 'Configured channel' }} · {{ playlistPreview.expectedItems }} items ·
+            {{ playlistPreview.modeledCost.playlistsList }} owner + {{ playlistPreview.modeledCost.playlistItemsList }} playlist + {{ playlistPreview.modeledCost.videosList }} video calls
+          </p>
+          <button v-if="playlistPreview" type="button" @click="importPlaylist" :disabled="catalogLoading">Import preview page</button>
         </div>
         <div v-if="catalogShown">
           <p v-if="catalogReport" class="catalog-summary">

@@ -54,6 +54,15 @@ export type CatalogReport = {
   unresolvedReviewBacklog: number
 }
 
+export type PlaylistImportPreview = {
+  source: { sourceKey: string; channelName: string; playlistName: string; rationale: string }
+  expectedItems: number
+  pageToken: string
+  nextPageToken: string
+  snapshotFingerprint: string
+  modeledCost: { playlistsList: number; playlistItemsList: number; videosList: number; total: number }
+}
+
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('accept', 'application/json')
@@ -149,6 +158,20 @@ export function correctCatalogIdentity(token: string, id: string, correction: { 
 
 export function loadCatalogReport(token: string) {
   return request<CatalogReport>('/api/karaoke/tablet/catalog/report', {}, token)
+}
+
+export function previewTrustedPlaylist(token: string, sourceKey: string, maxItems = 25) {
+  return request<PlaylistImportPreview>('/api/karaoke/tablet/catalog/playlists/import', {
+    method: 'POST',
+    body: JSON.stringify({ sourceKey, maxItems, dryRun: true }),
+  }, token)
+}
+
+export function importTrustedPlaylist(token: string, sourceKey: string, snapshotFingerprint: string, maxItems = 25, pageToken = '') {
+  return request<{ imported: number; duplicates: number; unavailable: number; nextPageToken: string }>(
+    '/api/karaoke/tablet/catalog/playlists/import',
+    { method: 'POST', body: JSON.stringify({ sourceKey, snapshotFingerprint, maxItems, pageToken, dryRun: false }) }, token,
+  )
 }
 
 export function replaceCatalogSong(token: string, id: string, candidate: { candidateId?: string; youtubeId?: string }) {
