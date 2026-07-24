@@ -78,3 +78,9 @@ Blocked
   metadata: only missing, non-public, or unprocessed videos count unavailable. Public processed
   non-embeddable rows remain needs-review/ineligible without inferred canonical identity. This policy
   change is scoped to trusted-playlist import/revalidation; fallback search policy is unchanged.
+
+- 2026-07-24: Added constrained playlist page continuation in the tablet client. Preview accepts and
+  forwards an explicit page token; the admin retains `nextPageToken` only after a successful import,
+  then offers an explicit next-page preview control. Each import remains bound to the currently
+  previewed snapshot/page, and a new source or first-page preview clears continuation state. No
+  automatic page traversal or import was added.

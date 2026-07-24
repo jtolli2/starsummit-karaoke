@@ -61,6 +61,7 @@ const replacementId = ref<Record<string, string>>({})
 const selectedApprovals = ref<string[]>([])
 const playlistSourceKey = ref('')
 const playlistPreview = ref<PlaylistImportPreview | null>(null)
+const playlistContinuation = ref<{ sourceKey: string; pageToken: string } | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
 const activeQueue = computed(() => status.value?.queue || [])
@@ -342,13 +343,23 @@ async function approveSelectedCatalogSongs() {
   }
 }
 
-async function previewPlaylist() {
-  if (!token.value || !playlistSourceKey.value.trim()) return
+function invalidatePlaylistContinuation() {
+  playlistContinuation.value = null
+}
+
+async function previewPlaylist(pageToken = '', sourceKey = playlistSourceKey.value.trim(), continuation = false) {
+  if (!token.value || !sourceKey) return
   catalogLoading.value = true
-  playlistPreview.value = null
+  // A first-page/source preview invalidates any prior continuation immediately.
+  // For a continuation retry, keep the token until the preview succeeds.
+  if (!continuation) {
+    playlistContinuation.value = null
+    playlistPreview.value = null
+  }
   try {
-    playlistPreview.value = await previewTrustedPlaylist(token.value, playlistSourceKey.value.trim())
-    message.value = `Playlist preview: ${playlistPreview.value.expectedItems} items; modeled ${playlistPreview.value.modeledCost.total} API units.`
+    playlistPreview.value = await previewTrustedPlaylist(token.value, sourceKey, 25, pageToken)
+    if (continuation) playlistContinuation.value = null
+    message.value = `Playlist preview${pageToken ? ' (next page)' : ''}: ${playlistPreview.value.expectedItems} items; modeled ${playlistPreview.value.modeledCost.total} API units.`
     error.value = false
   } catch (cause) { message.value = explain(cause, 'Playlist preview could not be loaded.'); error.value = true } finally { catalogLoading.value = false }
 }
@@ -358,12 +369,21 @@ async function importPlaylist() {
   catalogLoading.value = true
   try {
     const result = await importTrustedPlaylist(token.value, playlistPreview.value.source.sourceKey, playlistPreview.value.snapshotFingerprint, 25, playlistPreview.value.pageToken)
+    playlistContinuation.value = result.nextPageToken
+      ? { sourceKey: playlistPreview.value.source.sourceKey, pageToken: result.nextPageToken }
+      : null
     const reasons = result.unavailableReasons
     const breakdown = reasons ? ` (${reasons.metadataMissing} metadata missing, ${Object.entries(reasons.privacy).filter(([key]) => key !== 'public').reduce((sum, [, value]) => sum + value, 0)} non-public, ${Object.entries(reasons.uploadStatus).filter(([key]) => key !== 'processed').reduce((sum, [, value]) => sum + value, 0)} unprocessed; ${reasons.nonEmbeddable} non-embeddable signal)` : ''
-    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable${breakdown}. Non-embeddable is informational for native playback. Revalidate unavailable items if needed.`
+    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable${breakdown}. Non-embeddable is informational for native playback. Revalidate unavailable items if needed.${playlistContinuation.value ? ' Preview next page when ready.' : ' This was the final page.'}`
     error.value = false
     await refreshCatalog()
   } catch (cause) { message.value = explain(cause, 'Playlist import could not be completed.'); error.value = true } finally { catalogLoading.value = false }
+}
+
+async function previewNextPlaylistPage() {
+  const continuation = playlistContinuation.value
+  if (!continuation || catalogLoading.value) return
+  await previewPlaylist(continuation.pageToken, continuation.sourceKey, true)
 }
 
 async function revalidatePlaylist() {
@@ -760,13 +780,14 @@ onUnmounted(() => {
         </div>
         <div class="playlist-import">
           <label for="playlist-source">Trusted playlist source key</label>
-          <input id="playlist-source" v-model="playlistSourceKey" placeholder="channelId:playlistId" />
-          <button type="button" @click="previewPlaylist" :disabled="catalogLoading || !playlistSourceKey.trim()">Preview trusted playlist</button>
+          <input id="playlist-source" v-model="playlistSourceKey" @input="invalidatePlaylistContinuation" placeholder="channelId:playlistId" />
+          <button type="button" @click="() => previewPlaylist()" :disabled="catalogLoading || !playlistSourceKey.trim()">Preview trusted playlist</button>
           <p v-if="playlistPreview" role="status">
             {{ playlistPreview.source.channelName || 'Configured channel' }} · {{ playlistPreview.expectedItems }} items ·
             {{ playlistPreview.modeledCost.playlistsList }} owner + {{ playlistPreview.modeledCost.playlistItemsList }} playlist + {{ playlistPreview.modeledCost.videosList }} video calls
           </p>
           <button v-if="playlistPreview" type="button" @click="importPlaylist" :disabled="catalogLoading">Import preview page</button>
+          <button v-if="playlistContinuation" type="button" class="quiet" @click="previewNextPlaylistPage" :disabled="catalogLoading">Preview next page</button>
           <button v-if="playlistPreview" type="button" class="quiet" @click="revalidatePlaylist" :disabled="catalogLoading">Revalidate unavailable metadata</button>
         </div>
         <div v-if="catalogShown">

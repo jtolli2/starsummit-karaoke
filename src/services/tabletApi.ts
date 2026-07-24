@@ -253,12 +253,17 @@ export function loadCatalogReport(token: string) {
   return request<CatalogReport>('/api/karaoke/tablet/catalog/report', {}, token)
 }
 
-export function previewTrustedPlaylist(token: string, sourceKey: string, maxItems = 25) {
+export function previewTrustedPlaylist(
+  token: string,
+  sourceKey: string,
+  maxItems = 25,
+  pageToken = '',
+) {
   return request<PlaylistImportPreview>(
     '/api/karaoke/tablet/catalog/playlists/import',
     {
       method: 'POST',
-      body: JSON.stringify({ sourceKey, maxItems, dryRun: true }),
+      body: JSON.stringify({ sourceKey, maxItems, pageToken, dryRun: true }),
     },
     token,
   )

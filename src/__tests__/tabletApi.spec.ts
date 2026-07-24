@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authenticateTablet, correctCatalogIdentity, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, replaceCatalogSong, reviewCatalogSong, revalidateTrustedPlaylist, transitionQueue } from '@/services/tabletApi'
+import { authenticateTablet, correctCatalogIdentity, importTrustedPlaylist, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, previewTrustedPlaylist, replaceCatalogSong, reviewCatalogSong, revalidateTrustedPlaylist, transitionQueue } from '@/services/tabletApi'
 
 describe('tablet API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -72,5 +72,20 @@ describe('tablet API', () => {
     await revalidateTrustedPlaylist('tablet-token', 'UCchannel:PLplaylist', 'a'.repeat(64), 25, 'next')
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))
     expect(body).toEqual({ sourceKey: 'UCchannel:PLplaylist', snapshotFingerprint: 'a'.repeat(64), maxItems: 25, pageToken: 'next', dryRun: false, revalidate: true })
+  })
+
+  it('forwards trusted-playlist preview page tokens through the tablet contract', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ source: { sourceKey: 'UCchannel:PLplaylist' }, expectedItems: 1, pageToken: 'next', nextPageToken: '', snapshotFingerprint: 'a'.repeat(64), modeledCost: { total: 3 } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await previewTrustedPlaylist('tablet-token', 'UCchannel:PLplaylist', 25, 'next')
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))
+    expect(body).toEqual({ sourceKey: 'UCchannel:PLplaylist', maxItems: 25, pageToken: 'next', dryRun: true })
+  })
+
+  it('returns the import continuation token for explicit next-page preview', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ imported: 1, duplicates: 0, unavailable: 0, nextPageToken: 'next' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await importTrustedPlaylist('tablet-token', 'UCchannel:PLplaylist', 'a'.repeat(64))
+    expect(result.nextPageToken).toBe('next')
   })
 })
