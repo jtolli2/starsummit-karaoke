@@ -1118,7 +1118,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
 // request input: this makes arbitrary/guest playlist proxying impossible.
 routerAdd('POST', '/api/karaoke/tablet/catalog/playlists/import', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, now, future, id, str, num, set, setJson, jsonValue, classifyCatalogItem, recordYoutubeOperation, dayKey, hash, serializeJson, random, youtubeRequest, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability } = globalThis.__partyQueue
+  const { auth, tablet, json, body, now, future, id, str, num, set, setJson, jsonValue, classifyCatalogItem, recordYoutubeOperation, dayKey, hash, serializeJson, random, youtubeRequest, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const PLAYLIST_OWNER_TTL = 6 * 60 * 60 * 1000
   const input = body(c)

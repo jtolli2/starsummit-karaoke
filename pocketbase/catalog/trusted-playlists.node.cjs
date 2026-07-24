@@ -78,6 +78,7 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /findRecordsByFilter\('karaoke_playlist_snapshots'.*', 3, 0/)
   assert.match(hook, /playlist_snapshot_lookup_failed/)
   assert.match(hook, /TRUSTED_PLAYLIST_ELIGIBILITY_POLICY = 'native-playback-v2'/)
+  assert.match(hook, /TRUSTED_PLAYLIST_ELIGIBILITY_POLICY \} = globalThis.__partyQueue/)
   assert.match(hook, /function classifyTrustedVideoAvailability\(video\)/)
   assert.ok((hook.match(/classifyTrustedVideoAvailability\(video\)/g) || []).length >= 3)
 })
