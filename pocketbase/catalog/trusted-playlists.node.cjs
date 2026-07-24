@@ -26,6 +26,23 @@ test('confirmation token is signed, expiring, and bound to admin/snapshot', () =
   assert.throws(() => verifyConfirmation(token, 'test-secret', { adminId: 'a2' }), /binding_mismatch/)
 })
 
+test('PocketBase worker-compatible parser does not require Node built-ins', () => {
+  const source = fs.readFileSync(require('node:path').join(__dirname, 'trusted-playlists.cjs'), 'utf8')
+  const sandbox = {
+    $security: { sha256: (value) => require('node:crypto').createHash('sha256').update(String(value)).digest('hex'), randomString: () => 'w'.repeat(64) },
+    module: { exports: {} }, exports: {},
+  }
+  vm.runInNewContext(`(function () { ${source}\n }).call(this)`, sandbox)
+  // The module body runs with no require/Buffer globals, matching the Goja VM;
+  // parser, digest, and confirmation issuance must still be available.
+  assert.deepEqual(sandbox.module.exports.parsePlaylistInput('PL123456789012345678901234').playlistId, 'PL123456789012345678901234')
+  const token = sandbox.module.exports.issueConfirmation({ adminId: 'worker' }, 'secret', 2000)
+  assert.equal(sandbox.module.exports.verifyConfirmation(token, 'secret', { adminId: 'attacker' }).opaque, true)
+  const noCrypto = { module: { exports: {} }, exports: {}, $security: { sha256: () => 'digest', randomString: () => { throw new Error('random-source-required') } } }
+  vm.runInNewContext(`(function () { ${source}\n }).call(this)`, noCrypto)
+  assert.throws(() => noCrypto.module.exports.issueConfirmation({ adminId: 'worker' }, 'secret'), /random-source-required/)
+})
+
 const source = { channelId: 'UC12345678901234567890', playlistId: 'PL123456789012345678901234', policyVersion: 'v1' }
 const singKing = { channelId: 'UCwTRjvjVge51X-ILJ4i22ew', playlistId: 'PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39', policyVersion: 'v1' }
 test('allowlist is bounded and rejects arbitrary playlist identities', () => {

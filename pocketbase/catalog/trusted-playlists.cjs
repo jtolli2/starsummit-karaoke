@@ -1,6 +1,41 @@
 'use strict'
 
-const crypto = require('node:crypto')
+// PocketBase 0.39.7 evaluates hooks in a Goja worker VM.  Node built-ins are
+// unavailable there, so keep the module load side-effect free and use the
+// runtime-provided $security helpers when present.  The lazy Node fallback is
+// retained for the repository's ordinary Node contract tests.
+let nodeCrypto = null
+try { if (typeof require === 'function') nodeCrypto = require('node:crypto') } catch (_) {}
+
+function runtimeSha256(value) {
+  if (typeof $security !== 'undefined' && $security?.sha256) return String($security.sha256(String(value)))
+  if (nodeCrypto) return nodeCrypto.createHash('sha256').update(String(value)).digest('hex')
+  throw new Error('confirmation_crypto_unavailable')
+}
+
+function runtimeRandom(length) {
+  if (typeof $security !== 'undefined' && $security?.randomString) return String($security.randomString(length))
+  if (nodeCrypto) return nodeCrypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length)
+  throw new Error('confirmation_crypto_unavailable')
+}
+
+function base64urlEncode(value) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(String(value)).toString('base64url')
+  const bytes = unescape(encodeURIComponent(String(value))); const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) { const a = bytes.charCodeAt(i); const b = i + 1 < bytes.length ? bytes.charCodeAt(i + 1) : 0; const c = i + 2 < bytes.length ? bytes.charCodeAt(i + 2) : 0; const n = (a << 16) | (b << 8) | c; out += alphabet[(n >>> 18) & 63] + alphabet[(n >>> 12) & 63] + (i + 1 < bytes.length ? alphabet[(n >>> 6) & 63] : '=') + (i + 2 < bytes.length ? alphabet[n & 63] : '=') }
+  return out.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function base64urlDecode(value) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(String(value), 'base64url').toString('utf8')
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  const encoded = String(value).replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(String(value).length / 4) * 4, '='); let bytes = ''
+  for (let i = 0; i < encoded.length; i += 4) { const a = alphabet.indexOf(encoded[i]); const b = alphabet.indexOf(encoded[i + 1]); const c = alphabet.indexOf(encoded[i + 2]); const d = alphabet.indexOf(encoded[i + 3]); const n = (a << 18) | (b << 12) | ((c < 0 ? 0 : c) << 6) | (d < 0 ? 0 : d); bytes += String.fromCharCode((n >>> 16) & 255); if (encoded[i + 2] !== '=') bytes += String.fromCharCode((n >>> 8) & 255); if (encoded[i + 3] !== '=') bytes += String.fromCharCode(n & 255) }
+  return decodeURIComponent(escape(bytes))
+}
+
+function workerRuntime() { return !nodeCrypto && typeof $security !== 'undefined' && Boolean($security?.randomString && $security?.sha256) }
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/
 const PLAYLIST_ID = /^(?:PL|UU|LL|FL|RD)[A-Za-z0-9_-]{16,}$/
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{20,}$/
@@ -25,19 +60,32 @@ function parsePlaylistInput(raw) {
 
 function issueConfirmation(payload, secret, ttlMs = 10 * 60 * 1000) {
   if (!secret) throw new Error('confirmation_secret_missing')
-  const body = { ...payload, exp: Date.now() + Math.max(1000, Math.min(ttlMs, 60 * 60 * 1000)), nonce: crypto.randomBytes(12).toString('hex') }
-  const encoded = Buffer.from(JSON.stringify(body)).toString('base64url')
-  const sig = crypto.createHmac('sha256', String(secret)).update(encoded).digest('base64url')
+  // Goja has no HMAC primitive. Worker-issued confirmations are opaque,
+  // high-entropy bearer values; the persisted confirmation row (digest,
+  // admin, snapshot, bindings, and expiry) is the sole authority.
+  if (workerRuntime()) return `pb1.${runtimeRandom(64)}`
+  const body = { ...payload, exp: Date.now() + Math.max(1000, Math.min(ttlMs, 60 * 60 * 1000)), nonce: runtimeRandom(24) }
+  const encoded = base64urlEncode(JSON.stringify(body))
+  const sig = nodeCrypto.createHmac('sha256', String(secret)).update(encoded).digest('base64url')
   return `${encoded}.${sig}`
 }
 
 function verifyConfirmation(token, secret, expected = {}) {
   if (!secret || typeof token !== 'string' || token.length > 4096) throw new Error('confirmation_invalid')
+  if (workerRuntime()) {
+    if (!/^pb1\.[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('confirmation_invalid')
+    // Opaque worker tokens carry no caller-verifiable claims.  The persisted
+    // confirmation row is authoritative; never echo caller-supplied
+    // expectations as if they were token claims.
+    return { opaque: true }
+  }
   const [encoded, supplied] = token.split('.')
   if (!encoded || !supplied) throw new Error('confirmation_invalid')
-  const actual = crypto.createHmac('sha256', String(secret)).update(encoded).digest('base64url')
-  if (supplied.length !== actual.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(actual))) throw new Error('confirmation_invalid')
-  let body; try { body = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) } catch (_) { throw new Error('confirmation_invalid') }
+  const actual = nodeCrypto.createHmac('sha256', String(secret)).update(encoded).digest('base64url')
+  if (supplied.length !== actual.length) throw new Error('confirmation_invalid')
+  let different = 0; for (let i = 0; i < actual.length; i++) different |= supplied.charCodeAt(i) ^ actual.charCodeAt(i)
+  if (different !== 0) throw new Error('confirmation_invalid')
+  let body; try { body = JSON.parse(base64urlDecode(encoded)) } catch (_) { throw new Error('confirmation_invalid') }
   if (!Number.isFinite(body.exp) || body.exp < Date.now()) throw new Error('confirmation_expired')
   for (const [key, value] of Object.entries(expected)) if (JSON.stringify(body[key]) !== JSON.stringify(value)) throw new Error('confirmation_binding_mismatch')
   return body
@@ -85,7 +133,7 @@ function resolveAllowlistedSource(raw, sourceKey) {
 
 
 function digest(value) {
-  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  return runtimeSha256(JSON.stringify(value))
 }
 
 function normalized(value) {
