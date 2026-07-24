@@ -357,4 +357,7 @@
 - Added anonymous requester labels and a server-calculated fair-rotation projection to the
   sanitized tablet status response. Verified 37 Vue tests, production build, focused controller/
   queue protocol tests, hook syntax, formatting/diff checks, responsive shell inspection, and an
-  independent review. No remote deployment, PocketBase data mutation, or tablet action occurred.
+  independent review. Retained Compose staging deployment `v132wnb9acj2hoiahtfhee4v` imported
+  product SHA `5eaf04e61395caca851db91d7f57a2abfeb227ce` and finished healthy; `/tablet`, same-origin
+  `/api/health`, and controller `/api/health` each returned HTTP 200. No PocketBase data mutation
+  or tablet action occurred.

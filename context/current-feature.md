@@ -53,5 +53,8 @@ Complete
   fair-order, and regression boundaries after focused repairs.
 - Responsive local-browser inspection at 800x1280 and 1280x800 found no horizontal overflow and
   54px touch controls. It covered the signed-out shell only because no local tablet account was
-  available; authenticated behaviors are covered by Vue tests. No retained staging/tablet/browser
-  credential was used. SmartTube/Lounge convergence remains a known unresolved runtime limitation.
+  available; authenticated behaviors are covered by Vue tests. No retained tablet/browser credential
+  was used. Retained Compose staging deployment `v132wnb9acj2hoiahtfhee4v` imported product SHA
+  `5eaf04e61395caca851db91d7f57a2abfeb227ce` and finished healthy; `/tablet`, same-origin
+  `/api/health`, and controller `/api/health` each returned HTTP 200. SmartTube/Lounge convergence
+  remains a known unresolved runtime limitation.
