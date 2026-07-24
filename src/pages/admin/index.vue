@@ -13,6 +13,7 @@ import {
   loadCatalog,
   loadCatalogReport,
   importTrustedPlaylist,
+  revalidateTrustedPlaylist,
   loadNext,
   loadTabletStatus,
   replaceCatalogSong,
@@ -334,10 +335,22 @@ async function importPlaylist() {
   catalogLoading.value = true
   try {
     const result = await importTrustedPlaylist(token.value, playlistPreview.value.source.sourceKey, playlistPreview.value.snapshotFingerprint, 25, playlistPreview.value.pageToken)
-    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable retained in audit.`
+    const reasons = result.unavailableReasons
+    const breakdown = reasons ? ` (${reasons.metadataMissing} metadata missing, ${reasons.nonEmbeddable} non-embeddable, ${Object.entries(reasons.privacy).filter(([key]) => key !== 'public').reduce((sum, [, value]) => sum + value, 0)} non-public, ${Object.entries(reasons.uploadStatus).filter(([key]) => key !== 'processed').reduce((sum, [, value]) => sum + value, 0)} unprocessed)` : ''
+    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable${breakdown}. Revalidate unavailable items if needed.`
     error.value = false
     await refreshCatalog()
   } catch (cause) { message.value = explain(cause, 'Playlist import could not be completed.'); error.value = true } finally { catalogLoading.value = false }
+}
+
+async function revalidatePlaylist() {
+  if (!token.value || !playlistPreview.value || catalogLoading.value) return
+  catalogLoading.value = true
+  try {
+    const result = await revalidateTrustedPlaylist(token.value, playlistPreview.value.source.sourceKey, playlistPreview.value.snapshotFingerprint, 25, playlistPreview.value.pageToken)
+    message.value = `Revalidated ${result.unavailable} unavailable items: ${result.unavailableReasons.metadataMissing} metadata missing, ${result.unavailableReasons.nonEmbeddable} non-embeddable.`
+    error.value = false
+  } catch (cause) { message.value = explain(cause, 'Playlist revalidation could not be completed.'); error.value = true } finally { catalogLoading.value = false }
 }
 
 async function replaceSong(song: CatalogSong) {
@@ -731,6 +744,7 @@ onUnmounted(() => {
             {{ playlistPreview.modeledCost.playlistsList }} owner + {{ playlistPreview.modeledCost.playlistItemsList }} playlist + {{ playlistPreview.modeledCost.videosList }} video calls
           </p>
           <button v-if="playlistPreview" type="button" @click="importPlaylist" :disabled="catalogLoading">Import preview page</button>
+          <button v-if="playlistPreview" type="button" class="quiet" @click="revalidatePlaylist" :disabled="catalogLoading">Revalidate unavailable metadata</button>
         </div>
         <div v-if="catalogShown">
           <p v-if="catalogReport" class="catalog-summary">

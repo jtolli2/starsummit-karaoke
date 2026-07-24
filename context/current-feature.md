@@ -62,3 +62,12 @@ Blocked
   observability/policy decision is required before resuming: retain unavailable evidence with a
   reason and provide an explicit, quota-accounted revalidation path, or accept the API result as a
   final external availability exclusion.
+
+- 2026-07-24: Implemented the narrow unavailable-diagnosis repair locally. Trusted-playlist imports
+  now retain sanitized aggregate reason counts in the durable claim payload and return them on exact
+  snapshot replay. Constrained `tablet_admin` may explicitly request `revalidate: true` against the
+  exact source/page/snapshot fingerprint; this uses only retained video identities and a
+  quota-accounted `videos.list` call, with an idempotent revalidation claim and lease recovery.
+  Revalidation never creates catalog rows or exposes raw YouTube metadata. Admin wording now shows
+  reason breakdowns and offers a dedicated revalidation action. Structural and focused tests passed;
+  behavioral pinned-runtime verification remains pending.

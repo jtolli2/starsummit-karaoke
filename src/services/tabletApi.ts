@@ -78,6 +78,14 @@ export type PlaylistImportPreview = {
   }
 }
 
+export type PlaylistUnavailableReasons = {
+  total: number
+  metadataMissing: number
+  nonEmbeddable: number
+  privacy: Record<string, number>
+  uploadStatus: Record<string, number>
+}
+
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('accept', 'application/json')
@@ -267,6 +275,7 @@ export function importTrustedPlaylist(
     imported: number
     duplicates: number
     unavailable: number
+    unavailableReasons?: PlaylistUnavailableReasons
     nextPageToken: string
   }>(
     '/api/karaoke/tablet/catalog/playlists/import',
@@ -276,6 +285,24 @@ export function importTrustedPlaylist(
     },
     token,
   )
+}
+
+export function revalidateTrustedPlaylist(
+  token: string,
+  sourceKey: string,
+  snapshotFingerprint: string,
+  maxItems = 25,
+  pageToken = '',
+) {
+  return request<{
+    unavailable: number
+    unavailableReasons: PlaylistUnavailableReasons
+    revalidated: boolean
+    replay: boolean
+  }>('/api/karaoke/tablet/catalog/playlists/import', {
+    method: 'POST',
+    body: JSON.stringify({ sourceKey, snapshotFingerprint, maxItems, pageToken, dryRun: false, revalidate: true }),
+  }, token)
 }
 
 export function replaceCatalogSong(

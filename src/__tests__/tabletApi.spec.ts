@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authenticateTablet, correctCatalogIdentity, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, replaceCatalogSong, reviewCatalogSong, transitionQueue } from '@/services/tabletApi'
+import { authenticateTablet, correctCatalogIdentity, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, replaceCatalogSong, reviewCatalogSong, revalidateTrustedPlaylist, transitionQueue } from '@/services/tabletApi'
 
 describe('tablet API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -64,5 +64,13 @@ describe('tablet API', () => {
     expect(String(fetchMock.mock.calls[2]?.[0])).toContain('/api/karaoke/tablet/catalog/song-1/replace')
     expect(JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body))).toEqual({ title: 'Song', artist: 'Artist', reason: 'Source verified' })
     expect(fetchMock.mock.calls[4]?.[0]).toBe('/api/karaoke/tablet/catalog/report')
+  })
+
+  it('binds unavailable revalidation to the exact retained snapshot', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ unavailable: 2, unavailableReasons: { total: 2, metadataMissing: 1, nonEmbeddable: 1, privacy: {}, uploadStatus: {} }, revalidated: true, replay: false }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await revalidateTrustedPlaylist('tablet-token', 'UCchannel:PLplaylist', 'a'.repeat(64), 25, 'next')
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))
+    expect(body).toEqual({ sourceKey: 'UCchannel:PLplaylist', snapshotFingerprint: 'a'.repeat(64), maxItems: 25, pageToken: 'next', dryRun: false, revalidate: true })
   })
 })
