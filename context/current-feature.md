@@ -148,6 +148,11 @@ In Progress
   match, then one explicit cached YouTube action reported four eligible results and displayed four
   clearly labeled Panic! at the Disco karaoke fallbacks below it without adding a queue item or
   consuming another external search call.
+- An explicit guest YouTube action now first force-refreshes the sanitized approved catalog. A
+  newly approved strong match replaces the stale local index immediately and skips `search.list`;
+  a failed refresh safely retains the prior index. Query changes during the refresh or a credential
+  retry stop both stale UI updates and any later YouTube request. Twenty-two focused tests,
+  production type-check/build, diff checks, and independent review passed.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.

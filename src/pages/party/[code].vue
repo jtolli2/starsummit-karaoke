@@ -29,6 +29,31 @@ let rejoining = false
 let fuse: Fuse<LibrarySong> | null = null
 async function rejoinOnce() { if (rejoining) return false; rejoining = true; try { clearPartyCredential(code.value); credential.value = (await joinParty(code.value)).credential; stopWake(); stopWake = await startQueueWakeHint(credential.value, reconcile); return true } catch { return false } finally { rejoining = false } }
 
+function setCatalogIndex(nextSongs: LibrarySong[]) {
+  indexSongs.value = nextSongs
+  fuse = new Fuse(indexSongs.value, {
+    keys: [
+      { name: 'title', getFn: (song) => normalizeSearchText(song.title) },
+      { name: 'artist', getFn: (song) => normalizeSearchText(song.artist) },
+      {
+        name: 'combined',
+        getFn: (song) => `${normalizeSearchText(song.artist)} ${normalizeSearchText(song.title)}`,
+      },
+    ],
+    includeScore: true,
+    threshold: 0.5,
+    ignoreLocation: true,
+  })
+}
+
+function localMatches(normalized: string) {
+  const matches = fuse?.search(normalized, { limit: 12 }) || []
+  return {
+    songs: matches.map((result) => result.item),
+    weak: matches.length === 0 || (matches[0]?.score ?? 1) > 0.55,
+  }
+}
+
 const explain = (error: unknown, fallback: string) => {
   const e = error as { code?: string; status?: number }
   errorKind.value = e.code || ''
@@ -70,12 +95,11 @@ async function search() {
   }
   searching.value = true
   try {
-    const local = fuse?.search(normalized, { limit: 12 }).map((result) => result.item) || []
-    songs.value = local
+    const local = localMatches(normalized)
+    songs.value = local.songs
     // Scores above 0.55 are weak enough to offer the explicit fallback. This still
     // catches genuinely poor matches while retaining ordinary multi-character typos.
-    const weak = local.length === 0 || (fuse?.search(normalized, { limit: 1 })[0]?.score ?? 1) > 0.55
-    fallbackSuggested.value = weak
+    fallbackSuggested.value = local.weak
   } catch (error) {
     if ((error as { code?: string }).code === 'guest_credential_expired' && await rejoinOnce()) return search()
     message.value = explain(error, 'Songs could not be loaded.')
@@ -97,6 +121,24 @@ async function searchFallback() {
   searching.value = true
   fallbackSearching.value = true
   try {
+    try {
+      const refreshedCatalog = await loadCatalogIndex(credential.value, true)
+      if (requestedQuery !== normalizeSearchText(query.value)) return
+      setCatalogIndex(refreshedCatalog.songs)
+      const refreshedLocal = localMatches(requestedQuery)
+      songs.value = refreshedLocal.songs
+      fallbackSuggested.value = refreshedLocal.weak
+      if (!refreshedLocal.weak) {
+        fallbackSearched.value = false
+        fallbackResultCount.value = 0
+        message.value = 'Catalog refreshed: a newly approved song is now available.'
+        errorKind.value = ''
+        return
+      }
+    } catch {
+      // Continue with the already-loaded sanitized catalog when a refresh is unavailable.
+    }
+    if (requestedQuery !== normalizeSearchText(query.value)) return
     let response
     try {
       response = await fallbackSearchSongs(credential.value, requestedValue)
@@ -169,12 +211,11 @@ onMounted(async () => {
     credential.value = partyCredential(code.value) || (await joinParty(code.value)).credential
     try {
       const catalog = await loadCatalogIndex(credential.value)
-      indexSongs.value = catalog.songs
+      setCatalogIndex(catalog.songs)
     } catch {
       // Compatibility with older servers: use the bounded browse endpoint as an index seed.
-      indexSongs.value = (await searchSongs(credential.value, '')).songs
+      setCatalogIndex((await searchSongs(credential.value, '')).songs)
     }
-    fuse = new Fuse(indexSongs.value, { keys: [{ name: 'title', getFn: (song) => normalizeSearchText(song.title) }, { name: 'artist', getFn: (song) => normalizeSearchText(song.artist) }, { name: 'combined', getFn: (song) => `${normalizeSearchText(song.artist)} ${normalizeSearchText(song.title)}` }], includeScore: true, threshold: 0.5, ignoreLocation: true })
     await Promise.all([reconcile(), search()])
     stopWake = await startQueueWakeHint(credential.value, reconcile)
   } catch (error) {

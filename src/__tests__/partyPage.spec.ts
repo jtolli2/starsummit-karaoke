@@ -63,6 +63,88 @@ describe('party page', () => {
     vi.useRealTimers()
   })
 
+  it('refreshes the sanitized catalog before fallback and skips YouTube for a newly approved match', async () => {
+    vi.useFakeTimers()
+    api.loadCatalogIndex
+      .mockResolvedValueOnce({
+        version: 'before-approval',
+        songs: [
+          {
+            id: 'whitney',
+            youtubeId: 'aaaaaaaaaaa',
+            title: "It's Not Right but It's Okay",
+            artist: 'Whitney Houston',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        version: 'after-approval',
+        songs: [
+          {
+            id: 'whitney',
+            youtubeId: 'aaaaaaaaaaa',
+            title: "It's Not Right but It's Okay",
+            artist: 'Whitney Houston',
+          },
+          {
+            id: 'panic',
+            youtubeId: 'bbbbbbbbbbb',
+            title: 'I Write Sins Not Tragedies',
+            artist: 'Panic! At The Disco',
+          },
+        ],
+      })
+    const wrapper = mount(PartyPage)
+    await flushPromises()
+    await wrapper.get('#song-search').setValue('i write sins')
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(api.loadCatalogIndex).toHaveBeenLastCalledWith('credential-1234567890', true)
+    expect(api.fallbackSearchSongs).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Catalog refreshed: a newly approved song is now available.')
+    expect(wrapper.text()).toContain('I Write Sins Not Tragedies')
+    expect(wrapper.text()).toContain('Panic! At The Disco · Catalog')
+    vi.useRealTimers()
+  })
+
+  it('does not search YouTube when the query changes during the catalog refresh', async () => {
+    vi.useFakeTimers()
+    let resolveRefresh!: (value: { version: string; songs: { id: string; youtubeId: string; title: string; artist: string }[] }) => void
+    api.loadCatalogIndex
+      .mockResolvedValueOnce({
+        version: 'initial',
+        songs: [
+          {
+            id: 'whitney',
+            youtubeId: 'aaaaaaaaaaa',
+            title: "It's Not Right but It's Okay",
+            artist: 'Whitney Houston',
+          },
+        ],
+      })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRefresh = resolve
+        }),
+      )
+    const wrapper = mount(PartyPage)
+    await flushPromises()
+    const input = wrapper.get('#song-search')
+    await input.setValue('i write sins')
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await input.setValue('different song')
+    resolveRefresh({ version: 'stale', songs: [] })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+    expect(api.fallbackSearchSongs).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
   it('invalidates a weak fallback suggestion when the query changes', async () => {
     vi.useFakeTimers()
     api.fallbackSearchSongs.mockResolvedValue({ songs: [] })
