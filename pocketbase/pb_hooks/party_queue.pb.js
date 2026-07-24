@@ -1158,7 +1158,13 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/playlists/import', (c) => {
     const channelId = String(entry?.channelId || '')
     const playlistId = String(entry?.playlistId || '')
     const identity = `${channelId}:${playlistId}`
-    if (!entry || typeof entry !== 'object' || !/^UC[A-Za-z0-9_-]{20,}$/.test(channelId) || !/^(?:PL|UU|LL|FL|RD)[A-Za-z0-9_-]{16,}$/.test(playlistId) || identities.has(identity)) return json(c, legacySource ? 503 : 422, legacySource ? 'playlist_allowlist_invalid' : 'playlist_source_invalid', 'Playlist source configuration is invalid')
+    if (!entry || typeof entry !== 'object' || !/^UC[A-Za-z0-9_-]{20,}$/.test(channelId) || !/^(?:PL|UU|LL|FL|RD)[A-Za-z0-9_-]{16,}$/.test(playlistId) || identities.has(identity)) {
+      // A public URL preview is intentionally not allowlist-bound. Ignore
+      // malformed retained entries for that path so one stale optional
+      // configuration row cannot turn a valid public URL into HTTP 422.
+      if (!legacySource) continue
+      return json(c, 503, 'playlist_allowlist_invalid', 'Playlist allowlist is not configured')
+    }
     identities.add(identity)
   }
   let source = allowlist.find((entry) => `${entry.channelId}:${entry.playlistId}` === sourceKey)

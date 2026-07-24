@@ -8,6 +8,11 @@ const { parseAllowlist, parseSourceKey, parsePlaylistInput, issueConfirmation, v
 test('playlist URL parser accepts canonical hosts and rejects SSRF or malformed input', () => {
   assert.equal(parsePlaylistInput('PL123456789012345678901234').playlistId, 'PL123456789012345678901234')
   assert.equal(parsePlaylistInput('https://www.youtube.com/playlist?list=PL123456789012345678901234').playlistId, 'PL123456789012345678901234')
+  assert.deepEqual(parsePlaylistInput('https://www.youtube.com/playlist?list=PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39'), {
+    playlistId: 'PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39',
+    sourceKey: 'PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39',
+    input: 'https://www.youtube.com/playlist?list=PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39',
+  })
   assert.throws(() => parsePlaylistInput('https://evil.example/playlist?list=PL123456789012345678901234'), /host_invalid/)
   assert.throws(() => parsePlaylistInput('https://youtu.be/watch?v=dQw4w9WgXcQ'), /host_invalid/)
   assert.throws(() => parsePlaylistInput('http://youtube.com/playlist?list=PL123456789012345678901234'), /scheme_invalid/)
@@ -97,6 +102,7 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /playlist_snapshot_ambiguous/)
   assert.match(hook, /findRecordsByFilter\('karaoke_playlist_snapshots'.*', 3, 0/)
   assert.match(hook, /playlist_snapshot_lookup_failed/)
+  assert.match(hook, /if \(!legacySource\) continue/)
   assert.match(hook, /TRUSTED_PLAYLIST_ELIGIBILITY_POLICY = 'native-playback-v2'/)
   assert.match(hook, /TRUSTED_PLAYLIST_ELIGIBILITY_POLICY \} = globalThis.__partyQueue/)
   assert.match(hook, /function classifyTrustedVideoAvailability\(video\)/)
