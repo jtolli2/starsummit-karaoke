@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import AdminPage from '@/pages/admin/index.vue'
@@ -9,6 +11,10 @@ async function settle() {
 }
 
 describe('advanced administration route', () => {
+  it('defines sanitized mappings for every snapshot-save phase', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'src/pages/admin/index.vue'), 'utf8')
+    for (const stage of ['identity', 'page', 'digest', 'ids', 'dates']) expect(source).toContain(`playlist_import_snapshot_${stage}_save_failed`)
+  })
   afterEach(() => {
     sessionStorage.clear()
     vi.restoreAllMocks()
