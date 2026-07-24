@@ -97,6 +97,12 @@ const canPause = computed(
   () => controllerReady.value && controllerMatchesPlaying.value && playerState.value === 'playing',
 )
 
+function youtubeWatchUrl(youtubeId: string) {
+  return /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
+    ? `https://www.youtube.com/watch?v=${youtubeId}`
+    : null
+}
+
 function storedSession(): StoredSession | null {
   try {
     const raw = sessionStorage.getItem(storageKey)
@@ -768,8 +774,20 @@ onUnmounted(() => {
                   {{ song.sourceList ? `· ${song.sourceList} #${song.sourceRank}` : '' }}
                   {{ song.sourceId ? `· ${song.sourceId}` : '' }}</small
                 ><small
-                  >YouTube: {{ song.videoTitle || song.youtubeId }} · uploader
+                  >YouTube title: {{ song.videoTitle || 'Unknown' }} · uploader
                   {{ song.videoChannelTitle || 'unknown' }}</small
+                ><small
+                  >YouTube ID: <code>{{ song.youtubeId }}</code>
+                  <template v-if="youtubeWatchUrl(song.youtubeId)">
+                    ·
+                    <a
+                      :href="youtubeWatchUrl(song.youtubeId)!"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open on YouTube
+                    </a>
+                  </template></small
                 ><small
                   >Classification: {{ song.classification || 'unknown' }} ({{
                     Math.round((song.classificationConfidence || 0) * 100)

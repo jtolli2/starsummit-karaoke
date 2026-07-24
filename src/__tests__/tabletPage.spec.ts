@@ -50,7 +50,26 @@ describe('tablet operator page', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ songs: [{ id: 'catalog-1', title: 'Unreviewed Song', artist: 'Artist', youtubeId: 'dQw4w9WgXcQ', reviewState: 'unreviewed' }], totalPages: 1 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ songs: [
+        {
+          id: 'fallback-1',
+          title: 'Unidentified karaoke candidate',
+          artist: 'Unidentified artist',
+          youtubeId: 'dQw4w9WgXcQ',
+          videoTitle: 'All Night Long - Lionel Richie (Karaoke Version)',
+          source: 'youtube',
+          reviewState: 'unreviewed',
+        },
+        {
+          id: 'playlist-1',
+          title: 'Playlist Song',
+          artist: '',
+          youtubeId: 'abcdefghijk',
+          videoTitle: 'Playlist Song | Karaoke Version',
+          source: 'youtube_playlist',
+          reviewState: 'needs_review',
+        },
+      ], totalPages: 1 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, unresolvedReviewBacklog: 1, missingIdentity: 0, alternatives: 0 }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
@@ -61,9 +80,17 @@ describe('tablet operator page', () => {
     expect(wrapper.text()).toContain('Catalog review')
     await wrapper.get('.catalog button.quiet').trigger('click')
     await settle()
-    expect(wrapper.text()).toContain('Unreviewed Song')
-    expect(wrapper.text()).toContain('Canonical artist: Artist')
+    expect(wrapper.text()).toContain('All Night Long - Lionel Richie (Karaoke Version)')
+    expect(wrapper.text()).toContain('Playlist Song | Karaoke Version')
     expect(wrapper.text()).toContain('uploader unknown')
+    const youtubeLinks = wrapper.findAll('a[target="_blank"]')
+    expect(youtubeLinks.map((link) => link.attributes('href'))).toEqual([
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      'https://www.youtube.com/watch?v=abcdefghijk',
+    ])
+    expect(youtubeLinks.every((link) => link.attributes('rel') === 'noopener noreferrer')).toBe(true)
+    expect(wrapper.text()).toContain('YouTube ID: dQw4w9WgXcQ')
+    expect(wrapper.text()).toContain('YouTube ID: abcdefghijk')
     expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
     expect(fetchMock.mock.calls[3]?.[0]).toBe('/api/karaoke/tablet/catalog/report')
   })

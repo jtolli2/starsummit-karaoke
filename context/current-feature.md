@@ -24,6 +24,8 @@ In Progress
   YouTube channel provenance survives the sanitized candidate/request path, and missing-identity
   fallback songs remain visibly identifiable without promoting uploader metadata to canonical
   artist identity.
+- Show the exact YouTube video ID and a direct validated watch link on every tablet catalog-review
+  row, including both guest fallback and trusted-playlist candidates.
 - Deploy and validate the exact product SHA on retained Compose staging, run a bounded canary and
   quality-gated import/review suitable for Saturday without deleting or replacing retained data.
 
@@ -124,6 +126,10 @@ In Progress
   existing queue without adding another request. Existing missing-identity fallback rows for
   All Night Long and Wake Me Up Before You Go-Go immediately displayed their raw YouTube titles
   instead of unidentified canonical placeholders.
+- Catalog-review rows now show the exact YouTube ID separately from the raw title and provide a
+  fixed-origin watch link only for validated 11-character video IDs. Focused tablet tests cover
+  fallback and trusted-playlist rows; 14 tests, the production type-check/build, diff checks, and
+  independent URL-safety/accessibility review passed.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.
