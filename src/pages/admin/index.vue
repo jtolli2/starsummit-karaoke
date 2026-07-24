@@ -71,6 +71,7 @@ const publicPlaylistInput = ref('')
 const playlistPreview = ref<PlaylistImportPreview | null>(null)
 const publicPreview = ref<PublicPlaylistPreview | null>(null)
 const importConfirmation = ref<PublicPlaylistPreview | null>(null)
+const publicPlaylistContinuation = ref<string | null>(null)
 const approvalSelection = ref<ApprovalSelectionSnapshot | null>(null)
 const approvalConfirmOpen = ref(false)
 const approvalOperationId = ref('')
@@ -431,9 +432,20 @@ async function previewPlaylist(pageToken = '', sourceKey = playlistSourceKey.val
 
 async function previewPublic() {
   if (!token.value || !publicPlaylistInput.value.trim() || catalogLoading.value) return
-  catalogLoading.value = true; publicPreview.value = null
-  try { publicPreview.value = await previewPublicPlaylist(token.value, { playlist: publicPlaylistInput.value.trim(), maxItems: 25 }); message.value = 'Public playlist preview ready. Confirm explicitly to import.'; error.value = false }
+  catalogLoading.value = true; publicPreview.value = null; importConfirmation.value = null; publicPlaylistContinuation.value = null
+  try { publicPreview.value = await previewPublicPlaylist(token.value, { playlist: publicPlaylistInput.value.trim(), maxItems: 25 }); publicPlaylistContinuation.value = publicPreview.value.nextPageToken || null; message.value = 'Public playlist preview ready. Confirm explicitly to import.'; error.value = false }
   catch (cause) { message.value = explain(cause, 'Public playlist preview could not be loaded.'); error.value = true }
+  finally { catalogLoading.value = false }
+}
+
+async function previewNextPublicPage() {
+  if (!token.value || !publicPlaylistInput.value.trim() || !publicPlaylistContinuation.value || catalogLoading.value) return
+  catalogLoading.value = true; publicPreview.value = null; importConfirmation.value = null
+  try {
+    publicPreview.value = await previewPublicPlaylist(token.value, { playlist: publicPlaylistInput.value.trim(), maxItems: 25, pageToken: publicPlaylistContinuation.value })
+    publicPlaylistContinuation.value = publicPreview.value.nextPageToken || null
+    message.value = 'Public playlist next-page preview ready. Confirm explicitly to import.'; error.value = false
+  } catch (cause) { message.value = explain(cause, 'Public playlist next-page preview could not be loaded.'); error.value = true }
   finally { catalogLoading.value = false }
 }
 
@@ -444,6 +456,7 @@ async function importPublic() {
   try {
     if (!approvalOperationId.value) approvalOperationId.value = `playlist-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`.slice(0, 96)
     const result = await importConfirmedPlaylist(token.value, publicPreview.value, approvalOperationId.value)
+    publicPlaylistContinuation.value = result.nextPageToken || publicPreview.value.nextPageToken || null
     message.value = result.completed === false ? `Import progress: ${result.progress?.completed ?? result.imported}/${result.progress?.total ?? publicPreview.value.expectedItems}. Retry to resume.` : `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable.`
     if (result.completed !== false) { importConfirmation.value = null; publicPreview.value = null; approvalOperationId.value = '' }
     error.value = false; await refreshCatalog()
@@ -879,6 +892,7 @@ onUnmounted(() => {
             <p v-if="publicPreview.identityWarning || publicPreview.warning">{{ publicPreview.identityWarning || publicPreview.warning }}</p>
             <button type="button" @click="importConfirmation = publicPreview" :disabled="catalogLoading">Review import confirmation</button>
           </div>
+          <button v-if="publicPlaylistContinuation" type="button" class="quiet" @click="previewNextPublicPage" :disabled="catalogLoading">Preview next page</button>
           <label for="playlist-source">Trusted playlist source key</label>
           <input id="playlist-source" v-model="playlistSourceKey" @input="invalidatePlaylistContinuation" placeholder="channelId:playlistId" />
           <button type="button" @click="() => previewPlaylist()" :disabled="catalogLoading || !playlistSourceKey.trim()">Preview trusted playlist</button>

@@ -87,6 +87,29 @@ describe('advanced administration route', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/karaoke/tablet/catalog/playlists/import')
   })
 
+  it('previews public playlist continuation pages explicitly', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ playlist: { id: 'PL1', title: 'Public Mix', visibility: 'public', itemCount: 50 }, expectedItems: 25, nextPageToken: 'NEXT', confirmationToken: 'opaque', snapshotFingerprint: 'fp', modeledCost: { total: 3 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ playlist: { id: 'PL1', title: 'Public Mix', visibility: 'public', itemCount: 50 }, expectedItems: 25, nextPageToken: '', confirmationToken: 'opaque2', snapshotFingerprint: 'fp2', modeledCost: { total: 3 } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('#public-playlist').setValue('PL1')
+    await wrapper.get('#public-playlist + button').trigger('click')
+    await settle()
+    const nextPageButton = wrapper.findAll('button.quiet').find((button) => button.text() === 'Preview next page')
+    expect(nextPageButton).toBeTruthy()
+    await nextPageButton!.trigger('click')
+    await settle()
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).pageToken).toBe('NEXT')
+    expect(wrapper.text()).toContain('Review import confirmation')
+  })
+
   it('shows actionable sanitized trusted-playlist preview errors', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
