@@ -359,8 +359,8 @@ async function importPlaylist() {
   try {
     const result = await importTrustedPlaylist(token.value, playlistPreview.value.source.sourceKey, playlistPreview.value.snapshotFingerprint, 25, playlistPreview.value.pageToken)
     const reasons = result.unavailableReasons
-    const breakdown = reasons ? ` (${reasons.metadataMissing} metadata missing, ${reasons.nonEmbeddable} non-embeddable, ${Object.entries(reasons.privacy).filter(([key]) => key !== 'public').reduce((sum, [, value]) => sum + value, 0)} non-public, ${Object.entries(reasons.uploadStatus).filter(([key]) => key !== 'processed').reduce((sum, [, value]) => sum + value, 0)} unprocessed)` : ''
-    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable${breakdown}. Revalidate unavailable items if needed.`
+    const breakdown = reasons ? ` (${reasons.metadataMissing} metadata missing, ${Object.entries(reasons.privacy).filter(([key]) => key !== 'public').reduce((sum, [, value]) => sum + value, 0)} non-public, ${Object.entries(reasons.uploadStatus).filter(([key]) => key !== 'processed').reduce((sum, [, value]) => sum + value, 0)} unprocessed; ${reasons.nonEmbeddable} non-embeddable signal)` : ''
+    message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable${breakdown}. Non-embeddable is informational for native playback. Revalidate unavailable items if needed.`
     error.value = false
     await refreshCatalog()
   } catch (cause) { message.value = explain(cause, 'Playlist import could not be completed.'); error.value = true } finally { catalogLoading.value = false }
@@ -371,7 +371,7 @@ async function revalidatePlaylist() {
   catalogLoading.value = true
   try {
     const result = await revalidateTrustedPlaylist(token.value, playlistPreview.value.source.sourceKey, playlistPreview.value.snapshotFingerprint, 25, playlistPreview.value.pageToken)
-    message.value = `Revalidated ${result.unavailable} unavailable items: ${result.unavailableReasons.metadataMissing} metadata missing, ${result.unavailableReasons.nonEmbeddable} non-embeddable.`
+    message.value = `Revalidated ${result.unavailable} unavailable items: ${result.unavailableReasons.metadataMissing} metadata missing; ${result.unavailableReasons.nonEmbeddable} non-embeddable informational signals.`
     error.value = false
   } catch (cause) { message.value = explain(cause, 'Playlist revalidation could not be completed.'); error.value = true } finally { catalogLoading.value = false }
 }

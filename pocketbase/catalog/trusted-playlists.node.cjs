@@ -2,6 +2,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const vm = require('node:vm')
 const { parseAllowlist, parseSourceKey, resolveAllowlistedSource, playlistSnapshot, metadataDigest, parseTitle, modeledCost } = require('./trusted-playlists.cjs')
 
 const source = { channelId: 'UC12345678901234567890', playlistId: 'PL123456789012345678901234', policyVersion: 'v1' }
@@ -35,6 +36,16 @@ test('title parser keeps uploader separate and rejects unsafe formats', () => {
   assert.deepEqual(modeledCost(51), { playlistItemsList: 1, videosList: 2, total: 3 })
   assert.equal(parseTitle('Artist - Song', 'channel-name').reason, 'profile_unsupported')
 })
+test('trusted playlist availability ignores embeddable for native playback', () => {
+  const hook = fs.readFileSync(require('node:path').join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
+  const source = hook.match(/function classifyTrustedVideoAvailability\(video\) \{[\s\S]*?\n\}/)?.[0]
+  assert.ok(source)
+  const sandbox = {}; vm.runInNewContext(`${source}; this.classify = classifyTrustedVideoAvailability`, sandbox)
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.classify({ status: { privacyStatus: 'public', uploadStatus: 'processed', embeddable: false } }))), { unavailable: false, metadataMissing: 0, nonEmbeddable: 1 })
+  assert.equal(sandbox.classify({ status: { privacyStatus: 'private', uploadStatus: 'processed' } }).unavailable, true)
+  assert.equal(sandbox.classify({ status: { privacyStatus: 'public', uploadStatus: 'uploaded' } }).unavailable, true)
+  assert.equal(sandbox.classify(null).metadataMissing, 1)
+})
 
 test('PocketBase route validates bounded allowlist and separates unavailable from ownership mismatch', () => {
   const hook = fs.readFileSync(require('node:path').join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
@@ -66,4 +77,7 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /playlist_snapshot_ambiguous/)
   assert.match(hook, /findRecordsByFilter\('karaoke_playlist_snapshots'.*', 3, 0/)
   assert.match(hook, /playlist_snapshot_lookup_failed/)
+  assert.match(hook, /TRUSTED_PLAYLIST_ELIGIBILITY_POLICY = 'native-playback-v2'/)
+  assert.match(hook, /function classifyTrustedVideoAvailability\(video\)/)
+  assert.ok((hook.match(/classifyTrustedVideoAvailability\(video\)/g) || []).length >= 3)
 })

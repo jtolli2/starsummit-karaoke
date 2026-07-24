@@ -71,3 +71,10 @@ Blocked
   Revalidation never creates catalog rows or exposes raw YouTube metadata. Admin wording now shows
   reason breakdowns and offers a dedicated revalidation action. Structural and focused tests passed;
   behavioral pinned-runtime verification remains pending.
+
+- 2026-07-24: Retained staging diagnosis confirmed all 25 videos had metadata and were public/
+  processed but reported `embeddable: false`. Because playback is native SmartTube/Lounge rather
+  than an iframe, trusted-playlist eligibility now treats embeddability as informational audit
+  metadata: only missing, non-public, or unprocessed videos count unavailable. Public processed
+  non-embeddable rows remain needs-review/ineligible without inferred canonical identity. This policy
+  change is scoped to trusted-playlist import/revalidation; fallback search policy is unchanged.
