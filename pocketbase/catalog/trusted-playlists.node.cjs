@@ -50,4 +50,5 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /metadataMissing/)
   assert.match(hook, /const reserve = modeledVideos \* 3/)
   assert.match(hook, /playlist_revalidation_state_invalid/)
+  assert.match(hook, /if \(!priorSnapshot && revalidate\)/)
 })
