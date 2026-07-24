@@ -4,11 +4,20 @@ export type TabletQueueItem = {
   status: 'queued' | 'playing' | 'completed' | 'failed'
   failureReason?: string
   requestedAt?: string
+  requesterLabel?: string
+  fairPosition?: number
   song?: { id: string; youtubeId: string; title: string; artist: string }
 }
 
 export type TabletStatus = {
-  party: { id: string; code?: string; codeHint?: string; expiresAt: string; status?: string; joinCount?: number }
+  party: {
+    id: string
+    code?: string
+    codeHint?: string
+    expiresAt: string
+    status?: string
+    joinCount?: number
+  }
   queue: TabletQueueItem[]
   controller?: {
     connected: boolean
@@ -61,7 +70,12 @@ export type PlaylistImportPreview = {
   pageToken: string
   nextPageToken: string
   snapshotFingerprint: string
-  modeledCost: { playlistsList: number; playlistItemsList: number; videosList: number; total: number }
+  modeledCost: {
+    playlistsList: number
+    playlistItemsList: number
+    videosList: number
+    total: number
+  }
 }
 
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -72,7 +86,10 @@ async function request<T>(url: string, init: RequestInit = {}, token?: string): 
   const response = await fetch(url, { ...init, headers })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const error = new Error(payload.message || 'Request failed') as Error & { code?: string; status?: number }
+    const error = new Error(payload.message || 'Request failed') as Error & {
+      code?: string
+      status?: number
+    }
     error.code = payload.error
     error.status = response.status
     throw error
@@ -81,14 +98,21 @@ async function request<T>(url: string, init: RequestInit = {}, token?: string): 
 }
 
 export function authenticateTablet(identity: string, password: string) {
-  return request<{ token: string; record?: { id: string; role?: string } }>('/api/collections/users/auth-with-password', {
-    method: 'POST',
-    body: JSON.stringify({ identity: identity.trim(), password }),
-  })
+  return request<{ token: string; record?: { id: string; role?: string } }>(
+    '/api/collections/users/auth-with-password',
+    {
+      method: 'POST',
+      body: JSON.stringify({ identity: identity.trim(), password }),
+    },
+  )
 }
 
 export function createParty(token: string) {
-  return request<{ id: string; code: string; expiresAt: string }>('/api/karaoke/parties', { method: 'POST', body: '{}' }, token)
+  return request<{ id: string; code: string; expiresAt: string }>(
+    '/api/karaoke/parties',
+    { method: 'POST', body: '{}' },
+    token,
+  )
 }
 
 export function loadTabletStatus(token: string, partyId: string) {
@@ -97,10 +121,14 @@ export function loadTabletStatus(token: string, partyId: string) {
 }
 
 export function bindAvailableController(token: string, partyId: string) {
-  return request<{ partyId: string; bound: boolean }>('/api/karaoke/tablet/controller/bind', {
-    method: 'POST',
-    body: JSON.stringify({ partyId }),
-  }, token)
+  return request<{ partyId: string; bound: boolean }>(
+    '/api/karaoke/tablet/controller/bind',
+    {
+      method: 'POST',
+      body: JSON.stringify({ partyId }),
+    },
+    token,
+  )
 }
 
 export function issuePlaybackCommand(
@@ -109,7 +137,13 @@ export function issuePlaybackCommand(
   action: 'play' | 'pause',
   idempotencyKey: string,
 ) {
-  return request<{ id: string; action: 'play' | 'pause'; sequence: number; status: string; idempotent?: boolean }>(
+  return request<{
+    id: string
+    action: 'play' | 'pause'
+    sequence: number
+    status: string
+    idempotent?: boolean
+  }>(
     '/api/karaoke/tablet/controller/playback',
     {
       method: 'POST',
@@ -128,40 +162,83 @@ export function loadNext(token: string, partyId: string) {
   return request<{ queue: TabletQueueItem | null }>(`/api/karaoke/queue/next?${params}`, {}, token)
 }
 
-export function transitionQueue(token: string, queueId: string, from: TabletQueueItem['status'], to: 'playing' | 'completed' | 'failed', failureReason?: string) {
-  return request<{ id: string; status: string; idempotent?: boolean }>('/api/karaoke/queue/transition', {
-    method: 'POST',
-    body: JSON.stringify({ queueId, from, to, ...(failureReason ? { failureReason } : {}) }),
-  }, token)
-}
-
-export function loadCatalog(token: string, options: { review?: CatalogSong['reviewState']; classification?: string; page?: number; perPage?: number } = {}) {
-  const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(options)) if (value) params.set(key, String(value))
-  return request<{ songs: CatalogSong[]; page: number; perPage: number; totalItems: number; totalPages: number }>(
-    `/api/karaoke/tablet/catalog${params.toString() ? `?${params}` : ''}`, {}, token,
+export function transitionQueue(
+  token: string,
+  queueId: string,
+  from: TabletQueueItem['status'],
+  to: 'playing' | 'completed' | 'failed',
+  failureReason?: string,
+) {
+  return request<{ id: string; status: string; idempotent?: boolean }>(
+    '/api/karaoke/queue/transition',
+    {
+      method: 'POST',
+      body: JSON.stringify({ queueId, from, to, ...(failureReason ? { failureReason } : {}) }),
+    },
+    token,
   )
 }
 
-export function reviewCatalogSong(token: string, id: string, reviewState: CatalogSong['reviewState'], note?: string) {
-  return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/review`, {
-    method: 'POST',
-    body: JSON.stringify({ reviewState, ...(note?.trim() ? { note: note.trim() } : {}) }),
-  }, token)
+export function loadCatalog(
+  token: string,
+  options: {
+    review?: CatalogSong['reviewState']
+    classification?: string
+    page?: number
+    perPage?: number
+  } = {},
+) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(options)) if (value) params.set(key, String(value))
+  return request<{
+    songs: CatalogSong[]
+    page: number
+    perPage: number
+    totalItems: number
+    totalPages: number
+  }>(`/api/karaoke/tablet/catalog${params.toString() ? `?${params}` : ''}`, {}, token)
+}
+
+export function reviewCatalogSong(
+  token: string,
+  id: string,
+  reviewState: CatalogSong['reviewState'],
+  note?: string,
+) {
+  return request<CatalogSong>(
+    `/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/review`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reviewState, ...(note?.trim() ? { note: note.trim() } : {}) }),
+    },
+    token,
+  )
 }
 
 export function approveCatalogSongs(token: string, ids: string[]) {
-  return request<{ approved: number; ids: string[]; batchId: string }>('/api/karaoke/tablet/catalog/review/batch', {
-    method: 'POST',
-    body: JSON.stringify({ ids }),
-  }, token)
+  return request<{ approved: number; ids: string[]; batchId: string }>(
+    '/api/karaoke/tablet/catalog/review/batch',
+    {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    },
+    token,
+  )
 }
 
-export function correctCatalogIdentity(token: string, id: string, correction: { title: string; artist: string; reason: string }) {
-  return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/identity`, {
-    method: 'POST',
-    body: JSON.stringify(correction),
-  }, token)
+export function correctCatalogIdentity(
+  token: string,
+  id: string,
+  correction: { title: string; artist: string; reason: string },
+) {
+  return request<CatalogSong>(
+    `/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/identity`,
+    {
+      method: 'POST',
+      body: JSON.stringify(correction),
+    },
+    token,
+  )
 }
 
 export function loadCatalogReport(token: string) {
@@ -169,22 +246,49 @@ export function loadCatalogReport(token: string) {
 }
 
 export function previewTrustedPlaylist(token: string, sourceKey: string, maxItems = 25) {
-  return request<PlaylistImportPreview>('/api/karaoke/tablet/catalog/playlists/import', {
-    method: 'POST',
-    body: JSON.stringify({ sourceKey, maxItems, dryRun: true }),
-  }, token)
-}
-
-export function importTrustedPlaylist(token: string, sourceKey: string, snapshotFingerprint: string, maxItems = 25, pageToken = '') {
-  return request<{ imported: number; duplicates: number; unavailable: number; nextPageToken: string }>(
+  return request<PlaylistImportPreview>(
     '/api/karaoke/tablet/catalog/playlists/import',
-    { method: 'POST', body: JSON.stringify({ sourceKey, snapshotFingerprint, maxItems, pageToken, dryRun: false }) }, token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ sourceKey, maxItems, dryRun: true }),
+    },
+    token,
   )
 }
 
-export function replaceCatalogSong(token: string, id: string, candidate: { candidateId?: string; youtubeId?: string }) {
-  return request<CatalogSong>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/replace`, {
-    method: 'POST',
-    body: JSON.stringify(candidate),
-  }, token)
+export function importTrustedPlaylist(
+  token: string,
+  sourceKey: string,
+  snapshotFingerprint: string,
+  maxItems = 25,
+  pageToken = '',
+) {
+  return request<{
+    imported: number
+    duplicates: number
+    unavailable: number
+    nextPageToken: string
+  }>(
+    '/api/karaoke/tablet/catalog/playlists/import',
+    {
+      method: 'POST',
+      body: JSON.stringify({ sourceKey, snapshotFingerprint, maxItems, pageToken, dryRun: false }),
+    },
+    token,
+  )
+}
+
+export function replaceCatalogSong(
+  token: string,
+  id: string,
+  candidate: { candidateId?: string; youtubeId?: string },
+) {
+  return request<CatalogSong>(
+    `/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/replace`,
+    {
+      method: 'POST',
+      body: JSON.stringify(candidate),
+    },
+    token,
+  )
 }

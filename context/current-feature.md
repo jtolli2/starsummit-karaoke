@@ -1,4 +1,4 @@
-# Trusted Karaoke Playlist Import
+# Simplified Tablet Operator Interface
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
@@ -9,155 +9,49 @@ Complete
 
 ## Goals
 
-- Add a server-only, allowlisted public-playlist importer that snapshots exact YouTube video IDs,
-  verifies playlist ownership, batches public video metadata, and is resumable, transactional,
-  idempotent, and quota-reserve aware without using `search.list`.
-- Preserve canonical artist/title boundaries: playlist and uploader metadata are provenance only;
-  imported records require a verified MusicBrainz identity or constrained tablet-admin correction
-  before approval and guest-catalog eligibility.
-- Add constrained tablet review/preview/report support and tests for parsing, pagination, replay,
-  quota accounting, authorization, curation preservation, and sanitization.
-- Add a bounded, explicitly selected tablet batch-approval action (maximum 20 records) that
-  preserves the existing karaoke/identity gates, confirms the selected count, and writes a
-  per-song batch audit event. Blanket or filter-based approval remains out of scope.
-- Repair fallback-search UX so normalized live queries use one idempotent `karaoke` suffix,
-  YouTube channel provenance survives the sanitized candidate/request path, and missing-identity
-  fallback songs remain visibly identifiable without promoting uploader metadata to canonical
-  artist identity.
-- Make explicit YouTube fallback intent and outcomes unambiguous when weak local catalog matches
-  remain prioritized, including source labels and a completed-with-no-eligible-results state.
-- Show the exact YouTube video ID and a direct validated watch link on every tablet catalog-review
-  row, including both guest fallback and trusted-playlist candidates.
-- Deploy and validate the exact product SHA on retained Compose staging, run a bounded canary and
-  quality-gated import/review suitable for Saturday without deleting or replacing retained data.
+- Make `/tablet` a touch-first, playback- and queue-focused operator surface while preserving the
+  existing constrained `tablet_admin` authorization and validated PocketBase endpoints.
+- Keep the party identity, readable QR code, expiry/status, prominent authoritative Now Playing
+  state, and a large confirmed-state Play/Pause toggle visible without navigating away.
+- Add a queue drawer with fair-order/requester context and safe, confirmed everyday queue actions;
+  keep destructive transitions confirmed and prevent duplicate submissions.
+- Preserve the existing server-side queue/controller contracts, including durable playback
+  idempotency, authoritative HTTPS refetch after SSE wake/reconnect, and clear mismatch/recovery
+  presentation. Do not claim SmartTube acknowledgement proves convergence.
+- Separate advanced party administration, catalog review/import, reports, diagnostics, and settings
+  under `/admin`, reachable only through a discreet intentional handoff from `/tablet`.
+- Add proportionate Vue tests for confirmed versus pending playback state, unavailable/mismatched
+  controls, drawer/QR persistence, empty-party flow, confirmations, duplicate prevention, admin
+  navigation, recovery, and accessible controls; then validate and independently review locally.
 
 ## Constraints and Notes
 
-- Standing approval covers scoped local, commit/push, Coolify retained-staging, and additive
-  PocketBase/data mutations. It does not allow deletion, external-volume replacement, production
-  hostname/DNS changes, credential rotation, backup-key automation, controller enrollment change,
-  destructive reset, or Wi-Fi interruption.
-- `YOUTUBE_API_KEY` remains server-only; `YOUTUBE_API_KEY_BACKUP` is manual-development only.
-  Exact playlist IDs are enumerated with `playlistItems.list`; known IDs use `videos.list` batches.
-  No scraping, InnerTube, yt-dlp, arbitrary guest playlists, or content copying is permitted.
-- The upcoming party is a delivery deadline, not an application quota policy. Unreviewed/ineligible
-  candidates remain private and retained.
+- Local edits and read-only inspection/validation are authorized. No commit, push, deployment,
+  PocketBase/Coolify/staging/tablet mutation, deletion, reset, controller enrollment, credential
+  change, or Wi-Fi interruption test is authorized.
+- `/tablet` and `/admin` share only a constrained `tablet_admin` session. Browser code must not
+  contain a PocketBase superuser, Lounge material, YouTube keys, Coolify secrets, raw privileged
+  records, or direct collection writes.
+- Existing queue, fair rotation, controller-generation, party/video ownership, validated endpoint,
+  and SSE-wake/HTTPS-authority semantics are preserved. The known Lounge/SmartTube convergence
+  blocker remains visible as mismatch/recovery state rather than being masked as success.
 
 ## Implementation Notes
 
-- Playlist sources are configured server-side only. The tablet sends a configured source key and
-  cannot proxy arbitrary public or guest playlists. Every source is revalidated as public and owned
-  by its immutable configured channel before a stale snapshot is replayed; fresh owner validation is
-  cached for six hours.
-- Claims bind the source, policy, page token, and requested page size. They reserve the shared
-  YouTube quota ledger before external calls, coalesce active identical work, settle successful
-  calls by operation class, and conservatively charge an ambiguous/stale external lease.
-- The feature deliberately has no Saturday-specific application quota or reserve. Imported videos
-  remain `needs_review` and ineligible unless existing constrained canonical correction and review
-  paths establish their identity and approve karaoke quality.
-- Retained staging exposed a recorded initial migration without the new private playlist schema.
-  The forward-only `1784600010` repair ensures the missing private collections and additive song
-  provenance fields without changing any retained records.
-- Staging now contains the repaired private schema and exact final diagnostic deployment. The
-  allowlisted preview still fails closed before any song record is created; a sanitized upstream
-  HTTP operation code was deployed to distinguish source authorization/availability from importer
-  state. The existing authenticated tablet session was recovered after redeploy; the next bounded
-  canary can use that retained session without a new sign-in.
-- The initial KaraFun general playlist was rejected by the authoritative API ownership check and
-  remains retained only as a failed, non-destructive claim. The runtime allowlist was corrected to
-  the official channel uploads playlist, which passed owner verification. A bounded first-page
-  import retained 23 `needs_review`/ineligible candidates and 2 unavailable audit outcomes; it
-  created no approvals and did not change the guest catalog.
-- Playlist transport now uses the worker-safe hook helper, reserves the bounded retry maximum
-  (six preview / nine import calls), records actual operation attempts, and settles unused
-  reservation. Further population is deliberately paused for canonical MusicBrainz/operator
-  review integration rather than bulk-approving title parses.
-- A second verified KaraFun `All Time Top 50` source passed ownership preview and retained 16
-  additional `needs_review`/ineligible candidates (9 unavailable audit outcomes). One candidate,
-  Toni Braxton / Un-Break My Heart, received an audited MusicBrainz-backed operator identity
-  correction but remains unapproved and ineligible pending a refreshed-card review.
-- The operator independently checked the corrected KaraFun rendition and approved Toni Braxton /
-  Un-Break My Heart. Retained staging now reports three approved catalog records; this approved
-  rendition is eligible while the remaining playlist candidates stay private pending one-at-a-time
-  review. The next selected candidate must be paged into the constrained tablet UI before any
-  correction or approval.
-- Further MusicBrainz-backed tablet review approved Passenger / Let Her Go, Peter, Paul & Mary /
-  Don't Think Twice It's All Right, Brooks & Dunn / Ain't Nothing 'bout You, and Anne Murray /
-  I Just Fall in Love Again. Keith Whitley / Ten Feet Away is corrected but not approved because
-  the constrained review page moved it off-screen; direct database mutation was not used. The
-  existing pager code needs deployed-runtime diagnosis before that remaining approval can proceed.
-- The tablet pager was confirmed usable: Keith Whitley / Ten Feet Away was approved through page 2.
-  Lionel Richie / My Love has a verified operator correction and is visibly awaiting approval on
-  page 1; browser targeting became intermittent for its nested approval control, so no substitute
-  direct-record action was attempted.
-- Tablet review continued with stable card-scoped controls: Lionel Richie / My Love, Evanescence /
-  My Immortal, and Whitney Houston / I Have Nothing were each MusicBrainz-verified, corrected,
-  and approved. The retained review backlog is now 47; no bulk approval or direct record write
-  was used.
-- Selected-only batch approval is implemented with a maximum of 20 records, exact-name native
-  confirmation, UI/server parity for high-confidence karaoke and no alternatives, transactional
-  collision revalidation, per-song audit events, and one retained batch-summary audit event.
-  Independent review approved the implementation; behavioral pinned-runtime and Vue interaction
-  coverage remain a follow-up beyond the current static/focused suite.
-- A freshly deployed tablet bundle exposed a review-list compatibility defect: the visible
-  `Needs review` filter sent that state while the server's combined actionable backlog was only
-  available under its retained `pending` alias. The server now maps both values to the same
-  unreviewed-or-needs-review backlog, guarded by the catalog protocol contract. The same runtime
-  check exposed a missing worker-local `jsonValue` binding in the catalog route's newly added
-  alternatives count; the callback now explicitly loads that helper before serializing rows.
-- After the retained staging deployment of those repairs, the refreshed authenticated tablet
-  review again rendered its 20-row actionable page. MusicBrainz-backed corrections and approvals
-  then added Forrest Frank / `GOOD DAY` and Slipknot / `Vermilion, Pt. 2`; no batch approval,
-  fallback approval, direct database edit, deletion, or extra YouTube search was used.
-- User-reported fallback-search extension: normalize every live fallback query with one idempotent
-  `karaoke` suffix, version claims to prevent replay of legacy payloads, and carry YouTube channel
-  provenance through the sanitized candidate/request path. Missing-identity fallback songs remain
-  ineligible and canonical fields are never inferred from uploader metadata; queue display uses raw
-  video title plus `YouTube fallback · <channel>` only as a provenance label. Existing missing-
-  identity fallback records may receive missing video title/channel fields, but corrected or approved
-  records are preserved.
-- The fallback search repair bounds the final hidden query, including its suffix, to 80 characters
-  and advances the durable fallback policy to `v2`. Focused validation passed 30 catalog contracts,
-  14 party API/page tests, hook syntax, the production build, and diff checks. Independent review
-  approved the repair after the final-query boundary was corrected.
-- Retained Compose staging deployment `e146pyalgr072dcglxxx11ov` finished at exact product SHA
-  `45558cb7f92f0964795cc001a32c6844e5ffac22`; frontend, same-origin `/api/health`, and controller
-  health each returned HTTP 200. One bounded live guest search for `wake me up before you go go`
-  returned karaoke renditions without showing or requiring the hidden suffix, displayed channel
-  provenance for KaraFun Karaoke, ObsKure Karaoke, WhamVEVO, and EasyKaraoke, and retained the
-  existing queue without adding another request. Existing missing-identity fallback rows for
-  All Night Long and Wake Me Up Before You Go-Go immediately displayed their raw YouTube titles
-  instead of unidentified canonical placeholders.
-- Catalog-review rows now show the exact YouTube ID separately from the raw title and provide a
-  fixed-origin watch link only for validated 11-character video IDs. Focused tablet tests cover
-  fallback and trusted-playlist rows; 14 tests, the production type-check/build, diff checks, and
-  independent URL-safety/accessibility review passed. Retained Compose deployment
-  `s2hkj8643ji6fqt1q19vu9xr` finished at exact product SHA
-  `91586ab9fd264c8770cd5dcaefb459f83e81f210`; all three health checks returned HTTP 200. Live
-  tablet review confirmed fallback video `WRf4B6MSSvU` and multiple trusted-playlist videos show
-  their exact IDs and fixed-origin watch links with isolated new-tab attributes.
-- Guest fallback search now labels catalog and YouTube rows separately and reports whether an
-  explicit YouTube search is running, completed with visible candidates, or completed without an
-  eligible candidate. In-flight Enter presses coalesce, visible counts exclude deduplicated or
-  truncated rows, successful searches clear stale errors, and credential-refresh retries stop if
-  the guest changes the query before retry. Twenty focused tests, the full 35-test independent
-  suite, type-check/build, diff checks, and independent quota/state review passed.
-- Retained Compose deployment `wf2axts19u0d9daz1alexfw0` finished at exact product SHA
-  `ca336b65587f4dc1a39f944e277df8927fb8a46d`; frontend, same-origin API, and controller health
-  returned HTTP 200. Live `i write sins` validation first labeled Whitney Houston as a catalog
-  match, then one explicit cached YouTube action reported four eligible results and displayed four
-  clearly labeled Panic! at the Disco karaoke fallbacks below it without adding a queue item or
-  consuming another external search call.
-- An explicit guest YouTube action now first force-refreshes the sanitized approved catalog. A
-  newly approved strong match replaces the stale local index immediately and skips `search.list`;
-  a failed refresh safely retains the prior index. Query changes during the refresh or a credential
-  retry stop both stale UI updates and any later YouTube request. Twenty-two focused tests,
-  production type-check/build, diff checks, and independent review passed.
-- Retained Compose deployment `ek469126wbdozloq2g0n7sjc` finished at exact product SHA
-  `0f4e6210a0ba9b3aa15a8c02867a88d837942dd0`; frontend, same-origin API, and controller health
-  returned HTTP 200. Live guest search for `i write sins` showed the newly operator-corrected and
-  approved I Write Sins Not Tragedies / Panic! At The Disco as a local catalog result ahead of the
-  weak Whitney Houston match; no queue action or YouTube search was performed during verification.
-- The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
-  without deleting records or approving fixtures, promotional Shorts, suspect identities, or
-  unresolved soundtrack/group attributions.
+- Moved the retained full administration/catalog surface to `/admin` and made `/tablet` a focused
+  operator route backed by `useTabletOperator`. Both routes retain the same constrained
+  `tablet_admin` session and validated API contracts.
+- `/tablet` keeps party identity/QR visible with Now Playing, one authoritative Play/Pause control,
+  a responsive queue drawer, confirmed terminal queue actions, and an intentional confirmation
+  gate before Advanced Admin. Pending commands retain and reuse their scoped idempotency key after
+  ambiguous delivery; acknowledgement alone never changes the confirmed Play/Pause label.
+- The tablet status response now exposes only anonymous `Guest N` requester labels and a
+  server-calculated fair-rotation projection. It does not expose raw guest records or credentials.
+- Local validation passed: 37 Vue tests, production type-check/build, 20 focused queue/controller
+  protocol tests, PocketBase hook syntax, Oxlint for changed Vue/tests, Prettier, diff checks, and
+  secret scan. Independent review approved controller/idempotency, authorization, accessibility,
+  fair-order, and regression boundaries after focused repairs.
+- Responsive local-browser inspection at 800x1280 and 1280x800 found no horizontal overflow and
+  54px touch controls. It covered the signed-out shell only because no local tablet account was
+  available; authenticated behaviors are covered by Vue tests. No retained staging/tablet/browser
+  credential was used. SmartTube/Lounge convergence remains a known unresolved runtime limitation.

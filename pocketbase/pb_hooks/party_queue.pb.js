@@ -328,6 +328,40 @@ function songView(q, song) {
   return { id: id(q), sequence: num(q, 'sequence'), status: str(q, 'status'), requestedAt: str(q, 'requested_at'), song: { id: id(song), youtubeId: str(song, 'youtube_id'), title: missingFallbackIdentity ? fallbackTitle : str(song, 'title'), artist: missingFallbackIdentity ? (channel ? `YouTube fallback · ${channel}` : 'YouTube fallback') : str(song, 'artist') } }
 }
 
+// The tablet may see a friendly anonymous requester label and the exact
+// fair-rotation projection, but never a guest credential or raw guest record.
+function tabletQueueView(rows) {
+  const labels = Object.create(null)
+  for (const row of rows.slice().sort((a, b) => num(a, 'sequence') - num(b, 'sequence'))) {
+    const requester = str(row, 'requester')
+    if (!labels[requester]) labels[requester] = `Guest ${Object.keys(labels).length + 1}`
+  }
+  const decorate = (row, fairPosition) => ({
+    ...songView(row, $app.findRecordById('karaoke_songs', str(row, 'song'))),
+    requesterLabel: labels[str(row, 'requester')] || 'Guest',
+    ...(fairPosition ? { fairPosition } : {}),
+  })
+  const playing = rows.filter((row) => str(row, 'status') === 'playing').map((row) => decorate(row))
+  const remaining = rows.filter((row) => str(row, 'status') === 'queued')
+  const served = Object.create(null)
+  for (const row of remaining) {
+    const guest = find('karaoke_guest_identities', 'id = {:id}', { id: str(row, 'requester') })
+    served[str(row, 'requester')] = guest && str(guest, 'last_served_at') ? new Date(str(guest, 'last_served_at')).getTime() : 0
+  }
+  let nextServedAt = Math.max(Date.now(), ...Object.values(served).map(Number)) + 1
+  const fair = []
+  while (remaining.length) {
+    const first = Object.create(null)
+    for (const row of remaining.slice().sort((a, b) => num(a, 'sequence') - num(b, 'sequence'))) {
+      const requester = str(row, 'requester'); if (!first[requester]) first[requester] = row
+    }
+    const choice = Object.values(first).sort((a, b) => served[str(a, 'requester')] - served[str(b, 'requester')] || num(a, 'sequence') - num(b, 'sequence') || String(str(a, 'requester')).localeCompare(String(str(b, 'requester'))))[0]
+    fair.push(choice); served[str(choice, 'requester')] = nextServedAt++
+    remaining.splice(remaining.findIndex((row) => id(row) === id(choice)), 1)
+  }
+  return [...playing, ...fair.map((row, index) => decorate(row, index + 1))]
+}
+
 // Tablet-facing state is deliberately assembled here instead of exposing the
 // controller collections through PocketBase rules.  In particular, auth
 // emails/passwords, session records and command payloads never cross this API.
@@ -367,7 +401,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth }
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -658,14 +692,14 @@ routerAdd('GET', '/api/karaoke/queue/next', (c) => {
 // rules remain locked and no controller credentials or Lounge data are sent.
 routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, info, find, records, id, str, songView, tabletControllerView } = globalThis.__partyQueue
+  const { auth, tablet, json, info, find, records, id, str, tabletQueueView, tabletControllerView } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const partyId = info(c).query?.partyId
   if (Array.isArray(partyId) ? !partyId[0] : !partyId) return json(c, 400, 'invalid_party', 'partyId is required')
   const party = find('karaoke_parties', 'id = {:id}', { id: Array.isArray(partyId) ? partyId[0] : partyId })
   if (!party) return json(c, 404, 'party_not_found', 'Party was not found')
   const rows = records('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 200, { party: id(party) })
-  const queue = rows.map((q) => songView(q, $app.findRecordById('karaoke_songs', str(q, 'song'))))
+  const queue = tabletQueueView(rows)
   return c.json(200, {
     party: { id: id(party), status: str(party, 'status'), expiresAt: str(party, 'expires_at'), codeHint: str(party, 'code_hint'), joinCount: Number(party.join_count || 0) || (party.getInt ? party.getInt('join_count') : 0) },
     queue,

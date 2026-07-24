@@ -3,10 +3,27 @@ import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import TabletPage from '@/pages/tablet/index.vue'
 
-const activeStatus = (overrides: Record<string, unknown> = {}) => ({
-  party: { id: 'party-1', codeHint: 'CD34', expiresAt: new Date(Date.now() + 3600000).toISOString(), status: 'active', joinCount: 2 },
-  queue: [{ id: 'queue-1', sequence: 1, status: 'queued', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }],
-  controller: { connected: true, connectionState: 'connected', state: { playerState: 'paused', videoId: 'dQw4w9WgXcQ' } },
+const status = (overrides: Record<string, unknown> = {}) => ({
+  party: {
+    id: 'party-1',
+    code: 'AB12CD34',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    status: 'active',
+    joinCount: 2,
+  },
+  queue: [
+    {
+      id: 'queue-1',
+      sequence: 1,
+      status: 'playing',
+      song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' },
+    },
+  ],
+  controller: {
+    connected: true,
+    connectionState: 'connected',
+    state: { playerState: 'paused', videoId: 'dQw4w9WgXcQ' },
+  },
   ...overrides,
 })
 
@@ -14,186 +31,252 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await nextTick()
 }
+function mountPage() {
+  return mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+}
 
-describe('tablet operator page', () => {
-  afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks() })
-
-  it('restores only the constrained session, party id, and locally created QR code after reload', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1', partyCode: 'AB12CD34' }))
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus()), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
-    await settle()
-    expect(wrapper.text()).toContain('AB12CD34')
-    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/karaoke/tablet/status?partyId=party-1')
-    expect(sessionStorage.getItem('karaoke:tablet:session')).toContain('tablet-token')
+describe('simplified tablet operator', () => {
+  afterEach(() => {
+    sessionStorage.clear()
+    vi.restoreAllMocks()
   })
 
-  it('restores an active party after sign-in without automatically creating an orphan party', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+  it('keeps party identity and QR context visible while the queue drawer opens and closes', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1', partyCode: 'AB12CD34' }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify(status()), { status: 200 })),
+    )
+    const wrapper = mountPage()
+    await settle()
+    expect(wrapper.text()).toContain('Party AB12CD34')
+    expect(wrapper.findComponent({ name: 'QrcodeVue' }).exists()).toBe(true)
+    await wrapper.get('[aria-controls="queue-drawer"]').trigger('click')
+    expect(wrapper.get('#queue-drawer').attributes('data-open')).toBe('true')
+    expect(wrapper.text()).toContain('Song')
+    expect(wrapper.text()).toContain('Party AB12CD34')
+    await wrapper.get('#queue-drawer button.quiet').trigger('click')
+    expect(wrapper.get('#queue-drawer').attributes('data-open')).toBe('false')
+  })
+
+  it('uses one accessible Play control only after confirmed paused state', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status()), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'command-1', action: 'play', status: 'pending' }), {
+          status: 201,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            status({
+              controller: {
+                connected: true,
+                connectionState: 'connected',
+                state: { playerState: 'playing', videoId: 'dQw4w9WgXcQ' },
+              },
+            }),
+          ),
+          { status: 200 },
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await settle()
+    const transport = wrapper.get('.transport')
+    expect(transport.text()).toContain('Play')
+    expect(transport.attributes('aria-label')).toBe('Play confirmed playback')
+    await transport.trigger('click')
+    await settle()
+    const commandInit = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined
+    expect(commandInit).toBeDefined()
+    expect(JSON.parse(String(commandInit?.body))).toMatchObject({
+      partyId: 'party-1',
+      action: 'play',
+    })
+    expect(wrapper.get('.transport').text()).toContain('Pause')
+    expect(wrapper.text()).toContain('Playback resumed.')
+  })
+
+  it('shows pending separately and reuses the same idempotency key after an ambiguous request', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status()), { status: 200 }))
+      .mockRejectedValueOnce(new TypeError('lost response'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(status()), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'command-1', action: 'play', status: 'pending' }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(status()), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await settle()
+    await wrapper.get('.transport').trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('Play requested — waiting for controller confirmation.')
+    expect(sessionStorage.getItem('karaoke:tablet:pending-playback')).toContain('queue-1')
+    expect(wrapper.get('.transport').attributes('disabled')).toBeUndefined()
+    const firstInit = fetchMock.mock.calls[1]![1] as RequestInit
+    const firstBody = JSON.parse(String(firstInit.body))
+    await wrapper.get('.transport').trigger('click')
+    await settle()
+    const retryInit = fetchMock.mock.calls[3]![1] as RequestInit
+    const retryBody = JSON.parse(String(retryInit.body))
+    expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey)
+  })
+
+  it('disables transport and names video drift rather than implying controller success', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify(
+            status({
+              controller: {
+                connected: true,
+                connectionState: 'connected',
+                state: { playerState: 'playing', videoId: 'other-video' },
+              },
+            }),
+          ),
+          { status: 200 },
+        ),
+      ),
+    )
+    const wrapper = mountPage()
+    await settle()
+    expect(wrapper.text()).toContain('Video mismatch')
+    expect(wrapper.get('.transport').attributes('disabled')).toBeDefined()
+  })
+
+  it('offers simple no-party recovery and keeps advanced administration intentional', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }),
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const wrapper = mountPage()
     await wrapper.get('#identity').setValue('tablet@example.test')
     await wrapper.get('#password').setValue('secret')
     await wrapper.get('form').trigger('submit')
     await settle()
     expect(wrapper.text()).toContain('No active party')
-    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-      '/api/collections/users/auth-with-password',
-      '/api/karaoke/tablet/active',
-    ])
+    expect(wrapper.get('button.quiet').text()).toBe('Advanced Admin')
+    await wrapper.get('button.quiet').trigger('click')
+    expect(window.confirm).toHaveBeenCalledWith(
+      'Open Advanced Admin? Party controls stay available there.',
+    )
   })
 
-  it('shows catalog review after sign-in when there is no active party', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ songs: [
-        {
-          id: 'fallback-1',
-          title: 'Unidentified karaoke candidate',
-          artist: 'Unidentified artist',
-          youtubeId: 'dQw4w9WgXcQ',
-          videoTitle: 'All Night Long - Lionel Richie (Karaoke Version)',
-          source: 'youtube',
-          reviewState: 'unreviewed',
-        },
-        {
-          id: 'playlist-1',
-          title: 'Playlist Song',
-          artist: '',
-          youtubeId: 'abcdefghijk',
-          videoTitle: 'Playlist Song | Karaoke Version',
-          source: 'youtube_playlist',
-          reviewState: 'needs_review',
-        },
-      ], totalPages: 1 }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, unresolvedReviewBacklog: 1, missingIdentity: 0, alternatives: 0 }), { status: 200 }))
+  it('confirms and prevents duplicate terminal queue transitions', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    let resolveTransition: ((value: Response) => void) | undefined
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status()), { status: 200 }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveTransition = resolve
+          }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({ queue: [] })), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
-    await wrapper.get('#identity').setValue('tablet@example.test')
-    await wrapper.get('#password').setValue('secret')
-    await wrapper.get('form').trigger('submit')
-    await settle()
-    expect(wrapper.text()).toContain('Catalog review')
-    await wrapper.get('.catalog button.quiet').trigger('click')
-    await settle()
-    expect(wrapper.text()).toContain('All Night Long - Lionel Richie (Karaoke Version)')
-    expect(wrapper.text()).toContain('Playlist Song | Karaoke Version')
-    expect(wrapper.text()).toContain('uploader unknown')
-    const youtubeLinks = wrapper.findAll('a[target="_blank"]')
-    expect(youtubeLinks.map((link) => link.attributes('href'))).toEqual([
-      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-      'https://www.youtube.com/watch?v=abcdefghijk',
-    ])
-    expect(youtubeLinks.every((link) => link.attributes('rel') === 'noopener noreferrer')).toBe(true)
-    expect(wrapper.text()).toContain('YouTube ID: dQw4w9WgXcQ')
-    expect(wrapper.text()).toContain('YouTube ID: abcdefghijk')
-    expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
-    expect(fetchMock.mock.calls[3]?.[0]).toBe('/api/karaoke/tablet/catalog/report')
-  })
-
-  it('disables starting the next song while the controller is unavailable and renders nested state', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({ controller: { connected: false, connectionState: 'disconnected', state: { playerState: 'paused', videoId: 'dQw4w9WgXcQ' } } })), { status: 200 })))
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
-    await settle()
-    expect(wrapper.get('button').text()).toBe('Refresh')
-    const playButton = wrapper.findAll('button').find((button) => button.text() === 'Play next')
-    expect(playButton?.attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('paused')
-    expect(wrapper.text()).toContain('dQw4w9WgXcQ')
-  })
-
-  it('issues party-scoped play and pause commands only for the matching active item', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
-    const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(activeStatus({ queue: playingQueue })), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'command-1', action: 'play', sequence: 3, status: 'pending' }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(activeStatus({ queue: playingQueue, controller: { connected: true, connectionState: 'connected', state: { playerState: 'playing', videoId: 'dQw4w9WgXcQ' } } })), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
-    await settle()
-    const play = wrapper.findAll('button').find((button) => button.text() === 'Play')
-    const pause = wrapper.findAll('button').find((button) => button.text() === 'Pause')
-    expect(play?.attributes('disabled')).toBeUndefined()
-    expect(pause?.attributes('disabled')).toBeDefined()
-    await play?.trigger('click')
-    await settle()
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/karaoke/tablet/controller/playback')
-    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toMatchObject({
-      partyId: 'party-1',
-      action: 'play',
+    const wrapper = mount(TabletPage, {
+      attachTo: document.body,
+      global: { stubs: { QrcodeVue: true } },
     })
-    expect(wrapper.text()).toContain('Playback resumed.')
-    expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeUndefined()
+    await settle()
+    await wrapper.get('.item-actions button').trigger('click')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('Complete this song?')
+    const confirm = wrapper.get('[role="dialog"] button:not(.quiet)')
+    await confirm.trigger('click')
+    await confirm.trigger('click')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    resolveTransition!(
+      new Response(JSON.stringify({ id: 'queue-1', status: 'completed' }), { status: 200 }),
+    )
+    await settle()
+    expect(document.activeElement).toBe(wrapper.get('#queue-drawer button.quiet').element)
   })
 
-  it('reuses an ambiguous playback request and reports it as pending until confirmed', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
-    const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]
-    const paused = activeStatus({ queue: playingQueue })
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
-      .mockRejectedValueOnce(new TypeError('response lost'))
-      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'command-1', action: 'play', sequence: 3, status: 'pending', idempotent: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(paused), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+  it('returns focus to the queue action after cancelling a confirmation', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify(status()), { status: 200 })),
+    )
+    const wrapper = mount(TabletPage, {
+      attachTo: document.body,
+      global: { stubs: { QrcodeVue: true } },
+    })
     await settle()
-    const play = wrapper.findAll('button').find((button) => button.text() === 'Play')
-    await play?.trigger('click')
-    await settle()
-    const firstBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
-    expect(wrapper.text()).toContain('retry will reuse the same request')
-    await play?.trigger('click')
-    await settle()
-    const retryBody = JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body))
-    expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey)
-    expect(firstBody.idempotencyKey).toMatch(/^tablet:party-1:queue-1:play:/)
-    expect(wrapper.text()).toContain('Play requested; waiting for controller confirmation')
+    const complete = wrapper.get('.item-actions button')
+    await complete.trigger('click')
+    await wrapper.get('[role="dialog"] button.quiet').trigger('click')
+    await nextTick()
+    expect(document.activeElement).toBe(complete.element)
   })
 
-  it('disables transport controls while controller video lags the active queue', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
-    const playingQueue = [{ id: 'queue-1', sequence: 1, status: 'playing', song: { id: 'song-1', youtubeId: 'dQw4w9WgXcQ', title: 'Song', artist: 'Artist' } }]
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({
-      queue: playingQueue,
-      controller: { connected: true, connectionState: 'connected', state: { playerState: 'playing', videoId: 'different01' } },
-    })), { status: 200 })))
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
-    await settle()
-    expect(wrapper.text()).toContain('Waiting for controller playback confirmation')
-    expect(wrapper.findAll('button').find((button) => button.text() === 'Play')?.attributes('disabled')).toBeDefined()
-    expect(wrapper.findAll('button').find((button) => button.text() === 'Pause')?.attributes('disabled')).toBeDefined()
-  })
-
-  it('clears a retained playback request when its queue item is no longer active', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
-    sessionStorage.setItem('karaoke:tablet:pending-playback', JSON.stringify({
-      partyId: 'party-1',
-      queueId: 'old-queue',
-      action: 'pause',
-      key: 'tablet:party-1:old-queue:pause:retry-key',
-    }))
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus()), { status: 200 })))
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
-    await settle()
-    expect(wrapper.text()).not.toContain('Pause request pending')
-    expect(sessionStorage.getItem('karaoke:tablet:pending-playback')).toBeNull()
-  })
-
-  it('renders expired party recovery instead of active queue controls', async () => {
-    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(activeStatus({ party: { id: 'party-1', codeHint: 'CD34', expiresAt: new Date(Date.now() - 1000).toISOString(), status: 'expired' } })), { status: 200 })))
-    const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
+  it('recovers an expired party without rendering an active transport action', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify(
+            status({
+              party: {
+                id: 'party-1',
+                code: 'AB12CD34',
+                expiresAt: new Date(Date.now() - 1).toISOString(),
+                status: 'expired',
+              },
+            }),
+          ),
+          { status: 200 },
+        ),
+      ),
+    )
+    const wrapper = mountPage()
     await settle()
     expect(wrapper.text()).toContain('This party has expired')
-    expect(wrapper.findAll('button').some((button) => button.text() === 'Play next')).toBe(false)
-    expect(wrapper.findAll('button').some((button) => button.text() === 'Create new party')).toBe(true)
+    expect(wrapper.get('.transport').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('Create new party')
   })
 })

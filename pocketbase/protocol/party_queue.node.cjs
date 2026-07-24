@@ -19,6 +19,15 @@ test('tablet active callback resolves now through the reload-safe global contrac
   assert.match(endpoint[0], /now\(\)/)
 })
 
+test('tablet status exposes only anonymous requester labels and a fair-rotation projection', () => {
+  const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/status',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /tabletQueueView/)
+  assert.match(hook, /requesterLabel: labels\[str\(row, 'requester'\)\] \|\| 'Guest'/)
+  assert.match(hook, /fairPosition/)
+  assert.doesNotMatch(endpoint[0], /credential_hash/)
+})
+
 test('party creation binds exactly one active controller without guessing between devices', () => {
   const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/parties',[\s\S]*?\n}\)/)
   assert.ok(endpoint)

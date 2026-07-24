@@ -347,3 +347,14 @@
   Focused/backend/pinned-runtime suites, production builds, contract checks, and independent
   security, API-policy, concurrency, attribution, and UI reviews passed. No records, volumes,
   rollback resources, or retained artifacts were deleted or replaced.
+
+## 2026-07-23 — Simplified Tablet Operator Interface
+
+- Split the existing all-in-one tablet route into a touch-first `/tablet` operator surface and a
+  retained `/admin` advanced-administration surface. `/tablet` preserves QR/party identity,
+  authoritative controller state, durable idempotent playback retry, fair queue operation, and
+  an intentional Advanced Admin handoff without adding browser secrets or direct collection writes.
+- Added anonymous requester labels and a server-calculated fair-rotation projection to the
+  sanitized tablet status response. Verified 37 Vue tests, production build, focused controller/
+  queue protocol tests, hook syntax, formatting/diff checks, responsive shell inspection, and an
+  independent review. No remote deployment, PocketBase data mutation, or tablet action occurred.
