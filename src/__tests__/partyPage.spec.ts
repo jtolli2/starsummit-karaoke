@@ -86,6 +86,26 @@ describe('party page', () => {
     expect(wrapper.text()).not.toContain('Search YouTube')
   })
 
+  it('renders the YouTube channel for fallback results', async () => {
+    vi.useFakeTimers()
+    api.fallbackSearchSongs.mockResolvedValue({ songs: [
+      { id: 'yt', youtubeId: 'qwertyuiopa', title: 'All Night Long karaoke', artist: '', channelTitle: 'KaraFun' },
+      { id: 'yt-legacy', youtubeId: 'zyxwvutsrqp', title: 'Legacy fallback', artist: '', channelTitle: '' },
+    ] })
+    const wrapper = mount(PartyPage)
+    await flushPromises()
+    await wrapper.get('#song-search').setValue('all night long')
+    await vi.advanceTimersByTimeAsync(350)
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('KaraFun')
+    expect(wrapper.text()).toContain('KaraFun · YouTube fallback')
+    expect(wrapper.text()).toContain('Legacy fallback')
+    expect(wrapper.text()).not.toContain('YouTube fallback · YouTube fallback')
+    vi.useRealTimers()
+  })
+
   it('keeps an ordinary multi-character typo in the local catalog flow', async () => {
     vi.useFakeTimers()
     api.loadCatalogIndex.mockResolvedValue({ version: 'test', songs: [{ id: 's2', youtubeId: 'zyxwvutsrqp', title: 'Never Gonna Give You Up', artist: 'Rick Astley' }] })

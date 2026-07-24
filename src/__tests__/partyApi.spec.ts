@@ -57,12 +57,13 @@ describe('party API', () => {
   })
 
   it('keeps fallback search party-scoped and bounded', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ songs: [], quota: 'cached' }), { status: 200 }))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ songs: [{ id: 'yt', youtubeId: 'abcdefghijk', title: 'Halo karaoke', artist: '', channelTitle: 'KaraFun' }], quota: 'cached' }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    await fallbackSearchSongs('temporary-credential-123456', '  obscure song  ')
+    const result = await fallbackSearchSongs('temporary-credential-123456', '  obscure song  ')
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/karaoke/parties/songs/fallback')
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ query: 'obscure song' })
     expect(new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('authorization')).toBe('Bearer temporary-credential-123456')
+    expect(result.songs?.[0]).toMatchObject({ source: 'youtube', channelTitle: 'KaraFun' })
   })
 
   it('uses the audited fallback request path with an idempotency key', async () => {

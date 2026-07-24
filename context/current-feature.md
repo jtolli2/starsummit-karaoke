@@ -20,6 +20,10 @@ In Progress
 - Add a bounded, explicitly selected tablet batch-approval action (maximum 20 records) that
   preserves the existing karaoke/identity gates, confirms the selected count, and writes a
   per-song batch audit event. Blanket or filter-based approval remains out of scope.
+- Repair fallback-search UX so normalized live queries use one idempotent `karaoke` suffix,
+  YouTube channel provenance survives the sanitized candidate/request path, and missing-identity
+  fallback songs remain visibly identifiable without promoting uploader metadata to canonical
+  artist identity.
 - Deploy and validate the exact product SHA on retained Compose staging, run a bounded canary and
   quality-gated import/review suitable for Saturday without deleting or replacing retained data.
 
@@ -101,3 +105,17 @@ In Progress
   review again rendered its 20-row actionable page. MusicBrainz-backed corrections and approvals
   then added Forrest Frank / `GOOD DAY` and Slipknot / `Vermilion, Pt. 2`; no batch approval,
   fallback approval, direct database edit, deletion, or extra YouTube search was used.
+- User-reported fallback-search extension: normalize every live fallback query with one idempotent
+  `karaoke` suffix, version claims to prevent replay of legacy payloads, and carry YouTube channel
+  provenance through the sanitized candidate/request path. Missing-identity fallback songs remain
+  ineligible and canonical fields are never inferred from uploader metadata; queue display uses raw
+  video title plus `YouTube fallback · <channel>` only as a provenance label. Existing missing-
+  identity fallback records may receive missing video title/channel fields, but corrected or approved
+  records are preserved.
+- The fallback search repair bounds the final hidden query, including its suffix, to 80 characters
+  and advances the durable fallback policy to `v2`. Focused validation passed 30 catalog contracts,
+  14 party API/page tests, hook syntax, the production build, and diff checks. Independent review
+  approved the repair after the final-query boundary was corrected.
+- The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
+  without deleting records or approving fixtures, promotional Shorts, suspect identities, or
+  unresolved soundtrack/group attributions.

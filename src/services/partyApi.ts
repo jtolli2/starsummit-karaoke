@@ -6,7 +6,7 @@ export type QueueSong = {
   song: { id: string; youtubeId: string; title: string; artist: string }
 }
 
-export type LibrarySong = { id: string; youtubeId: string; title: string; artist: string; requestable?: boolean; source?: 'local' | 'youtube'; eligible?: boolean; reviewState?: string }
+export type LibrarySong = { id: string; youtubeId: string; title: string; artist: string; channelTitle?: string; channelId?: string; requestable?: boolean; source?: 'local' | 'youtube'; eligible?: boolean; reviewState?: string }
 export type CatalogIndex = { version: string; songs: LibrarySong[] }
 
 const credentialKey = (code: string) => `karaoke:party:${code.trim().toUpperCase()}:credential`
@@ -78,7 +78,7 @@ export function normalizeCatalogSong(raw: Partial<LibrarySong> & { youtube_id?: 
   const title = String(raw.title || '').trim() || 'Untitled song'
   const artist = String(raw.artist || '').trim() || 'Unknown artist'
   const youtubeId = String(raw.youtubeId || raw.youtube_id || '').trim()
-  return { id: String(raw.id || youtubeId), youtubeId, title, artist, requestable: raw.requestable !== false, source: raw.source || 'local' }
+  return { id: String(raw.id || youtubeId), youtubeId, title, artist, channelTitle: String(raw.channelTitle || ''), channelId: String(raw.channelId || ''), requestable: raw.requestable !== false, source: raw.source || 'local' }
 }
 
 function deterministicSongs(songs: LibrarySong[]) {

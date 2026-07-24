@@ -30,6 +30,7 @@ test('party catalog index is versioned and sanitized', () => {
 
 test('fallback search normalizes, bounds, classifies, and caches durable candidates', () => {
   assert.match(hook, /function fallbackQuery\(v\)/)
+  assert.match(hook, /const FALLBACK_POLICY_VERSION = 'v2'/)
   assert.match(hook, /FALLBACK_CANDIDATE_MAX = 5/)
   assert.match(hook, /karaoke_youtube_search_claims/)
   assert.match(hook, /classifyCatalogItem\(item\)/)
@@ -65,9 +66,26 @@ test('fallback query normalization rejects empty and oversized token input', () 
   const start = hook.indexOf('function normalized(')
   const end = hook.indexOf('function catalogSafeSong(', start)
   const helpers = new Function(`const FALLBACK_QUERY_MAX = 80; ${hook.slice(start, end)}; return { normalized, fallbackQuery }`)()
-  assert.equal(helpers.fallbackQuery('  Béyoncé---Halo '), 'beyonce halo')
+  assert.equal(helpers.fallbackQuery('  Béyoncé---Halo '), 'beyonce halo karaoke')
+  assert.equal(helpers.fallbackQuery('Beyonce karaoke'), 'beyonce karaoke')
+  assert.equal(helpers.fallbackQuery('karaoke karaoke'), 'karaoke')
+  const bounded = helpers.fallbackQuery('a'.repeat(80))
+  assert.ok(bounded.length <= 80)
+  assert.match(bounded, / karaoke$/)
+  assert.ok(bounded.startsWith('a'))
+  const repeated = helpers.fallbackQuery('A karaoke karaoke')
+  assert.equal(repeated, 'a karaoke')
   assert.throws(() => helpers.fallbackQuery('!'), /fallback_query_invalid/)
   assert.throws(() => helpers.fallbackQuery('one two three four five six seven eight nine ten eleven twelve thirteen'), /fallback_query_invalid/)
+})
+
+test('fallback payload carries YouTube channel provenance and songView labels missing identity', () => {
+  assert.match(hook, /channelTitle: String\(item\.channelTitle \|\| ''\)/)
+  assert.match(hook, /channelId: String\(item\.channelId \|\| ''\)/)
+  assert.match(hook, /video_channel_title/)
+  assert.match(hook, /YouTube fallback · \$\{channel\}/)
+  assert.match(hook, /missingFallbackIdentity/)
+  assert.match(hook, /q\.str\(song, 'provenance'\) === 'youtube_fallback'/)
 })
 
 test('catalog callbacks resolve their helpers through the reload-safe global contract', () => {
@@ -265,6 +283,22 @@ test('channel metadata is provenance-only across import, replay, dedup, review, 
   assert.match(hook, /action: 'source_identity_proposal'/)
   assert.match(hook, /videoChannelTitle:/)
   assert.match(hook, /canonicalArtist:/)
+})
+
+test('songView identifies missing fallback songs without changing corrected identity', () => {
+  const start = hook.indexOf('function songView(')
+  const end = hook.indexOf('// Tablet-facing state', start)
+  const songView = new Function(`const id = (r) => r.id || ''; const str = (r, f) => r && r.getString ? r.getString(f) : (r?.[f] || ''); const num = (r, f) => Number(str(r, f) || 0); ${hook.slice(start, end)}; return songView`)()
+  const record = (id, fields) => ({ id, getString: (field) => fields[field] ?? '' })
+  const queue = record('q1', { sequence: '2', status: 'queued', requested_at: '2026-07-23T00:00:00Z' })
+  const missing = songView(queue, record('s1', { youtube_id: 'qwertyuiopa', title: 'Unidentified karaoke candidate', artist: 'Unidentified artist', provenance: 'youtube_fallback', identity_status: 'missing', video_title: 'All Night Long karaoke', video_channel_title: 'KaraFun' }))
+  assert.equal(missing.song.title, 'All Night Long karaoke')
+  assert.equal(missing.song.artist, 'YouTube fallback · KaraFun')
+  const legacy = songView(queue, record('s2', { youtube_id: 'qwertyuiopb', provenance: 'youtube_fallback', identity_status: 'missing', video_title: 'Legacy fallback' }))
+  assert.equal(legacy.song.artist, 'YouTube fallback')
+  const corrected = songView(queue, record('s3', { youtube_id: 'qwertyuiopc', title: 'Canonical Title', artist: 'Canonical Artist', provenance: 'youtube_fallback', identity_status: 'operator_corrected', video_title: 'Uploader title', video_channel_title: 'Uploader channel' }))
+  assert.equal(corrected.song.title, 'Canonical Title')
+  assert.equal(corrected.song.artist, 'Canonical Artist')
 })
 
 test('source identity migration is forward-only and keeps uploader fields distinct', () => {
