@@ -23,6 +23,7 @@ import {
   type CatalogReport,
   type CatalogSong,
   type PlaylistImportPreview,
+  type PlaylistUnavailableReasons,
   type TabletQueueItem,
   type TabletStatus,
 } from '@/services/tabletApi'
@@ -241,6 +242,23 @@ function explain(value: unknown, fallback: string) {
   )
 }
 
+function formatPlaylistUnavailableBreakdown(reasons?: Partial<PlaylistUnavailableReasons>) {
+  const privacy = reasons?.privacy && typeof reasons.privacy === 'object'
+    ? reasons.privacy as Record<string, number>
+    : {}
+  const uploadStatus = reasons?.uploadStatus && typeof reasons.uploadStatus === 'object'
+    ? reasons.uploadStatus as Record<string, number>
+    : {}
+  const count = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0
+  const nonPublic = Object.entries(privacy)
+    .filter(([key]) => key !== 'public')
+    .reduce((sum, [, value]) => sum + count(value), 0)
+  const unprocessed = Object.entries(uploadStatus)
+    .filter(([key]) => key !== 'processed')
+    .reduce((sum, [, value]) => sum + count(value), 0)
+  return ` (${count(reasons?.metadataMissing)} metadata missing, ${nonPublic} non-public, ${unprocessed} unprocessed; ${count(reasons?.nonEmbeddable)} non-embeddable signal)`
+}
+
 async function refreshCatalog() {
   if (!token.value) return
   catalogLoading.value = true
@@ -373,7 +391,7 @@ async function importPlaylist() {
       ? { sourceKey: playlistPreview.value.source.sourceKey, pageToken: result.nextPageToken }
       : null
     const reasons = result.unavailableReasons
-    const breakdown = reasons ? ` (${reasons.metadataMissing} metadata missing, ${Object.entries(reasons.privacy).filter(([key]) => key !== 'public').reduce((sum, [, value]) => sum + value, 0)} non-public, ${Object.entries(reasons.uploadStatus).filter(([key]) => key !== 'processed').reduce((sum, [, value]) => sum + value, 0)} unprocessed; ${reasons.nonEmbeddable} non-embeddable signal)` : ''
+    const breakdown = reasons ? formatPlaylistUnavailableBreakdown(reasons) : ''
     message.value = `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable${breakdown}. Non-embeddable is informational for native playback. Revalidate unavailable items if needed.${playlistContinuation.value ? ' Preview next page when ready.' : ' This was the final page.'}`
     error.value = false
     await refreshCatalog()
