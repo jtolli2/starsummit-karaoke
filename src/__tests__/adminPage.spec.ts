@@ -85,4 +85,25 @@ describe('advanced administration route', () => {
     expect(wrapper.text()).toContain('valid source key')
     expect(wrapper.text()).not.toContain('internal detail omitted')
   })
+
+  it.each([
+    ['playlist_snapshot_not_found', 'retained preview is no longer available'],
+    ['playlist_revalidation_in_progress', 'revalidation is already running'],
+  ])('maps %s to actionable sanitized wording', async (code, wording) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: code, message: 'secret detail' }), { status: 409 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('#playlist-source').setValue('UCchannel:PLplaylist')
+    await wrapper.get('#playlist-source + button').trigger('click')
+    await settle()
+    expect(wrapper.text().toLowerCase()).toContain(wording)
+    expect(wrapper.text()).not.toContain('secret detail')
+  })
 })
