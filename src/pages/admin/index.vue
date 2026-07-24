@@ -217,6 +217,12 @@ function explain(value: unknown, fallback: string) {
         youtube_quota_exhausted: 'The configured YouTube request limit has been reached.',
         playlist_claim_failed: 'The playlist fetch could not reserve its operation ledger entry.',
         playlist_import_failed: 'Trusted playlist retrieval failed safely before any songs were approved.',
+        playlist_import_owner_fetch_failed: 'Trusted playlist owner lookup failed safely. Try again later.',
+        playlist_import_playlist_items_fetch_failed: 'Trusted playlist item lookup failed safely. Try again later.',
+        playlist_import_snapshot_verify_failed: 'Trusted playlist preview verification failed. Preview again before importing.',
+        playlist_import_video_metadata_fetch_failed: 'Trusted playlist video metadata lookup failed safely. Try again later.',
+        playlist_import_persist_results_failed: 'Trusted playlist results could not be recorded. No songs were approved; try again later.',
+        playlist_import_settle_success_failed: 'Trusted playlist results were not finalized. No songs were approved; try again later.',
       } as Record<string, string>
     )[code || ''] || fallback
   )

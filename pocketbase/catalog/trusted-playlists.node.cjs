@@ -51,4 +51,8 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /const reserve = modeledVideos \* 3/)
   assert.match(hook, /playlist_revalidation_state_invalid/)
   assert.match(hook, /if \(!priorSnapshot && revalidate\)/)
+  assert.match(hook, /importPhase = 'owner_fetch'/)
+  assert.match(hook, /playlist_import_\$\{importPhase\}_failed/)
+  assert.match(hook, /importPhase = 'snapshot_verify'; const snapshotFingerprint/)
+  assert.match(hook, /importPhase = 'settle_success'; recordYoutubeOperation/)
 })
