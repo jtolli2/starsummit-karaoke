@@ -47,14 +47,31 @@ function parsePlaylistInput(raw) {
   if (!value || value.length > MAX_PLAYLIST_INPUT) throw new Error('playlist_input_invalid')
   if (PLAYLIST_ID.test(value)) return { playlistId: value, sourceKey: value, input: value }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !/^https?:\/\//i.test(value)) throw new Error('playlist_scheme_invalid')
-  let url
-  try { url = new URL(value) } catch (_) { throw new Error('playlist_url_invalid') }
-  if (url.protocol !== 'https:') throw new Error('playlist_scheme_invalid')
-  const host = url.hostname.toLowerCase()
+  // Do not rely on the URL global: PocketBase's Goja VM does not provide it.
+  // Accept only the canonical YouTube playlist shape (no credentials, ports,
+  // fragments, alternate paths, or query parameters).
+  const match = value.match(/^https:\/\/([^/?#]+)(\/playlist)\?([^#]*)$/i)
+  if (!match) {
+    if (/^http:\/\//i.test(value)) throw new Error('playlist_scheme_invalid')
+    if (/^https:\/\//i.test(value)) {
+      const hostMatch = value.match(/^https:\/\/([^/?#]+)/i)
+      if (hostMatch && !['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(hostMatch[1].toLowerCase())) throw new Error('playlist_host_invalid')
+      throw new Error('playlist_url_invalid')
+    }
+    throw new Error('playlist_url_invalid')
+  }
+  const host = match[1].toLowerCase()
   if (!['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(host)) throw new Error('playlist_host_invalid')
-  const playlistId = url.searchParams.get('list') || ''
+  const params = {}
+  if (!match[3]) throw new Error('playlist_id_invalid')
+  for (const pair of match[3].split('&')) {
+    const pieces = pair.split('=')
+    if (pieces.length !== 2 || !pieces[0] || Object.prototype.hasOwnProperty.call(params, pieces[0])) throw new Error('playlist_parameter_invalid')
+    if (!['list', 'index'].includes(pieces[0])) throw new Error('playlist_parameter_invalid')
+    try { params[pieces[0]] = decodeURIComponent(pieces[1]) } catch (_) { throw new Error('playlist_url_invalid') }
+  }
+  const playlistId = params.list || ''
   if (!PLAYLIST_ID.test(playlistId)) throw new Error('playlist_id_invalid')
-  for (const key of url.searchParams.keys()) if (!['list', 'index'].includes(key)) throw new Error('playlist_parameter_invalid')
   return { playlistId, sourceKey: playlistId, input: value }
 }
 

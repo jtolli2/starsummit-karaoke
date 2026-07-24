@@ -36,6 +36,10 @@ test('PocketBase worker-compatible parser does not require Node built-ins', () =
   // The module body runs with no require/Buffer globals, matching the Goja VM;
   // parser, digest, and confirmation issuance must still be available.
   assert.deepEqual(sandbox.module.exports.parsePlaylistInput('PL123456789012345678901234').playlistId, 'PL123456789012345678901234')
+  assert.equal(sandbox.module.exports.parsePlaylistInput('https://www.youtube.com/playlist?list=PL123456789012345678901234&index=1').playlistId, 'PL123456789012345678901234')
+  assert.throws(() => sandbox.module.exports.parsePlaylistInput('https://www.youtube.com.evil.example/playlist?list=PL123456789012345678901234'), /host_invalid/)
+  assert.throws(() => sandbox.module.exports.parsePlaylistInput('https://www.youtube.com:443/playlist?list=PL123456789012345678901234'), /host_invalid/)
+  assert.throws(() => sandbox.module.exports.parsePlaylistInput('https://www.youtube.com/playlist?list=PL123456789012345678901234&x=1'), /parameter_invalid/)
   const token = sandbox.module.exports.issueConfirmation({ adminId: 'worker' }, 'secret', 2000)
   assert.equal(sandbox.module.exports.verifyConfirmation(token, 'secret', { adminId: 'attacker' }).opaque, true)
   const noCrypto = { module: { exports: {} }, exports: {}, $security: { sha256: () => 'digest', randomString: () => { throw new Error('random-source-required') } } }
