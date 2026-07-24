@@ -116,6 +116,14 @@ In Progress
   and advances the durable fallback policy to `v2`. Focused validation passed 30 catalog contracts,
   14 party API/page tests, hook syntax, the production build, and diff checks. Independent review
   approved the repair after the final-query boundary was corrected.
+- Retained Compose staging deployment `e146pyalgr072dcglxxx11ov` finished at exact product SHA
+  `45558cb7f92f0964795cc001a32c6844e5ffac22`; frontend, same-origin `/api/health`, and controller
+  health each returned HTTP 200. One bounded live guest search for `wake me up before you go go`
+  returned karaoke renditions without showing or requiring the hidden suffix, displayed channel
+  provenance for KaraFun Karaoke, ObsKure Karaoke, WhamVEVO, and EasyKaraoke, and retained the
+  existing queue without adding another request. Existing missing-identity fallback rows for
+  All Night Long and Wake Me Up Before You Go-Go immediately displayed their raw YouTube titles
+  instead of unidentified canonical placeholders.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.
