@@ -57,4 +57,6 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /playlist_import_settle_success_failed/)
   assert.match(hook, /playlist_import_persist_results_failed/)
   assert.match(hook, /const phaseCodes = \['owner_fetch'/)
+  assert.match(hook, /importPhase = 'snapshot_save'/)
+  assert.match(hook, /importPhase = 'song_save'/)
 })

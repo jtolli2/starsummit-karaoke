@@ -222,6 +222,8 @@ function explain(value: unknown, fallback: string) {
         playlist_import_snapshot_verify_failed: 'Trusted playlist preview verification failed. Preview again before importing.',
         playlist_import_video_metadata_fetch_failed: 'Trusted playlist video metadata lookup failed safely. Try again later.',
         playlist_import_persist_results_failed: 'Trusted playlist results could not be recorded. No songs were approved; try again later.',
+        playlist_import_snapshot_save_failed: 'Trusted playlist snapshot could not be recorded. No songs were approved; try again later.',
+        playlist_import_song_save_failed: 'A trusted playlist song could not be recorded. No songs were approved; try again later.',
         playlist_import_settle_success_failed: 'Trusted playlist results were not finalized. No songs were approved; try again later.',
       } as Record<string, string>
     )[code || ''] || fallback
