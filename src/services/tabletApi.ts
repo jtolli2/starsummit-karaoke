@@ -79,6 +79,12 @@ export type PlaylistImportPreview = {
 }
 
 export type PublicPlaylistPreview = PlaylistImportPreview & {
+  playlistName?: string
+  ownerChannelTitle?: string
+  visibility?: string
+  itemCount?: number
+  expectedQuota?: number
+  identityWarning?: string
   source: PlaylistImportPreview['source'] & { policyVersion?: string }
   playlist?: { id: string; title: string; visibility?: string; itemCount?: number; hiddenCount?: number }
   owner?: { channelId: string; title: string; avatarUrl?: string }

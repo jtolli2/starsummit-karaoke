@@ -871,12 +871,12 @@ onUnmounted(() => {
           <input id="public-playlist" v-model="publicPlaylistInput" placeholder="https://youtube.com/playlist?list=…" @keyup.enter="previewPublic" />
           <button type="button" @click="previewPublic" :disabled="catalogLoading || !publicPlaylistInput.trim()">Preview public playlist</button>
           <div v-if="publicPreview" class="playlist-preview" role="status">
-            <strong>{{ publicPreview.playlist?.title }}</strong>
-            · {{ publicPreview.owner?.title }}
-            · {{ publicPreview.playlist?.visibility }}
-            · {{ publicPreview.playlist?.itemCount }} items
-            <p>{{ publicPreview.trust }} · {{ publicPreview.quota?.expectedUnits }} quota units</p>
-            <p v-if="publicPreview.warning">{{ publicPreview.warning }}</p>
+            <strong>{{ publicPreview.playlistName || publicPreview.playlist?.title || publicPreview.source?.playlistName }}</strong>
+            · {{ publicPreview.ownerChannelTitle || publicPreview.owner?.title || publicPreview.source?.channelName }}
+            · {{ publicPreview.visibility || publicPreview.playlist?.visibility || 'unknown visibility' }}
+            · {{ publicPreview.itemCount ?? publicPreview.playlist?.itemCount ?? publicPreview.expectedItems }} items
+            <p>{{ publicPreview.knownParser ? 'Known parser' : publicPreview.trust }} · {{ publicPreview.expectedQuota ?? publicPreview.quota?.expectedUnits ?? publicPreview.modeledCost?.total ?? 0 }} quota units</p>
+            <p v-if="publicPreview.identityWarning || publicPreview.warning">{{ publicPreview.identityWarning || publicPreview.warning }}</p>
             <button type="button" @click="importConfirmation = publicPreview" :disabled="catalogLoading">Review import confirmation</button>
           </div>
           <label for="playlist-source">Trusted playlist source key</label>
@@ -1062,8 +1062,8 @@ onUnmounted(() => {
     <div v-if="importConfirmation" class="dialog-backdrop" @keydown.esc="importConfirmation = null">
       <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="import-heading">
         <h2 id="import-heading">Confirm public playlist import</h2>
-        <p>Import <strong>{{ importConfirmation.playlist?.title || importConfirmation.source?.playlistName }}</strong> from {{ importConfirmation.owner?.title || importConfirmation.source?.channelName || 'unknown owner' }}?</p>
-        <p>{{ importConfirmation.expectedItems }} items · {{ importConfirmation.quota?.expectedUnits ?? importConfirmation.modeledCost?.total ?? 0 }} quota units. Metadata is rendition provenance; identity requires review.</p>
+        <p>Import <strong>{{ importConfirmation.playlistName || importConfirmation.playlist?.title || importConfirmation.source?.playlistName }}</strong> from {{ importConfirmation.ownerChannelTitle || importConfirmation.owner?.title || importConfirmation.source?.channelName || 'unknown owner' }}?</p>
+        <p>{{ importConfirmation.itemCount ?? importConfirmation.expectedItems }} items · {{ importConfirmation.expectedQuota ?? importConfirmation.quota?.expectedUnits ?? importConfirmation.modeledCost?.total ?? 0 }} quota units. Metadata is rendition provenance; identity requires review.</p>
         <button type="button" @click="importConfirmation = null">Cancel</button>
         <button type="button" @click="publicPreview = importConfirmation; importPublic()" :disabled="catalogLoading">Confirm import</button>
       </section>
