@@ -1010,7 +1010,7 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const page = Math.max(1, Number(query(c, 'page') || 1) || 1)
   const perPage = Math.min(100, Math.max(1, Number(query(c, 'perPage') || 25) || 25))
-  const review = String(query(c, 'review') || '').trim(); const classification = String(query(c, 'classification') || '').trim()
+  const review = String(query(c, 'review') || '').trim(); const classification = String(query(c, 'classification') || '').trim(); const youtubeId = String(query(c, 'youtubeId') || '').trim()
   const clauses = []; const params = {}
   // The tablet's "Needs review" view is the actionable backlog: both records
   // awaiting their first decision and identity-corrected records returned to
@@ -1018,6 +1018,7 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   if (review === 'pending' || review === 'needs_review') clauses.push('(review_status = "unreviewed" || review_status = "needs_review")')
   else if (review) { clauses.push('review_status = {:review}'); params.review = review }
   if (classification) { clauses.push('classification = {:classification}'); params.classification = classification }
+  if (youtubeId) { clauses.push('youtube_id = {:youtubeId}'); params.youtubeId = youtubeId }
   const filter = clauses.join(' && ') || ''
   let rows = []; let allRows = []
   try { rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+youtube_id', perPage, (page - 1) * perPage, params); allRows = $app.findRecordsByFilter('karaoke_songs', filter, '+id', 100000, 0, params) } catch (_) { return json(c, 500, 'catalog_failed', 'Catalog could not be loaded') }

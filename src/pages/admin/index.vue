@@ -60,6 +60,7 @@ const catalog = ref<CatalogSong[]>([])
 const catalogLoading = ref(false)
 const catalogShown = ref(false)
 const catalogReview = ref<CatalogSong['reviewState']>('unreviewed')
+const catalogYoutubeId = ref('')
 const catalogPage = ref(1)
 const catalogTotalPages = ref(1)
 const catalogReport = ref<CatalogReport | null>(null)
@@ -279,6 +280,7 @@ async function refreshCatalog() {
     const [result, report] = await Promise.all([
       loadCatalog(token.value, {
         review: catalogReview.value,
+        youtubeId: catalogYoutubeId.value.trim(),
         page: catalogPage.value,
         perPage: 20,
       }),
@@ -320,6 +322,12 @@ async function correctIdentity(song: CatalogSong) {
 }
 
 function changeCatalogReview() {
+  catalogPage.value = 1
+  selectedApprovals.value = []
+  void refreshCatalog()
+}
+
+function findCatalogYoutubeId() {
   catalogPage.value = 1
   selectedApprovals.value = []
   void refreshCatalog()
@@ -921,6 +929,9 @@ onUnmounted(() => {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
+          <label for="catalog-youtube-id">Find YouTube ID</label>
+          <input id="catalog-youtube-id" v-model="catalogYoutubeId" placeholder="Exact 11-character video ID" @keyup.enter="findCatalogYoutubeId" />
+          <button type="button" class="quiet" @click="findCatalogYoutubeId" :disabled="catalogLoading">Find rendition</button>
           <div class="batch-review">
             <span>{{ selectedApprovalCount }} selected</span>
             <button type="button" class="quiet" @click="selectAllApprovable" :disabled="catalogLoading || !playlistSourceKey.trim()">Select all approvable</button>

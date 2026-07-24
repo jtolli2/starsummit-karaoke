@@ -226,6 +226,7 @@ export function loadCatalog(
   options: {
     review?: CatalogSong['reviewState']
     classification?: string
+    youtubeId?: string
     page?: number
     perPage?: number
   } = {},
