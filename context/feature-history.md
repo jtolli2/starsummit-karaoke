@@ -326,3 +326,24 @@
   Pushed `3f52025` (score-zero handling) and `2990ef0` (strong typo threshold), then deployed
   frontend `2990ef05b3f3aaa10f87d6dfc8e0c4d88c93e9dc` successfully through Coolify. No YouTube
   fallback was invoked and no additional quota was spent.
+
+## 2026-07-24 — Trusted Karaoke Playlist Import completion
+
+- Delivered the server-only, allowlisted public-playlist importer with immutable source/snapshot
+  provenance, ownership checks, exact video-ID metadata batching, durable quota/claim replay, and
+  constrained tablet preview, review, canonical-correction, replacement, coverage, and selected
+  batch-approval workflows. Imported candidates remain private until canonical identity and karaoke
+  quality gates are independently satisfied.
+- Added guest fallback improvements: hidden server-side karaoke query normalization, channel
+  provenance, identifiable missing-identity queue rows, explicit catalog-versus-YouTube outcomes,
+  quota-safe replay/concurrency handling, and a forced sanitized catalog refresh before fallback
+  so newly approved songs appear without consuming a YouTube search.
+- Tablet review rows now show exact YouTube IDs and safe direct watch links for fallback and
+  playlist candidates. Bounded MusicBrainz-backed curation reduced the retained review backlog
+  from 44 to 22 without bulk-approving ambiguous, promotional, or fixture records.
+- Retained Compose staging deployed and verified exact product SHA
+  `0f4e6210a0ba9b3aa15a8c02867a88d837942dd0` as deployment
+  `ek469126wbdozloq2g0n7sjc`; frontend, same-origin API, and controller health returned 200.
+  Focused/backend/pinned-runtime suites, production builds, contract checks, and independent
+  security, API-policy, concurrency, attribution, and UI reviews passed. No records, volumes,
+  rollback resources, or retained artifacts were deleted or replaced.
