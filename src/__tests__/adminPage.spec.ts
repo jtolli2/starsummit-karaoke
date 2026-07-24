@@ -68,6 +68,25 @@ describe('advanced administration route', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
   })
 
+  it('previews a pasted public playlist and requires explicit confirmation', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ playlist: { id: 'PL1', title: 'Public Mix', visibility: 'public', itemCount: 2 }, owner: { channelId: 'UC1', title: 'Owner' }, expectedItems: 2, trust: 'unknown_public', confirmationToken: 'opaque', modeledCost: { total: 3 } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('#public-playlist').setValue('https://www.youtube.com/playlist?list=PL1')
+    await wrapper.get('#public-playlist + button').trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('Public Mix')
+    expect(wrapper.text()).toContain('Review import confirmation')
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/karaoke/tablet/catalog/playlists/import')
+  })
+
   it('shows actionable sanitized trusted-playlist preview errors', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

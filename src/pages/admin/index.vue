@@ -4,7 +4,6 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import QrcodeVue from 'qrcode.vue'
 import {
   authenticateTablet,
-  approveCatalogSongs,
   bindAvailableController,
   correctCatalogIdentity,
   createParty,
@@ -18,11 +17,18 @@ import {
   loadTabletStatus,
   replaceCatalogSong,
   previewTrustedPlaylist,
+  previewPublicPlaylist,
+  importConfirmedPlaylist,
+  createApprovalSelection,
+  commitApprovalSelection,
+  updateApprovalSelection,
   reviewCatalogSong,
   transitionQueue,
   type CatalogReport,
   type CatalogSong,
   type PlaylistImportPreview,
+  type PublicPlaylistPreview,
+  type ApprovalSelectionSnapshot,
   type PlaylistUnavailableReasons,
   type TabletQueueItem,
   type TabletStatus,
@@ -61,7 +67,13 @@ const correction = ref<Record<string, { title: string; artist: string; reason: s
 const replacementId = ref<Record<string, string>>({})
 const selectedApprovals = ref<string[]>([])
 const playlistSourceKey = ref('')
+const publicPlaylistInput = ref('')
 const playlistPreview = ref<PlaylistImportPreview | null>(null)
+const publicPreview = ref<PublicPlaylistPreview | null>(null)
+const importConfirmation = ref<PublicPlaylistPreview | null>(null)
+const approvalSelection = ref<ApprovalSelectionSnapshot | null>(null)
+const approvalConfirmOpen = ref(false)
+const approvalOperationId = ref('')
 const playlistContinuation = ref<{ sourceKey: string; pageToken: string } | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
@@ -344,21 +356,56 @@ async function setCatalogReview(
 
 async function approveSelectedCatalogSongs() {
   if (!token.value || !selectedApprovals.value.length || catalogLoading.value) return
-  const count = selectedApprovals.value.length
-  if (!window.confirm(`Approve ${count} selected rendition${count === 1 ? '' : 's'}?\n\n${selectedApprovalNames.value.join('\n')}`)) return
   catalogLoading.value = true
   try {
-    const result = await approveCatalogSongs(token.value, selectedApprovals.value)
-    selectedApprovals.value = []
-    message.value = `Approved ${result.approved} selected karaoke rendition${result.approved === 1 ? '' : 's'}.`
+    const source = String(playlistSourceKey.value || '').trim()
+    if (!source) { message.value = 'Select an exact source before approving selected renditions.'; error.value = true; return }
+    approvalSelection.value = await createApprovalSelection(token.value, { source, filter: { review: catalogReview.value }, page: catalogPage.value, perPage: 20 })
+    approvalConfirmOpen.value = true
+    message.value = `${approvalSelection.value.selectedCount} renditions ready for server revalidation.`
     error.value = false
-    await refreshCatalog()
   } catch (cause) {
     message.value = explain(cause, 'Selected songs could not be approved.')
     error.value = true
   } finally {
     catalogLoading.value = false
   }
+}
+
+async function selectAllApprovable() {
+  if (!token.value || catalogLoading.value) return
+  const source = String(playlistSourceKey.value || '').trim()
+  if (!source) { message.value = 'Select an exact source before selecting across pages.'; error.value = true; return }
+  catalogLoading.value = true
+  try {
+    approvalSelection.value = await createApprovalSelection(token.value, { source, filter: { review: catalogReview.value }, page: catalogPage.value, perPage: 20 })
+    selectedApprovals.value = approvalSelection.value.recordIds || []
+    message.value = `${approvalSelection.value.selectedCount} approvable selected; ${approvalSelection.value.excludedCount || 0} excluded by policy.`
+    error.value = false
+  } catch (cause) { message.value = explain(cause, 'Could not calculate approvable selection.'); error.value = true } finally { catalogLoading.value = false }
+}
+
+async function commitSelectedApproval() {
+  if (!token.value || !approvalSelection.value || catalogLoading.value) return
+  catalogLoading.value = true
+  try {
+    if (!approvalOperationId.value) approvalOperationId.value = `bulk-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`.slice(0, 96)
+    const result = await commitApprovalSelection(token.value, approvalSelection.value.selectionId, approvalOperationId.value)
+    selectedApprovals.value = []; approvalSelection.value = null; approvalConfirmOpen.value = false; approvalOperationId.value = ''
+    message.value = `Approved ${result.approved}; ${result.excluded || 0} excluded after revalidation.`; error.value = false
+    await refreshCatalog()
+  } catch (cause) { message.value = explain(cause, 'Selected songs could not be approved.'); error.value = true } finally { catalogLoading.value = false }
+}
+
+async function updateSelectionAfterDeselect(songId: string) {
+  if (!token.value || !approvalSelection.value || catalogLoading.value || selectedApprovals.value.includes(songId)) return
+  catalogLoading.value = true
+  try {
+    approvalSelection.value = await updateApprovalSelection(token.value, approvalSelection.value.selectionId, selectedApprovals.value)
+    selectedApprovals.value = approvalSelection.value.recordIds || selectedApprovals.value
+    message.value = `${approvalSelection.value.selectedCount} renditions selected.`
+  } catch (cause) { message.value = explain(cause, 'Selection changed; refresh the approvable set.'); error.value = true }
+  finally { catalogLoading.value = false }
 }
 
 function invalidatePlaylistContinuation() {
@@ -380,6 +427,29 @@ async function previewPlaylist(pageToken = '', sourceKey = playlistSourceKey.val
     message.value = `Playlist preview${pageToken ? ' (next page)' : ''}: ${playlistPreview.value.expectedItems} items; modeled ${playlistPreview.value.modeledCost.total} API units.`
     error.value = false
   } catch (cause) { message.value = explain(cause, 'Playlist preview could not be loaded.'); error.value = true } finally { catalogLoading.value = false }
+}
+
+async function previewPublic() {
+  if (!token.value || !publicPlaylistInput.value.trim() || catalogLoading.value) return
+  catalogLoading.value = true; publicPreview.value = null
+  try { publicPreview.value = await previewPublicPlaylist(token.value, { playlist: publicPlaylistInput.value.trim(), maxItems: 25 }); message.value = 'Public playlist preview ready. Confirm explicitly to import.'; error.value = false }
+  catch (cause) { message.value = explain(cause, 'Public playlist preview could not be loaded.'); error.value = true }
+  finally { catalogLoading.value = false }
+}
+
+async function importPublic() {
+  if (!token.value || !publicPreview.value || catalogLoading.value) return
+  if (!publicPreview.value.snapshotFingerprint || !publicPreview.value.confirmationToken) { message.value = 'Preview confirmation expired. Preview again.'; error.value = true; return }
+  catalogLoading.value = true
+  try {
+    if (!approvalOperationId.value) approvalOperationId.value = `playlist-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`.slice(0, 96)
+    const result = await importConfirmedPlaylist(token.value, publicPreview.value, approvalOperationId.value)
+    message.value = result.completed === false ? `Import progress: ${result.progress?.completed ?? result.imported}/${result.progress?.total ?? publicPreview.value.expectedItems}. Retry to resume.` : `Imported ${result.imported}; ${result.duplicates} duplicates and ${result.unavailable} unavailable.`
+    if (result.completed !== false) { importConfirmation.value = null; publicPreview.value = null; approvalOperationId.value = '' }
+    error.value = false; await refreshCatalog()
+  }
+  catch (cause) { message.value = explain(cause, 'Public playlist import could not be completed.'); error.value = true }
+  finally { catalogLoading.value = false }
 }
 
 async function importPlaylist() {
@@ -797,6 +867,18 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="playlist-import">
+          <label for="public-playlist">Public YouTube playlist URL or ID</label>
+          <input id="public-playlist" v-model="publicPlaylistInput" placeholder="https://youtube.com/playlist?list=…" @keyup.enter="previewPublic" />
+          <button type="button" @click="previewPublic" :disabled="catalogLoading || !publicPlaylistInput.trim()">Preview public playlist</button>
+          <div v-if="publicPreview" class="playlist-preview" role="status">
+            <strong>{{ publicPreview.playlist?.title }}</strong>
+            · {{ publicPreview.owner?.title }}
+            · {{ publicPreview.playlist?.visibility }}
+            · {{ publicPreview.playlist?.itemCount }} items
+            <p>{{ publicPreview.trust }} · {{ publicPreview.quota?.expectedUnits }} quota units</p>
+            <p v-if="publicPreview.warning">{{ publicPreview.warning }}</p>
+            <button type="button" @click="importConfirmation = publicPreview" :disabled="catalogLoading">Review import confirmation</button>
+          </div>
           <label for="playlist-source">Trusted playlist source key</label>
           <input id="playlist-source" v-model="playlistSourceKey" @input="invalidatePlaylistContinuation" placeholder="channelId:playlistId" />
           <button type="button" @click="() => previewPlaylist()" :disabled="catalogLoading || !playlistSourceKey.trim()">Preview trusted playlist</button>
@@ -827,13 +909,16 @@ onUnmounted(() => {
           </select>
           <div class="batch-review">
             <span>{{ selectedApprovalCount }} selected</span>
+            <button type="button" class="quiet" @click="selectAllApprovable" :disabled="catalogLoading || !playlistSourceKey.trim()">Select all approvable</button>
+            <button type="button" class="quiet" @click="selectedApprovals = []; approvalSelection = null">Clear selection</button>
             <button
               type="button"
-              @click="approveSelectedCatalogSongs"
+              @click="approvalSelection ? (approvalConfirmOpen = true) : approveSelectedCatalogSongs()"
               :disabled="catalogLoading || !selectedApprovalCount"
             >
               Approve selected ({{ selectedApprovalCount }})
             </button>
+            <p v-if="approvalSelection" role="status">{{ approvalSelection.selectedCount }} selected · {{ approvalSelection.excludedCount || 0 }} excluded by policy</p>
           </div>
           <p v-if="catalogLoading" role="status">Loading catalog…</p>
           <p v-else-if="!catalog.length">No songs match this review state.</p>
@@ -844,7 +929,7 @@ onUnmounted(() => {
                 v-if="song.reviewState !== 'approved' && song.classification === 'karaoke' && (song.classificationConfidence || 0) >= 0.8 && !song.alternativeCount && ['verified_source', 'operator_corrected'].includes(song.identityStatus || '')"
                   class="batch-select"
                 >
-                  <input v-model="selectedApprovals" type="checkbox" :value="song.id" :disabled="catalogLoading" />
+                  <input v-model="selectedApprovals" type="checkbox" :value="song.id" :disabled="catalogLoading" @change="updateSelectionAfterDeselect(song.id)" />
                   Select for approval
                 </label>
                 <strong>{{ song.title }}</strong
@@ -972,6 +1057,23 @@ onUnmounted(() => {
             Confirm skip
           </button>
         </div>
+      </section>
+    </div>
+    <div v-if="importConfirmation" class="dialog-backdrop" @keydown.esc="importConfirmation = null">
+      <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="import-heading">
+        <h2 id="import-heading">Confirm public playlist import</h2>
+        <p>Import <strong>{{ importConfirmation.playlist?.title || importConfirmation.source?.playlistName }}</strong> from {{ importConfirmation.owner?.title || importConfirmation.source?.channelName || 'unknown owner' }}?</p>
+        <p>{{ importConfirmation.expectedItems }} items · {{ importConfirmation.quota?.expectedUnits ?? importConfirmation.modeledCost?.total ?? 0 }} quota units. Metadata is rendition provenance; identity requires review.</p>
+        <button type="button" @click="importConfirmation = null">Cancel</button>
+        <button type="button" @click="publicPreview = importConfirmation; importPublic()" :disabled="catalogLoading">Confirm import</button>
+      </section>
+    </div>
+    <div v-if="approvalConfirmOpen" class="dialog-backdrop" @keydown.esc="approvalConfirmOpen = false">
+      <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="approval-heading">
+        <h2 id="approval-heading">Approve selected renditions?</h2>
+        <p>Approve {{ approvalSelection?.selectedCount || selectedApprovalCount }} selected renditions from {{ playlistSourceKey }}? Changed or ineligible rows will be excluded.</p>
+        <button type="button" @click="approvalConfirmOpen = false">Cancel</button>
+        <button type="button" @click="commitSelectedApproval" :disabled="catalogLoading">Confirm approval</button>
       </section>
     </div>
   </main>

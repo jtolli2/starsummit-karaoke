@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authenticateTablet, correctCatalogIdentity, importTrustedPlaylist, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, previewTrustedPlaylist, replaceCatalogSong, reviewCatalogSong, revalidateTrustedPlaylist, transitionQueue } from '@/services/tabletApi'
+import { authenticateTablet, correctCatalogIdentity, importTrustedPlaylist, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, previewTrustedPlaylist, replaceCatalogSong, reviewCatalogSong, revalidateTrustedPlaylist, transitionQueue, previewPublicPlaylist, importConfirmedPlaylist, createApprovalSelection, commitApprovalSelection, updateApprovalSelection } from '@/services/tabletApi'
 
 describe('tablet API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -87,5 +87,34 @@ describe('tablet API', () => {
     vi.stubGlobal('fetch', fetchMock)
     const result = await importTrustedPlaylist('tablet-token', 'UCchannel:PLplaylist', 'a'.repeat(64))
     expect(result.nextPageToken).toBe('next')
+  })
+
+  it('binds public preview and confirmed import to server-issued confirmation', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ playlist: { id: 'PL1', title: 'Public' }, owner: { channelId: 'UC1', title: 'Owner' }, trust: 'unknown_public', snapshotFingerprint: 'fp', confirmationToken: 'opaque', source: { sourceKey: 'UC1:PL1', channelName: 'Owner', playlistName: 'Public', rationale: '' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ imported: 2, duplicates: 1, unavailable: 0, completed: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const preview = await previewPublicPlaylist('tablet-token', { playlist: 'https://www.youtube.com/playlist?list=PL1', maxItems: 25 })
+    await importConfirmedPlaylist('tablet-token', preview, 'op-1')
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ playlistUrl: 'https://www.youtube.com/playlist?list=PL1', maxItems: 25, dryRun: true })
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ confirmationToken: 'opaque', snapshotFingerprint: 'fp', dryRun: false, operationId: 'op-1' })
+  })
+
+  it('uses opaque server selection snapshots for bulk approval', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ digest: 'sel-1', selectedCount: 3, excludedCount: 2, recordIds: ['a', 'b', 'c'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ approved: 3, excluded: 0 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await createApprovalSelection('tablet-token', { source: 'PL1', filter: { review: 'needs_review' } })
+    await commitApprovalSelection('tablet-token', 'sel-1', 'bulk-op-1')
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ source: 'PL1', filter: { review: 'needs_review' } })
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ digest: 'sel-1', operationId: 'bulk-op-1' })
+  })
+
+  it('updates the opaque selection digest when an operator deselects a row', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ digest: 'sel-1', selectedCount: 1, recordIds: ['a'] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await updateApprovalSelection('tablet-token', 'sel-1', ['a'])
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ digest: 'sel-1', recordIds: ['a'] })
   })
 })

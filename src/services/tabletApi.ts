@@ -78,6 +78,34 @@ export type PlaylistImportPreview = {
   }
 }
 
+export type PublicPlaylistPreview = PlaylistImportPreview & {
+  source: PlaylistImportPreview['source'] & { policyVersion?: string }
+  playlist?: { id: string; title: string; visibility?: string; itemCount?: number; hiddenCount?: number }
+  owner?: { channelId: string; title: string; avatarUrl?: string }
+  trust?: 'known_parser' | 'admin_confirmed_public' | 'unknown_public'
+  knownParser?: boolean
+  quota?: { expectedUnits: number; spentUnits?: number; cached?: boolean }
+  confirmationToken?: string
+  confirmationId?: string
+  expiresAt?: string
+  importCap?: number
+  duplicateEstimate?: number
+  unavailableEstimate?: number
+  warning?: string
+}
+
+export type ApprovalSelectionSnapshot = {
+  selectionId: string
+  digest?: string
+  source?: string
+  filter?: Record<string, string>
+  selectedCount: number
+  excludedCount?: number
+  exclusions?: Record<string, number>
+  recordIds?: string[]
+  expiresAt?: string
+}
+
 export type PlaylistUnavailableReasons = {
   total: number
   metadataMissing: number
@@ -267,6 +295,45 @@ export function previewTrustedPlaylist(
     },
     token,
   )
+}
+
+/** Preview an arbitrary public playlist; server validates URL/owner/visibility. */
+export function previewPublicPlaylist(
+  token: string,
+  input: { playlist: string; maxItems?: number; pageToken?: string; rangeStart?: number; rangeEnd?: number },
+) {
+  return request<PublicPlaylistPreview>('/api/karaoke/tablet/catalog/playlists/import', {
+    method: 'POST',
+    body: JSON.stringify({ playlistUrl: input.playlist, maxItems: input.maxItems ?? 25, pageToken: input.pageToken ?? '', dryRun: true, ...(input.rangeStart == null ? {} : { rangeStart: input.rangeStart }), ...(input.rangeEnd == null ? {} : { rangeEnd: input.rangeEnd }) }),
+  }, token)
+}
+
+export async function importConfirmedPlaylist(token: string, preview: PublicPlaylistPreview, operationId?: string) {
+  const confirmationToken = preview.confirmationToken
+  if (!confirmationToken) throw Object.assign(new Error('Preview confirmation expired'), { code: 'playlist_preview_stale', status: 409 })
+  return request<{ imported: number; duplicates: number; unavailable: number; replay?: boolean; nextPageToken?: string; operationId?: string; completed?: boolean; progress?: { completed: number; total: number } }>(
+    '/api/karaoke/tablet/catalog/playlists/import',
+    { method: 'POST', body: JSON.stringify({ confirmationToken, snapshotFingerprint: preview.snapshotFingerprint, dryRun: false, ...(operationId ? { operationId } : {}) }) }, token,
+  )
+}
+
+export function createApprovalSelection(token: string, input: { source: string; filter?: Record<string, string>; page?: number; perPage?: number }) {
+  return request<ApprovalSelectionSnapshot & { digest?: string }>('/api/karaoke/tablet/catalog/review/selection', {
+    method: 'POST', body: JSON.stringify(input),
+  }, token).then((result) => ({ ...result, selectionId: result.selectionId || result.digest || '' }))
+}
+
+export function commitApprovalSelection(token: string, selectionId: string, operationId?: string) {
+  return request<{ approved: number; excluded?: number; exclusions?: Record<string, number>; completed?: boolean; operationId?: string }>(
+    '/api/karaoke/tablet/catalog/review/selection/commit',
+    { method: 'POST', body: JSON.stringify({ digest: selectionId, ...(operationId ? { operationId } : {}) }) }, token,
+  )
+}
+
+export function updateApprovalSelection(token: string, digest: string, recordIds: string[]) {
+  return request<ApprovalSelectionSnapshot & { digest?: string }>('/api/karaoke/tablet/catalog/review/selection', {
+    method: 'PATCH', body: JSON.stringify({ digest, recordIds }),
+  }, token).then((result) => ({ ...result, selectionId: result.selectionId || result.digest || digest }))
 }
 
 export function importTrustedPlaylist(

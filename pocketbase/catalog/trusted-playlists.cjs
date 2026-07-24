@@ -4,6 +4,69 @@ const crypto = require('node:crypto')
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/
 const PLAYLIST_ID = /^(?:PL|UU|LL|FL|RD)[A-Za-z0-9_-]{16,}$/
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{20,}$/
+const MAX_PLAYLIST_INPUT = 512
+
+/** Parse only YouTube playlist identities; never treat arbitrary URLs as fetch targets. */
+function parsePlaylistInput(raw) {
+  const value = String(raw || '').trim()
+  if (!value || value.length > MAX_PLAYLIST_INPUT) throw new Error('playlist_input_invalid')
+  if (PLAYLIST_ID.test(value)) return { playlistId: value, sourceKey: value, input: value }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !/^https?:\/\//i.test(value)) throw new Error('playlist_scheme_invalid')
+  let url
+  try { url = new URL(value) } catch (_) { throw new Error('playlist_url_invalid') }
+  if (url.protocol !== 'https:') throw new Error('playlist_scheme_invalid')
+  const host = url.hostname.toLowerCase()
+  if (!['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(host)) throw new Error('playlist_host_invalid')
+  const playlistId = url.searchParams.get('list') || ''
+  if (!PLAYLIST_ID.test(playlistId)) throw new Error('playlist_id_invalid')
+  for (const key of url.searchParams.keys()) if (!['list', 'index'].includes(key)) throw new Error('playlist_parameter_invalid')
+  return { playlistId, sourceKey: playlistId, input: value }
+}
+
+function issueConfirmation(payload, secret, ttlMs = 10 * 60 * 1000) {
+  if (!secret) throw new Error('confirmation_secret_missing')
+  const body = { ...payload, exp: Date.now() + Math.max(1000, Math.min(ttlMs, 60 * 60 * 1000)), nonce: crypto.randomBytes(12).toString('hex') }
+  const encoded = Buffer.from(JSON.stringify(body)).toString('base64url')
+  const sig = crypto.createHmac('sha256', String(secret)).update(encoded).digest('base64url')
+  return `${encoded}.${sig}`
+}
+
+function verifyConfirmation(token, secret, expected = {}) {
+  if (!secret || typeof token !== 'string' || token.length > 4096) throw new Error('confirmation_invalid')
+  const [encoded, supplied] = token.split('.')
+  if (!encoded || !supplied) throw new Error('confirmation_invalid')
+  const actual = crypto.createHmac('sha256', String(secret)).update(encoded).digest('base64url')
+  if (supplied.length !== actual.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(actual))) throw new Error('confirmation_invalid')
+  let body; try { body = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) } catch (_) { throw new Error('confirmation_invalid') }
+  if (!Number.isFinite(body.exp) || body.exp < Date.now()) throw new Error('confirmation_expired')
+  for (const [key, value] of Object.entries(expected)) if (JSON.stringify(body[key]) !== JSON.stringify(value)) throw new Error('confirmation_binding_mismatch')
+  return body
+}
+
+function isApprovable(song, scope = {}) {
+  if (!song || (scope.source && String(song.source || '') !== String(scope.source))) return false
+  if (scope.filter && typeof scope.filter === 'object') for (const [k, v] of Object.entries(scope.filter)) if (v !== undefined && String(song[k] ?? '') !== String(v)) return false
+  if (String(song.review_status) !== 'needs_review') return false
+  if (!['verified_source', 'operator_corrected'].includes(String(song.identity_status))) return false
+  // Approval is the gate that makes a candidate guest-eligible. Pending
+  // candidates are therefore expected to have eligible=false; do not require
+  // the derived guest flag to already be true here.
+  if (!String(song.artist || '').trim() || !String(song.title || '').trim() || String(song.classification) !== 'karaoke') return false
+  if (song.embeddable === false || song.available === false || ['live', 'fallback', 'cover', 'tutorial', 'medley', 'mix', 'fallback_lyric', 'fallback_audio', 'policy_rejected', 'unavailable', 'region_blocked', 'non_embeddable'].includes(String(song.eligibility_reason))) return false
+  if (song.conflict || song.canonical_conflict || (Array.isArray(song.alternatives_json) && song.alternatives_json.length)) return false
+  return true
+}
+
+function confirmationBinding(payload) {
+  return {
+    adminId: String(payload.adminId || ''), playlistId: String(payload.playlistId || ''),
+    ownerChannelId: String(payload.ownerChannelId || ''), visibility: String(payload.visibility || ''),
+    orderedVideoIds: Array.isArray(payload.orderedVideoIds) ? payload.orderedVideoIds.map(String) : [],
+    etag: String(payload.etag || ''), snapshotFingerprint: String(payload.snapshotFingerprint || payload.snapshot || ''),
+    expectedCounts: payload.expectedCounts || {}, importCap: Number(payload.importCap || 0),
+    pageToken: String(payload.pageToken || ''), policyVersion: String(payload.policyVersion || '')
+  }
+}
 
 function parseSourceKey(sourceKey) {
   const value = String(sourceKey || '')
@@ -77,4 +140,4 @@ function parseTitle(raw, profile = 'artist-title') {
 
 function modeledCost(itemCount) { return { playlistItemsList: 1, videosList: Math.ceil(Math.max(0, itemCount) / 50), total: 1 + Math.ceil(Math.max(0, itemCount) / 50) } }
 
-module.exports = { YOUTUBE_ID, parseAllowlist, parseSourceKey, resolveAllowlistedSource, playlistSnapshot, metadataDigest, parseTitle, modeledCost, digest, normalized }
+module.exports = { YOUTUBE_ID, parseAllowlist, parseSourceKey, parsePlaylistInput, issueConfirmation, verifyConfirmation, confirmationBinding, isApprovable, resolveAllowlistedSource, playlistSnapshot, metadataDigest, parseTitle, modeledCost, digest, normalized }

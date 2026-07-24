@@ -39,6 +39,29 @@ batch and digest.
 
 ## Corpus policy
 
+## Public YouTube playlist policy
+
+Public playlist import is an admin-confirmed path, not a trust-list bypass. Only `tablet_admin`
+may preview/import. Local parsing validates playlist URLs/IDs, host, scheme, parameters, and size;
+only fixed official playlist/items/video endpoints are used, with bounded pages, bytes, rate,
+caps/chunks, and per-admin/daily quota. No redirects, HTML scraping, InnerTube, or generic proxy.
+
+Preview captures authoritative owner/playlist metadata, public visibility, counts, retrieval/etag,
+page count, expected operations/quota, cap/range, duplicate estimate, and parser status. Unknown
+owners are allowed only when public metadata is verified and explicitly confirmed. Preview is
+catalog-read-only; identical valid previews replay from cache without quota. Import requires an
+expiring server token bound to admin, owner/visibility, ordered IDs, snapshot, policy/parser,
+quota, cap, and exact counts; changed, reordered, expired, reused, or wrong-admin tokens fail
+closed. Unchanged imports are no-ops; changed snapshots import only deterministic deltas and retain
+history. Trust labels distinguish known parser from admin-confirmed public source; neither grants
+canonical identity. Ambiguous, fallback, live, cover, tutorial, medley, unavailable, or policy-
+rejected rows remain ineligible and require evidence/review.
+
+Bulk approval uses a server selection snapshot tied to exact source/filter scope. Eligibility is
+computed and revalidated server-side, exclusions are reported, and approval is chunked, audited,
+restart-safe, and idempotent. No import or select-all operation auto-approves songs or changes
+guest eligibility.
+
 Target up to 5,000 songs, but stop below that number whenever identity, coverage, match quality, or
 quota is weak. Start with the pinned Rolling Stone 2021 series and available annual Billboard
 Year-End Hot 100 subseries. Sort each series by its explicit rank, round-robin across list years,

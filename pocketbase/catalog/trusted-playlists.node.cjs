@@ -3,7 +3,23 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')
-const { parseAllowlist, parseSourceKey, resolveAllowlistedSource, playlistSnapshot, metadataDigest, parseTitle, modeledCost } = require('./trusted-playlists.cjs')
+const { parseAllowlist, parseSourceKey, parsePlaylistInput, issueConfirmation, verifyConfirmation, resolveAllowlistedSource, playlistSnapshot, metadataDigest, parseTitle, modeledCost, isApprovable } = require('./trusted-playlists.cjs')
+
+test('playlist URL parser accepts canonical hosts and rejects SSRF or malformed input', () => {
+  assert.equal(parsePlaylistInput('PL123456789012345678901234').playlistId, 'PL123456789012345678901234')
+  assert.equal(parsePlaylistInput('https://www.youtube.com/playlist?list=PL123456789012345678901234').playlistId, 'PL123456789012345678901234')
+  assert.throws(() => parsePlaylistInput('https://evil.example/playlist?list=PL123456789012345678901234'), /host_invalid/)
+  assert.throws(() => parsePlaylistInput('https://youtu.be/watch?v=dQw4w9WgXcQ'), /host_invalid/)
+  assert.throws(() => parsePlaylistInput('http://youtube.com/playlist?list=PL123456789012345678901234'), /scheme_invalid/)
+  assert.throws(() => parsePlaylistInput('https://youtube.com/playlist?list=PL123456789012345678901234&foo=x'), /parameter_invalid/)
+})
+
+test('confirmation token is signed, expiring, and bound to admin/snapshot', () => {
+  const token = issueConfirmation({ adminId: 'a1', snapshot: 'f'.repeat(64), playlistId: 'PL123456789012345678901234' }, 'test-secret', 2000)
+  assert.equal(verifyConfirmation(token, 'test-secret', { adminId: 'a1', snapshot: 'f'.repeat(64) }).playlistId, 'PL123456789012345678901234')
+  assert.throws(() => verifyConfirmation(token, 'wrong', { adminId: 'a1' }), /confirmation_invalid/)
+  assert.throws(() => verifyConfirmation(token, 'test-secret', { adminId: 'a2' }), /binding_mismatch/)
+})
 
 const source = { channelId: 'UC12345678901234567890', playlistId: 'PL123456789012345678901234', policyVersion: 'v1' }
 const singKing = { channelId: 'UCwTRjvjVge51X-ILJ4i22ew', playlistId: 'PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39', policyVersion: 'v1' }
@@ -47,6 +63,10 @@ test('trusted playlist availability ignores embeddable for native playback', () 
   assert.equal(sandbox.classify(null).metadataMissing, 1)
 })
 
+test('pending eligible candidates can be selected for approval', () => {
+  assert.equal(isApprovable({ review_status: 'needs_review', identity_status: 'verified_source', artist: 'Artist', title: 'Song', classification: 'karaoke', eligible: false, embeddable: true, available: true, eligibility_reason: 'verified_source', alternatives_json: [] }), true)
+})
+
 test('PocketBase route validates bounded allowlist and separates unavailable from ownership mismatch', () => {
   const hook = fs.readFileSync(require('node:path').join(__dirname, '..', 'pb_hooks', 'party_queue.pb.js'), 'utf8')
   assert.match(hook, /playlist_allowlist_invalid/)
@@ -81,4 +101,18 @@ test('PocketBase route validates bounded allowlist and separates unavailable fro
   assert.match(hook, /TRUSTED_PLAYLIST_ELIGIBILITY_POLICY \} = globalThis.__partyQueue/)
   assert.match(hook, /function classifyTrustedVideoAvailability\(video\)/)
   assert.ok((hook.match(/classifyTrustedVideoAvailability\(video\)/g) || []).length >= 3)
+  assert.match(hook, /selection_operation_binding_mismatch/)
+  assert.match(hook, /approved_count.*excluded_json/)
+  assert.match(hook, /cursor >= \(Array\.isArray\(ids\) \? ids\.length : 0\)/)
+  assert.match(hook, /source_filter_digest/)
+  assert.match(hook, /policy: 'approval-v1'/)
+  assert.match(hook, /const token = parser\.issueConfirmation/)
+  assert.match(hook, /confirmation\.expectedCounts/)
+  assert.match(hook, /confirmation\.pageToken/)
+  assert.match(hook, /str\(row, 'status'\) === 'used'/)
+  assert.match(hook, /completed = Boolean\(replayClaim && \['ready', 'complete'\]/)
+  assert.match(hook, /const usedConfirmation = Boolean\(persistedConfirmation && str\(persistedConfirmation, 'status'\) === 'used'\)/)
+  assert.match(hook, /source_id = \{:\w+\}/)
+  assert.match(hook, /playlistScope \? str\(song, 'source'\) === 'youtube_playlist' && str\(song, 'source_id'\) === scopedSource/)
+  assert.match(hook, /UC\[A-Za-z0-9_\-\]\{20,\}:\(\?:PL\|UU\|LL\|FL\|RD\)/)
 })

@@ -69,6 +69,24 @@ replace song identity. Missing or uncertain identity is ineligible and cannot be
 
 ## Candidate policy
 
+### Admin-confirmed public playlist imports
+
+Only authenticated `tablet_admin` users may preview or import a public YouTube playlist. The
+server parses playlist URLs/IDs locally (including legacy `channelId:playlistId`) and calls only
+fixed official playlist, playlist-items, and video-details endpoints. It rejects unsafe hosts or
+schemes, malformed/oversized input, and private, inaccessible, or ownership-inconsistent
+playlists; it never scrapes HTML or acts as a generic proxy.
+
+Preview records owner/playlist identity, visibility, counts, retrieval/etag, pages, cap or chunk,
+duplicate estimate, parser profile, and modeled quota without mutating songs. Identical previews
+are coalesced or cached at zero additional quota. Explicit `/admin` confirmation is required;
+the expiring server token binds admin, owner/visibility, ordered IDs/range, snapshot fingerprint,
+policy/parser version, retrieval/quota, cap, and exact counts. Changed, reordered, expired,
+reused, or wrong-admin confirmations fail closed. Unchanged re-imports are no-ops; changed
+snapshots create immutable snapshots and deterministic deltas while retaining history. Unknown
+sources remain provenance-only: uploader/channel metadata never becomes canonical identity, and
+preview/import never auto-approves or broadens guest eligibility.
+
 Signals from title, description, and channel metadata produce explainable heuristic
 classification/confidence only. `karaoke` is preferred. Live performances, official originals,
 misleading/unrelated material, and ordinary covers are not eligible. `fallback_lyric` and
@@ -82,6 +100,14 @@ overwrites an existing operator curation decision. A replacement must already be
 eligible, and classified `karaoke`.
 
 ## Operator and guest boundaries
+
+Admin review offers **Select all approvable** and **Clear selection**. Cross-page selection requires
+an exact source/filter scope (without a source, visible-page scope only). The server computes and
+revalidates verified identity, karaoke classification, availability/embeddability, and exclusion
+flags, returning exact selected/excluded counts and reasons. An expiring selection snapshot binds
+admin, source/filter, ordered record versions, policy, digest, and count. Bounded transactional
+chunks, durable operation IDs, per-row append-only audit, restart reconciliation, and idempotent
+retries exclude stale or newly ineligible rows rather than approving them.
 
 `tablet_admin` users may list catalog records and change review/replacement state via protected
 PocketBase routes. Guests only receive sanitized, deterministic, paginated results from approved

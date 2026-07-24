@@ -4,6 +4,19 @@
 
 ## Entries
 
+### 2026-07-24 — Admin-Confirmed Public Playlist Import and Safe Bulk Approval
+
+- Replaced playlist-source allowlisting as an authorization gate with constrained tablet-admin
+  public URL/ID preview, fixed official API requests, verified public metadata, durable quota/
+  snapshot provenance, expiring server-issued confirmation, and authoritative import revalidation.
+- Added `/admin` explicit preview confirmation plus source-scoped Select all approvable, clear and
+  individual deselection, server-created selection snapshots, revalidated resumable chunks, and
+  append-only approval audit. Unknown channel/uploader data remains rendition provenance only.
+- Local validation passed focused parser/hook and Vue suites, production build/type-check, Compose
+  rendering with non-secret placeholders, and repeated independent security review. Staging
+  deployment/live evidence is recorded with the delivery result; no retained catalog exceptions are
+  selected or approved by the feature itself.
+
 ### 2026-07-22 — Karaoke Catalog Import and Search
 
 - Added a private, resumable catalog import contract with immutable manifest/chunk fingerprints,

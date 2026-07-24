@@ -65,6 +65,18 @@
   Song records retain source provenance, scoring confidence, review state, and replacement history
   so this policy remains auditable and configurable rather than an irreversible database rule.
 - The guest app should explain clearly why a request was rejected. It is not planned as a PWA. The guest and admin experiences may share the hostname; a separate `/tablet` display route remains an option.
+- Admin-confirmed public YouTube playlist import is an explicit `/admin` workflow. `tablet_admin`
+  previews a strictly parsed playlist URL/ID through fixed official playlist/items/video
+  endpoints; metadata includes verified owner, visibility, counts, retrieval/etag, cap or range,
+  duplicate estimates, trust label, and quota without mutating songs. Import requires an expiring
+  server confirmation bound to admin, ordered IDs, owner/visibility, immutable snapshot, policy
+  version, and exact counts. Cached previews and unchanged re-imports are quota-free/idempotent;
+  changed playlists create immutable snapshots and deterministic deltas. Unknown sources remain
+  provenance-only and identity review is mandatory; no import auto-approves or broadens guests.
+- Admin review provides source-scoped **Select all approvable**/**Clear selection**. Selection is
+  computed and revalidated server-side against the exact filter/source snapshot, with exclusion
+  reasons, opaque expiring digests, bounded transactional chunks, per-row audit, restart
+  reconciliation, and idempotent retries. Without a source, selection is visible-page only.
 
 ## Confirmed Implementation Defaults
 
