@@ -224,6 +224,9 @@ function explain(value: unknown, fallback: string) {
         playlist_import_persist_results_failed: 'Trusted playlist results could not be recorded. No songs were approved; try again later.',
         playlist_import_snapshot_save_failed: 'Trusted playlist snapshot could not be recorded. No songs were approved; try again later.',
         playlist_import_song_save_failed: 'A trusted playlist song could not be recorded. No songs were approved; try again later.',
+        playlist_snapshot_schema_mismatch: 'Trusted playlist snapshot storage is unavailable. Contact an administrator.',
+        playlist_snapshot_token_too_long: 'The trusted playlist returned an invalidly long page token. Preview again later.',
+        playlist_snapshot_data_invalid: 'The trusted playlist returned invalid snapshot data. Preview again later.',
         playlist_import_settle_success_failed: 'Trusted playlist results were not finalized. No songs were approved; try again later.',
       } as Record<string, string>
     )[code || ''] || fallback
