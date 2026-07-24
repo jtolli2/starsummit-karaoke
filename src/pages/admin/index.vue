@@ -232,6 +232,8 @@ function explain(value: unknown, fallback: string) {
         playlist_snapshot_schema_mismatch: 'Trusted playlist snapshot storage is unavailable. Contact an administrator.',
         playlist_snapshot_token_too_long: 'The trusted playlist returned an invalidly long page token. Preview again later.',
         playlist_snapshot_data_invalid: 'The trusted playlist returned invalid snapshot data. Preview again later.',
+        playlist_snapshot_ambiguous: 'Multiple retained previews match this playlist page. Preview again before importing.',
+        playlist_snapshot_lookup_failed: 'Trusted playlist snapshot lookup is unavailable. Try again later.',
         playlist_import_settle_success_failed: 'Trusted playlist results were not finalized. No songs were approved; try again later.',
       } as Record<string, string>
     )[code || ''] || fallback
