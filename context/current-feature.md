@@ -58,3 +58,6 @@ Complete
   `5eaf04e61395caca851db91d7f57a2abfeb227ce` and finished healthy; `/tablet`, same-origin
   `/api/health`, and controller `/api/health` each returned HTTP 200. SmartTube/Lounge convergence
   remains a known unresolved runtime limitation.
+- Follow-up refinement: removed the document-level white gutter through the app stylesheet,
+  consolidated Now Playing and icon-only playback/queue controls into one compact panel, and made
+  the queue a right-side push drawer that expands the layout instead of overlaying playback content.

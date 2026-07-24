@@ -58,10 +58,12 @@ describe('simplified tablet operator', () => {
     expect(wrapper.findComponent({ name: 'QrcodeVue' }).exists()).toBe(true)
     await wrapper.get('[aria-controls="queue-drawer"]').trigger('click')
     expect(wrapper.get('#queue-drawer').attributes('data-open')).toBe('true')
+    expect(wrapper.get('.layout').classes()).toContain('queue-open')
     expect(wrapper.text()).toContain('Song')
     expect(wrapper.text()).toContain('Party AB12CD34')
     await wrapper.get('#queue-drawer button.quiet').trigger('click')
     expect(wrapper.get('#queue-drawer').attributes('data-open')).toBe('false')
+    expect(wrapper.get('.layout').classes()).not.toContain('queue-open')
   })
 
   it('uses one accessible Play control only after confirmed paused state', async () => {

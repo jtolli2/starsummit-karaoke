@@ -46,7 +46,7 @@ const operator = useTabletOperator()
         Create party
       </button>
     </section>
-    <section v-else class="layout">
+    <section v-else class="layout" :class="{ 'queue-open': operator.queueOpen }">
       <aside class="party" aria-labelledby="party-heading">
         <h2 id="party-heading">
           Party {{ operator.partyCode || `••••${operator.status.party.codeHint || ''}` }}
@@ -72,52 +72,60 @@ const operator = useTabletOperator()
         ><button class="quiet" type="button" @click="operator.signOut">Sign out</button>
       </aside>
       <section class="main-control">
-        <section class="now" aria-labelledby="now-heading">
-          <p class="eyebrow">NOW PLAYING</p>
-          <h2 id="now-heading">{{ operator.nowPlayingTitle }}</h2>
-          <p v-if="operator.nowPlayingArtist">{{ operator.nowPlayingArtist }}</p>
-          <p v-if="!operator.playing">Choose Start next when the queue has a song.</p>
-          <p v-else-if="!operator.controllerReady">
-            Controller unavailable or stale. Reconnecting to authoritative state.
-          </p>
-          <p v-else-if="!operator.controllerMatchesPlaying">
-            Video mismatch: the TV has not confirmed this queue item. Recovery is still needed.
-          </p>
-          <p v-else>
-            Controller reports {{ operator.playerState }}. Elapsed time is not currently reported by
-            the controller.
-          </p>
-          <p v-if="operator.pendingPlayback" class="pending">
-            {{ operator.pendingPlayback.action === 'play' ? 'Play' : 'Pause' }} requested — waiting
-            for controller confirmation.
-          </p>
+        <section class="control-panel" aria-label="Playback controls">
+          <section class="now" aria-labelledby="now-heading">
+            <p class="eyebrow">NOW PLAYING</p>
+            <h2 id="now-heading">{{ operator.nowPlayingTitle }}</h2>
+            <p v-if="operator.nowPlayingArtist">{{ operator.nowPlayingArtist }}</p>
+            <p v-if="!operator.playing">Choose Start next when the queue has a song.</p>
+            <p v-else-if="!operator.controllerReady">
+              Controller unavailable or stale. Reconnecting to authoritative state.
+            </p>
+            <p v-else-if="!operator.controllerMatchesPlaying">
+              Video mismatch: the TV has not confirmed this queue item. Recovery is still needed.
+            </p>
+            <p v-else>
+              Controller reports {{ operator.playerState }}. Elapsed time is not currently reported
+              by the controller.
+            </p>
+            <p v-if="operator.pendingPlayback" class="pending">
+              {{ operator.pendingPlayback.action === 'play' ? 'Play' : 'Pause' }} requested —
+              waiting for controller confirmation.
+            </p>
+          </section>
+          <div class="control-actions">
+            <button
+              class="transport icon-button"
+              type="button"
+              :disabled="Boolean(operator.playbackDisabledReason)"
+              :aria-label="
+                operator.playbackAction === 'pause'
+                  ? 'Pause confirmed playback'
+                  : 'Play confirmed playback'
+              "
+              @click="operator.controlPlayback"
+            >
+              <span aria-hidden="true">{{ operator.playbackAction === 'pause' ? 'Ⅱ' : '▶' }}</span>
+              <span class="sr-only">{{
+                operator.playbackAction === 'pause' ? 'Pause' : 'Play'
+              }}</span>
+              <small v-if="operator.playbackDisabledReason">{{
+                operator.playbackDisabledReason
+              }}</small>
+            </button>
+            <button
+              class="queue-toggle icon-button"
+              type="button"
+              :aria-expanded="operator.queueOpen"
+              aria-controls="queue-drawer"
+              @click="operator.queueOpen = !operator.queueOpen"
+            >
+              <span aria-hidden="true">☷</span>
+              <span class="sr-only">{{ operator.queueOpen ? 'Hide queue' : 'Show queue' }}</span>
+              <span>{{ operator.queued.length }}</span>
+            </button>
+          </div>
         </section>
-        <button
-          class="transport"
-          type="button"
-          :disabled="Boolean(operator.playbackDisabledReason)"
-          :aria-label="
-            operator.playbackAction === 'pause'
-              ? 'Pause confirmed playback'
-              : 'Play confirmed playback'
-          "
-          @click="operator.controlPlayback"
-        >
-          {{ operator.playbackAction === 'pause' ? 'Pause' : 'Play'
-          }}<small v-if="operator.playbackDisabledReason">{{
-            operator.playbackDisabledReason
-          }}</small>
-        </button>
-        <button
-          class="queue-toggle"
-          type="button"
-          :aria-expanded="operator.queueOpen"
-          aria-controls="queue-drawer"
-          @click="operator.queueOpen = !operator.queueOpen"
-        >
-          {{ operator.queueOpen ? 'Hide queue' : 'Show queue' }}
-          <span>{{ operator.queued.length }}</span>
-        </button>
         <section v-if="operator.partyExpired" class="recovery">
           <h2>This party has expired</h2>
           <button type="button" :disabled="operator.loading" @click="operator.createActiveParty">
@@ -311,6 +319,9 @@ input {
   max-width: 74rem;
   margin: auto;
 }
+.layout.queue-open {
+  grid-template-columns: minmax(13rem, 18rem) minmax(16rem, 1fr) minmax(18rem, 24rem);
+}
 .party {
   display: flex;
   flex-direction: column;
@@ -335,8 +346,41 @@ input {
   gap: 1rem;
   align-content: start;
 }
+.control-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 1rem;
+  background: #241d31;
+}
 .now {
-  min-height: 12rem;
+  min-height: 0;
+  padding: 0.75rem;
+}
+.control-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+.icon-button {
+  min-height: 4.5rem;
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 2rem;
+}
+.icon-button small {
+  display: block;
+  font-size: 0.7rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .transport {
   min-height: 7rem;
@@ -367,11 +411,15 @@ input {
   min-width: min(100%, 20rem);
 }
 .drawer {
-  grid-column: 1/-1;
-  display: none;
+  grid-column: 3;
+  grid-row: 1;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  visibility: hidden;
 }
 .drawer[data-open='true'] {
-  display: block;
+  visibility: visible;
 }
 .drawer ol {
   padding-left: 1.4rem;
@@ -414,6 +462,9 @@ input {
   .layout {
     grid-template-columns: 1fr;
   }
+  .layout.queue-open {
+    grid-template-columns: 1fr;
+  }
   .party {
     align-items: center;
     text-align: center;
@@ -423,6 +474,7 @@ input {
   }
   .drawer {
     grid-column: auto;
+    grid-row: auto;
   }
   .item-actions {
     flex-direction: column;
