@@ -192,9 +192,13 @@ function explain(value: unknown, fallback: string) {
           'Controller playback does not match the active queue. State was refreshed.',
         nothing_playing: 'No active queue item is available to control.',
         idempotency_conflict: 'That playback action conflicts with an earlier request.',
+        playlist_source_key_invalid: 'Enter a valid source key in channel ID:playlist ID format.',
+        playlist_source_not_allowed: 'That playlist is not configured as a trusted source.',
+        playlist_allowlist_invalid: 'Trusted playlist configuration is invalid. Contact an administrator.',
+        playlist_unavailable: 'The configured playlist is unavailable or no longer public.',
         youtube_http_401: 'The configured YouTube source rejected server authentication.',
         youtube_http_403: 'The configured YouTube source denied this server request.',
-        youtube_http_404: 'The configured YouTube playlist is no longer available.',
+        youtube_http_404: 'The configured YouTube playlist is unavailable or no longer public.',
         youtube_http_429: 'YouTube is rate-limiting playlist retrieval. Try again later.',
         youtube_http_500: 'YouTube is temporarily unavailable. Try again later.',
         youtube_http_503: 'YouTube is temporarily unavailable. Try again later.',
@@ -317,6 +321,7 @@ async function approveSelectedCatalogSongs() {
 async function previewPlaylist() {
   if (!token.value || !playlistSourceKey.value.trim()) return
   catalogLoading.value = true
+  playlistPreview.value = null
   try {
     playlistPreview.value = await previewTrustedPlaylist(token.value, playlistSourceKey.value.trim())
     message.value = `Playlist preview: ${playlistPreview.value.expectedItems} items; modeled ${playlistPreview.value.modeledCost.total} API units.`

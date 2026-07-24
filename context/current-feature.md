@@ -1,66 +1,50 @@
-# Simplified Tablet Operator Interface
+# Sing King Trusted Playlist Preview Recovery
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
 
 ## Status
 
-Complete
+In Progress
 
 ## Goals
 
-- Make `/tablet` a touch-first, playback- and queue-focused operator surface while preserving the
-  existing constrained `tablet_admin` authorization and validated PocketBase endpoints.
-- Keep the party identity, readable QR code, expiry/status, prominent authoritative Now Playing
-  state, and a large confirmed-state Play/Pause toggle visible without navigating away.
-- Add a queue drawer with fair-order/requester context and safe, confirmed everyday queue actions;
-  keep destructive transitions confirmed and prevent duplicate submissions.
-- Preserve the existing server-side queue/controller contracts, including durable playback
-  idempotency, authoritative HTTPS refetch after SSE wake/reconnect, and clear mismatch/recovery
-  presentation. Do not claim SmartTube acknowledgement proves convergence.
-- Separate advanced party administration, catalog review/import, reports, diagnostics, and settings
-  under `/admin`, reachable only through a discreet intentional handoff from `/tablet`.
-- Add proportionate Vue tests for confirmed versus pending playback state, unavailable/mismatched
-  controls, drawer/QR persistence, empty-party flow, confirmations, duplicate prevention, admin
-  navigation, recovery, and accessible controls; then validate and independently review locally.
+- Prove the exact preview rejection path for the specified Sing King channel/playlist without an
+  import, catalog mutation, or avoidable YouTube API quota spend; verify public playlist ownership
+  and metadata using authoritative evidence.
+- Add only the verified Sing King source/playlist allowlist entry and deterministic parser support;
+  retain ambiguous identities as `needs_review` and ineligible, with no identity inferred from
+  channel/uploader provenance.
+- Return distinct sanitized preview errors for malformed input, untrusted source, ownership mismatch,
+  unavailable playlist, quota, and transient provider failure, and present them clearly in `/admin`.
+- Add focused backend, pinned PocketBase 0.39.7, parser, Vue/API, authorization, ownership,
+  error-mapping, replay, quota, and secret-boundary tests; build and independently review the fix.
+- Do not commit, push, deploy, alter Coolify/PocketBase configuration, or mutate retained staging
+  catalog data until separately approved. Once the fix is approved and deployed, supervise the
+  already-approved constrained tablet-admin import and curation of exactly
+  `PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39`.
 
 ## Constraints and Notes
 
-- Local edits and read-only inspection/validation are authorized. No commit, push, deployment,
-  PocketBase/Coolify/staging/tablet mutation, deletion, reset, controller enrollment, credential
-  change, or Wi-Fi interruption test is authorized.
-- `/tablet` and `/admin` share only a constrained `tablet_admin` session. Browser code must not
-  contain a PocketBase superuser, Lounge material, YouTube keys, Coolify secrets, raw privileged
-  records, or direct collection writes.
-- Existing queue, fair rotation, controller-generation, party/video ownership, validated endpoint,
-  and SSE-wake/HTTPS-authority semantics are preserved. The known Lounge/SmartTube convergence
-  blocker remains visible as mismatch/recovery state rather than being masked as success.
+- The allowlist change must be narrow and evidence-backed: exact channel
+  `UCwTRjvjVge51X-ILJ4i22ew` and playlist `PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39` only.
+- Preserve KaraFun sources, catalog curation, quota ledgers, snapshots, claims, parties, queues,
+  controller/tablet enrollment state, and the retained external volume. No deletion, cleanup,
+  replacement, fallback-key use, or Wi-Fi interruption test is allowed.
+- `/admin` continues to use only the constrained `tablet_admin` session. Browser code must never
+  contain a PocketBase superuser, YouTube/Coolify/Lounge secrets, raw privileged records, or direct
+  collection writes.
 
 ## Implementation Notes
 
-- Moved the retained full administration/catalog surface to `/admin` and made `/tablet` a focused
-  operator route backed by `useTabletOperator`. Both routes retain the same constrained
-  `tablet_admin` session and validated API contracts.
-- `/tablet` keeps party identity/QR visible with Now Playing, one authoritative Play/Pause control,
-  a responsive queue drawer, confirmed terminal queue actions, and an intentional confirmation
-  gate before Advanced Admin. Pending commands retain and reuse their scoped idempotency key after
-  ambiguous delivery; acknowledgement alone never changes the confirmed Play/Pause label.
-- The tablet status response now exposes only anonymous `Guest N` requester labels and a
-  server-calculated fair-rotation projection. It does not expose raw guest records or credentials.
-- Local validation passed: 37 Vue tests, production type-check/build, 20 focused queue/controller
-  protocol tests, PocketBase hook syntax, Oxlint for changed Vue/tests, Prettier, diff checks, and
-  secret scan. Independent review approved controller/idempotency, authorization, accessibility,
-  fair-order, and regression boundaries after focused repairs.
-- Responsive local-browser inspection at 800x1280 and 1280x800 found no horizontal overflow and
-  54px touch controls. It covered the signed-out shell only because no local tablet account was
-  available; authenticated behaviors are covered by Vue tests. No retained tablet/browser credential
-  was used. Retained Compose staging deployment `v132wnb9acj2hoiahtfhee4v` imported product SHA
-  `5eaf04e61395caca851db91d7f57a2abfeb227ce` and finished healthy; `/tablet`, same-origin
-  `/api/health`, and controller `/api/health` each returned HTTP 200. SmartTube/Lounge convergence
-  remains a known unresolved runtime limitation.
-- Follow-up refinement: removed the document-level white gutter through the app stylesheet,
-  consolidated Now Playing and icon-only playback/queue controls into one compact panel, and made
-  the queue a right-side push drawer that expands the layout instead of overlaying playback content.
-- The active validated YouTube ID now supplies a full-bleed thumbnail behind Now Playing with a
-  dark gradient for legibility; translucent controls remain at least 44px tall and no thumbnail is
-  requested when there is no valid active video.
+- 2026-07-24: Feature loaded and started from the failed constrained `/admin` preview. Read-only
+  diagnosis and local non-destructive edits/validation are authorized; delivery and remote import
+  remain approval-gated as stated in Goals.
+- Read-only source evidence confirms public playlist `PL8D4Iby0Bmm-uQIcbRfHeUMd_YDSZDA39` is
+  "Party Starters Karaoke | Sing King Karaoke", attributed to channel
+  `UCwTRjvjVge51X-ILJ4i22ew` (Sing King), with 416 currently listed videos. Its public description
+  identifies a karaoke party mix; this supports one exact source pair, not channel-wide access.
+- Root cause: retained staging's configured allowlist has two KaraFun entries but not the exact
+  Sing King pair. The API rejects it as `playlist_source_not_allowed` before claim creation or any
+  YouTube request. The pending delivery action will append (not replace) the verified pair to that
+  existing server-only JSON configuration, after explicit approval.

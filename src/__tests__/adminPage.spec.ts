@@ -61,4 +61,28 @@ describe('advanced administration route', () => {
     expect(wrapper.text()).toContain('Review song')
     expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
   })
+
+  it('shows actionable sanitized trusted-playlist preview errors', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: 'playlist_source_key_invalid', message: 'internal detail omitted' }),
+          { status: 422 },
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.get('#playlist-source').setValue('bad')
+    await wrapper.get('#playlist-source + button').trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('valid source key')
+    expect(wrapper.text()).not.toContain('internal detail omitted')
+  })
 })

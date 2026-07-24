@@ -5,6 +5,21 @@ const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/
 const PLAYLIST_ID = /^(?:PL|UU|LL|FL|RD)[A-Za-z0-9_-]{16,}$/
 const CHANNEL_ID = /^UC[A-Za-z0-9_-]{20,}$/
 
+function parseSourceKey(sourceKey) {
+  const value = String(sourceKey || '')
+  const parts = value.split(':')
+  if (parts.length !== 2 || !CHANNEL_ID.test(parts[0]) || !PLAYLIST_ID.test(parts[1])) {
+    throw new Error('playlist_source_key_invalid')
+  }
+  return { channelId: parts[0], playlistId: parts[1], sourceKey: value }
+}
+
+function resolveAllowlistedSource(raw, sourceKey) {
+  const parsed = parseSourceKey(sourceKey)
+  const rows = parseAllowlist(raw)
+  return rows.find((row) => row.channelId === parsed.channelId && row.playlistId === parsed.playlistId) || null
+}
+
 function digest(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
@@ -49,7 +64,8 @@ function parseTitle(raw, profile = 'artist-title') {
   const text = String(raw || '').replace(/\s+/g, ' ').trim()
   if (!text || /\b(live|concert|tutorial|lesson|medley|mix|compilation)\b/i.test(text)) return { confidence: 0, reason: 'unsafe_title' }
   const cleaned = text.replace(/\[[^\]]*\]|\([^)]*(?:karaoke|key|female|male|instrumental|version)[^)]*\)/gi, ' ').replace(/\s+/g, ' ').trim()
-  const match = profile === 'title-artist' ? cleaned.match(/^(.+?)\s+[-–—|]\s+(.+)$/) : cleaned.match(/^(.+?)\s+[-–—|]\s+(.+)$/)
+  if (profile !== 'artist-title' && profile !== 'title-artist') return { confidence: 0, reason: 'profile_unsupported' }
+  const match = cleaned.match(/^(.+?)\s+[-–—|]\s+(.+)$/)
   if (!match) return { confidence: 0, reason: 'title_unparsed' }
   const [left, right] = match.slice(1).map((v) => v.trim())
   const artist = profile === 'title-artist' ? right : left
@@ -60,4 +76,4 @@ function parseTitle(raw, profile = 'artist-title') {
 
 function modeledCost(itemCount) { return { playlistItemsList: 1, videosList: Math.ceil(Math.max(0, itemCount) / 50), total: 1 + Math.ceil(Math.max(0, itemCount) / 50) } }
 
-module.exports = { YOUTUBE_ID, parseAllowlist, playlistSnapshot, metadataDigest, parseTitle, modeledCost, digest, normalized }
+module.exports = { YOUTUBE_ID, parseAllowlist, parseSourceKey, resolveAllowlistedSource, playlistSnapshot, metadataDigest, parseTitle, modeledCost, digest, normalized }
