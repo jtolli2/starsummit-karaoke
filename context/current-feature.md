@@ -84,3 +84,20 @@ Blocked
   then offers an explicit next-page preview control. Each import remains bound to the currently
   previewed snapshot/page, and a new source or first-page preview clears continuation state. No
   automatic page traversal or import was added.
+
+- 2026-07-24: Retained staging import completed all 17 pages (416 playlist entries). The catalog
+  retained 385 unique Sing King rows and finished at 446 total records; the remaining 31 playlist
+  entries produced no new catalog row because they were duplicates and/or unavailable. All retained
+  rows entered needs-review/ineligible with uploader provenance kept separate from canonical identity.
+  Constrained tablet curation saved 381 deterministic `Artist - Title` operator corrections. Four
+  Sing King rows remain unreviewed/ineligible: two ambiguous formats (`Backing Track`, `Party`) and
+  two canonical-identity conflicts (Roxette `It Must Have Been Love`, Wham! `Wake Me Up Before You
+  Go-Go`). Catalog identity backlog is 21, equal to the pre-import 17 plus those four retained rows.
+  No approval mutation completed: the authenticated admin tab became owned by an orphaned browser
+  control session during approval selection and cannot currently be reclaimed; the alternate admin
+  tab is unauthenticated. Do not bypass this blocker with superuser writes.
+
+- 2026-07-24: A successful cached page replay exposed sparse `unavailableReasons` formatting in
+  `/admin`; the server returned 200 and preserved the continuation, but missing nested reason buckets
+  caused the UI to display a generic failure. The formatter now defaults missing buckets/counts to
+  zero and has a replay-continuation regression test.
