@@ -129,7 +129,11 @@ In Progress
 - Catalog-review rows now show the exact YouTube ID separately from the raw title and provide a
   fixed-origin watch link only for validated 11-character video IDs. Focused tablet tests cover
   fallback and trusted-playlist rows; 14 tests, the production type-check/build, diff checks, and
-  independent URL-safety/accessibility review passed.
+  independent URL-safety/accessibility review passed. Retained Compose deployment
+  `s2hkj8643ji6fqt1q19vu9xr` finished at exact product SHA
+  `91586ab9fd264c8770cd5dcaefb459f83e81f210`; all three health checks returned HTTP 200. Live
+  tablet review confirmed fallback video `WRf4B6MSSvU` and multiple trusted-playlist videos show
+  their exact IDs and fixed-origin watch links with isolated new-tab attributes.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.
