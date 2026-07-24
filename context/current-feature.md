@@ -24,6 +24,8 @@ In Progress
   YouTube channel provenance survives the sanitized candidate/request path, and missing-identity
   fallback songs remain visibly identifiable without promoting uploader metadata to canonical
   artist identity.
+- Make explicit YouTube fallback intent and outcomes unambiguous when weak local catalog matches
+  remain prioritized, including source labels and a completed-with-no-eligible-results state.
 - Show the exact YouTube video ID and a direct validated watch link on every tablet catalog-review
   row, including both guest fallback and trusted-playlist candidates.
 - Deploy and validate the exact product SHA on retained Compose staging, run a bounded canary and
@@ -134,6 +136,12 @@ In Progress
   `91586ab9fd264c8770cd5dcaefb459f83e81f210`; all three health checks returned HTTP 200. Live
   tablet review confirmed fallback video `WRf4B6MSSvU` and multiple trusted-playlist videos show
   their exact IDs and fixed-origin watch links with isolated new-tab attributes.
+- Guest fallback search now labels catalog and YouTube rows separately and reports whether an
+  explicit YouTube search is running, completed with visible candidates, or completed without an
+  eligible candidate. In-flight Enter presses coalesce, visible counts exclude deduplicated or
+  truncated rows, successful searches clear stale errors, and credential-refresh retries stop if
+  the guest changes the query before retry. Twenty focused tests, the full 35-test independent
+  suite, type-check/build, diff checks, and independent quota/state review passed.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.
