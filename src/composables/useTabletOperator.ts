@@ -80,6 +80,12 @@ export function useTabletOperator() {
   })
   const nowPlayingTitle = computed(() => playing.value?.song?.title || 'No song playing')
   const nowPlayingArtist = computed(() => playing.value?.song?.artist || '')
+  const nowPlayingThumbnailUrl = computed(() => {
+    const youtubeId = playing.value?.song?.youtubeId
+    return youtubeId && /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
+      ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`
+      : ''
+  })
 
   function explain(cause: unknown, fallback: string) {
     const code = (cause as { code?: string })?.code
@@ -416,6 +422,7 @@ export function useTabletOperator() {
     playbackDisabledReason,
     nowPlayingTitle,
     nowPlayingArtist,
+    nowPlayingThumbnailUrl,
     pendingPlayback,
     queueOpen,
     confirmation,

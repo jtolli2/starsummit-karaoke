@@ -55,6 +55,9 @@ describe('simplified tablet operator', () => {
     const wrapper = mountPage()
     await settle()
     expect(wrapper.text()).toContain('Party AB12CD34')
+    expect(wrapper.get('.now').attributes('style')).toContain(
+      'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+    )
     expect(wrapper.findComponent({ name: 'QrcodeVue' }).exists()).toBe(true)
     await wrapper.get('[aria-controls="queue-drawer"]').trigger('click')
     expect(wrapper.get('#queue-drawer').attributes('data-open')).toBe('true')

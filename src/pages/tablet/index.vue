@@ -73,7 +73,15 @@ const operator = useTabletOperator()
       </aside>
       <section class="main-control">
         <section class="control-panel" aria-label="Playback controls">
-          <section class="now" aria-labelledby="now-heading">
+          <section
+            class="now"
+            aria-labelledby="now-heading"
+            :style="
+              operator.nowPlayingThumbnailUrl
+                ? { backgroundImage: `url(${operator.nowPlayingThumbnailUrl})` }
+                : undefined
+            "
+          >
             <p class="eyebrow">NOW PLAYING</p>
             <h2 id="now-heading">{{ operator.nowPlayingTitle }}</h2>
             <p v-if="operator.nowPlayingArtist">{{ operator.nowPlayingArtist }}</p>
@@ -354,18 +362,38 @@ input {
   background: #241d31;
 }
 .now {
+  position: relative;
+  isolation: isolate;
   min-height: 0;
   padding: 0.75rem;
+  overflow: hidden;
+  background-position: center;
+  background-size: cover;
+}
+.now::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: linear-gradient(105deg, #161220f2, #161220b8 60%, #161220d9);
+  content: '';
+}
+.now > * {
+  position: relative;
+  z-index: 1;
 }
 .control-actions {
   display: flex;
   gap: 0.75rem;
 }
 .icon-button {
-  min-height: 4.5rem;
+  min-height: 3.4rem;
   flex: 1;
   padding: 0.5rem;
-  font-size: 2rem;
+  font-size: 1.5rem;
+  background: #ffffff26;
+  color: #fff;
+  border: 1px solid #ffffff4d;
+  backdrop-filter: blur(8px);
 }
 .icon-button small {
   display: block;
@@ -383,9 +411,8 @@ input {
   border: 0;
 }
 .transport {
-  min-height: 7rem;
-  font-size: clamp(2rem, 7vw, 4rem);
-  background: #f3c949;
+  min-height: 3.4rem;
+  font-size: clamp(1.5rem, 4vw, 2.25rem);
 }
 .transport small {
   display: block;
@@ -393,8 +420,7 @@ input {
   font-size: 0.9rem;
 }
 .queue-toggle {
-  font-size: 1.25rem;
-  background: #61d9c5;
+  font-size: 1.1rem;
 }
 .queue-toggle span {
   display: inline-grid;

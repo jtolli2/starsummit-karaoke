@@ -61,3 +61,6 @@ Complete
 - Follow-up refinement: removed the document-level white gutter through the app stylesheet,
   consolidated Now Playing and icon-only playback/queue controls into one compact panel, and made
   the queue a right-side push drawer that expands the layout instead of overlaying playback content.
+- The active validated YouTube ID now supplies a full-bleed thumbnail behind Now Playing with a
+  dark gradient for legibility; translucent controls remain at least 44px tall and no thumbnail is
+  requested when there is no valid active video.
