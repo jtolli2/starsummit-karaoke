@@ -153,6 +153,11 @@ In Progress
   a failed refresh safely retains the prior index. Query changes during the refresh or a credential
   retry stop both stale UI updates and any later YouTube request. Twenty-two focused tests,
   production type-check/build, diff checks, and independent review passed.
+- Retained Compose deployment `ek469126wbdozloq2g0n7sjc` finished at exact product SHA
+  `0f4e6210a0ba9b3aa15a8c02867a88d837942dd0`; frontend, same-origin API, and controller health
+  returned HTTP 200. Live guest search for `i write sins` showed the newly operator-corrected and
+  approved I Write Sins Not Tragedies / Panic! At The Disco as a local catalog result ahead of the
+  weak Whitney Houston match; no queue action or YouTube search was performed during verification.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.
