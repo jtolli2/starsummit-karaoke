@@ -142,6 +142,12 @@ In Progress
   truncated rows, successful searches clear stale errors, and credential-refresh retries stop if
   the guest changes the query before retry. Twenty focused tests, the full 35-test independent
   suite, type-check/build, diff checks, and independent quota/state review passed.
+- Retained Compose deployment `wf2axts19u0d9daz1alexfw0` finished at exact product SHA
+  `ca336b65587f4dc1a39f944e277df8927fb8a46d`; frontend, same-origin API, and controller health
+  returned HTTP 200. Live `i write sins` validation first labeled Whitney Houston as a catalog
+  match, then one explicit cached YouTube action reported four eligible results and displayed four
+  clearly labeled Panic! at the Disco karaoke fallbacks below it without adding a queue item or
+  consuming another external search call.
 - The bounded MusicBrainz-backed curation passes reduced the retained review backlog from 44 to 22
   without deleting records or approving fixtures, promotional Shorts, suspect identities, or
   unresolved soundtrack/group attributions.
