@@ -284,6 +284,8 @@ function explain(value: unknown, fallback: string) {
         playlist_snapshot_ambiguous: 'Multiple retained previews match this playlist page. Preview again before importing.',
         playlist_snapshot_lookup_failed: 'Trusted playlist snapshot lookup is unavailable. Try again later.',
         playlist_import_settle_success_failed: 'Trusted playlist results were not finalized. No songs were approved; try again later.',
+        legacy_scope_unavailable: 'The retained legacy playlist scope could not be read safely.',
+        legacy_scope_empty: 'No retained YouTube-playlist rows currently need identity review.',
       } as Record<string, string>
     )[code || ''] || fallback
   )
