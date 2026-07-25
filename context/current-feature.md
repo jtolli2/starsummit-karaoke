@@ -63,3 +63,7 @@ Complete
   tablet` after restart recovery and heartbeat. The Android-only follow-ups retain the retry field
   after a failed attempt and restart the controller loop after storing new Keystore credentials;
   neither mutates the deployed matcher.
+- 2026-07-25: Final independent review approved the bridge replacement lifecycle: the prior
+  realtime bridge is closed, its controller loop is cancelled and joined, and identity-checked
+  cleanup prevents an old loop from clearing a newer bridge. The focused closure regression test
+  and Android debug test/build passed.
