@@ -22,10 +22,34 @@ test('returns high-confidence match and separate runner-up with release evidence
   assert.equal(result.decision, 'matched'); assert.equal(result.recording.id, 'good'); assert.equal(result.runnerUp.id, 'other'); assert.equal(result.recording.releases[0].id, 'release-1')
 })
 
-test('defers near ties, collisions and no results', () => {
+test('uses majority identity consensus without coupling identity to one recording', () => {
   const parsed = parseYouTubeTitle('Artist - Song')
-  assert.equal(evaluateCandidates(parsed, [{ id: 'a', title: 'Song', 'artist-credit-phrase': 'Artist' }, { id: 'b', title: 'Song', 'artist-credit-phrase': 'Artist' }]).reason, 'near_tie')
+  const result = evaluateCandidates(parsed, [
+    { id: 'a', title: 'Song', 'artist-credit-phrase': 'Artist', releases: [{ id: 'ra', title: 'First' }] },
+    { id: 'b', title: 'Song', 'artist-credit-phrase': 'Artist', releases: [{ id: 'rb', title: 'Second' }] },
+    { id: 'c', title: 'Song', 'artist-credit-phrase': 'Other Artist', 'artist-credit': [{ artist: { name: 'Other Artist', aliases: [{ name: 'Artist' }] } }] },
+  ])
+  assert.equal(result.decision, 'matched')
+  assert.equal(result.reason, 'majority_identity_consensus')
+  assert.equal(result.recording.id, '')
+  assert.deepEqual(result.consensus, { agreeing: 2, considered: 3, share: 2 / 3, recordingIds: ['a', 'b'] })
+  assert.deepEqual(result.recording.releases.map((release) => release.id), ['ra', 'rb'])
+})
+
+test('still defers weak and missing MusicBrainz results', () => {
+  const parsed = parseYouTubeTitle('Artist - Song')
+  assert.equal(evaluateCandidates(parsed, [{ id: 'a', title: 'Different', 'artist-credit-phrase': 'Artist' }]).reason, 'weak_match')
   assert.equal(evaluateCandidates(parsed, []).reason, 'no_results')
+})
+
+test('defers when strong canonical identity groups have no strict majority', () => {
+  const parsed = parseYouTubeTitle('Alias - Song')
+  const result = evaluateCandidates(parsed, [
+    { id: 'a', title: 'Song', 'artist-credit-phrase': 'First Artist', 'artist-credit': [{ artist: { name: 'First Artist', aliases: [{ name: 'Alias' }] } }] },
+    { id: 'b', title: 'Song', 'artist-credit-phrase': 'Second Artist', 'artist-credit': [{ artist: { name: 'Second Artist', aliases: [{ name: 'Alias' }] } }] },
+  ])
+  assert.equal(result.decision, 'deferred')
+  assert.equal(result.reason, 'identity_no_majority')
 })
 
 test('uses durable cache and one-request-per-second gate with identifying UA', async () => {

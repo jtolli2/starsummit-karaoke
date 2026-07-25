@@ -42,13 +42,17 @@ function releases(recording) {
   return (recording?.releases || []).map((release) => ({ id: String(release.id || ''), title: String(release.title || ''), date: String(release.date || ''), evidence: Boolean(release.id || release.title) })).filter((release) => release.evidence)
 }
 
+function fullArtistCredit(recording) {
+  return String(recording?.['artist-credit-phrase'] || '').trim() || (recording?.['artist-credit'] || []).map((credit) => String(credit?.name || credit?.artist?.name || '')).filter(Boolean).join(' feat ')
+}
+
 function scoreCandidate(parsed, recording) {
   const title = normalize(recording?.title)
   const artists = artistNames(recording)
   const orderedCredit = (recording?.['artist-credit'] || []).map((credit) => normalize(credit?.name || credit?.artist?.name || '')).filter(Boolean).join(' feat ')
   const phrase = normalize(recording?.['artist-credit-phrase'] || '')
   const titleExact = title && title === parsed.normalizedTitle
-  const artistExact = phrase === parsed.normalizedArtist || orderedCredit === parsed.normalizedArtist
+  const artistExact = phrase === parsed.normalizedArtist || orderedCredit === parsed.normalizedArtist || artists.includes(parsed.normalizedArtist)
   const score = (titleExact ? 0.52 : 0) + (artistExact ? 0.42 : 0) + (recording?.id ? 0.04 : 0)
   return { score, titleExact, artistExact, normalizedTitle: title, normalizedArtists: artists }
 }
@@ -57,14 +61,45 @@ function evaluateCandidates(parsed, recordings, options = {}) {
   if (parsed.status !== 'parsed') return { decision: 'deferred', reason: parsed.reason, candidates: [] }
   const ranked = recordings.map((recording) => ({ recording, ...scoreCandidate(parsed, recording) }))
     .sort((a, b) => b.score - a.score || String(a.recording.id).localeCompare(String(b.recording.id)))
-  const best = ranked[0]; const runnerUp = ranked[1]
+  const best = ranked[0]
   if (!best || !best.recording?.id) return { decision: 'deferred', reason: 'no_results', candidates: ranked }
   if (!best.titleExact || !best.artistExact) return { decision: 'deferred', reason: 'weak_match', candidates: ranked.slice(0, 2) }
-  if (runnerUp && best.score - runnerUp.score < (options.minMargin ?? 0.12)) return { decision: 'deferred', reason: 'near_tie', candidates: ranked.slice(0, 2) }
-  const key = `${parsed.normalizedArtist}|${parsed.normalizedTitle}`
-  const fullCredit = String(best.recording['artist-credit-phrase'] || '').trim() || (best.recording['artist-credit'] || []).map((credit) => String(credit?.name || credit?.artist?.name || '')).filter(Boolean).join(' feat ')
-  if (!fullCredit || normalize(fullCredit) !== parsed.normalizedArtist) return { decision: 'deferred', reason: 'missing_full_artist_credit', candidates: ranked.slice(0, 2) }
-  return { decision: 'matched', reason: 'high_confidence_exact', confidence: best.score, identityKey: key, recording: { id: String(best.recording.id), title: String(best.recording.title), artist: fullCredit, aliases: artistNames(best.recording), releases: releases(best.recording) }, runnerUp: runnerUp ? { id: String(runnerUp.recording.id), score: runnerUp.score } : null, candidates: ranked.slice(0, 2) }
+  const strong = ranked.filter((candidate) => candidate.titleExact && candidate.artistExact && candidate.recording?.id)
+  const groups = new Map()
+  for (const candidate of strong) {
+    const artist = fullArtistCredit(candidate.recording)
+    if (!artist) continue
+    const key = `${normalize(artist)}|${candidate.normalizedTitle}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(candidate)
+  }
+  const consensus = [...groups.entries()].map(([key, candidates]) => ({ key, candidates }))
+    .sort((a, b) => b.candidates.length - a.candidates.length || b.candidates[0].score - a.candidates[0].score || a.key.localeCompare(b.key))[0]
+  if (!consensus) return { decision: 'deferred', reason: 'missing_full_artist_credit', candidates: ranked.slice(0, 2) }
+  if (consensus.candidates.length <= strong.length / 2) return { decision: 'deferred', reason: 'identity_no_majority', candidates: ranked.slice(0, 3) }
+  const representative = consensus.candidates[0]
+  const artist = fullArtistCredit(representative.recording)
+  const recordingIds = consensus.candidates.map((candidate) => String(candidate.recording.id))
+  const dissenting = ranked.find((candidate) => !consensus.candidates.includes(candidate))
+  const releaseEvidence = consensus.candidates.flatMap((candidate) => releases(candidate.recording))
+    .filter((release, index, all) => index === all.findIndex((other) => other.id === release.id && other.title === release.title))
+  const reason = consensus.candidates.length > 1 ? 'majority_identity_consensus' : 'high_confidence_exact'
+  return {
+    decision: 'matched',
+    reason,
+    confidence: representative.score,
+    identityKey: consensus.key,
+    recording: {
+      id: recordingIds.length === 1 ? recordingIds[0] : '',
+      title: String(representative.recording.title),
+      artist,
+      aliases: [...new Set(consensus.candidates.flatMap((candidate) => artistNames(candidate.recording)))],
+      releases: releaseEvidence,
+    },
+    consensus: { agreeing: consensus.candidates.length, considered: strong.length, share: consensus.candidates.length / strong.length, recordingIds },
+    runnerUp: dissenting ? { id: String(dissenting.recording.id || ''), score: dissenting.score, separation: representative.score - dissenting.score } : null,
+    candidates: ranked.slice(0, Math.max(3, consensus.candidates.length)),
+  }
 }
 
 function createMatcher({ fetchJson, cache, clock = () => Date.now(), minIntervalMs = 1000, userAgent = USER_AGENT } = {}) {

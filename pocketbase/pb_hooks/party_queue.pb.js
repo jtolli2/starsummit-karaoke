@@ -461,7 +461,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
 globalThis.__partyQueue.correctCatalogIdentity = correctCatalogIdentity
 globalThis.__partyQueueRealtime = {
   authorize(e) {
@@ -1549,8 +1549,8 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/musicbrainz/match', (c) => {
         }
       }
       const match = parsed.status === 'parsed' ? matcher.evaluateCandidates(parsed, payload?.recordings || []) : { decision: 'deferred', reason: parsed.reason }
-      results.push({ id: songId, decision: match.decision, reason: match.reason, confidence: match.confidence || 0, runnerUp: match.runnerUp || null, recording: match.recording || null, provenance: match.recording ? { query: `recording:"${parsed.title}" AND artist:"${parsed.artist}"`, releases: match.recording.releases || [], source: 'musicbrainz' } : null }); processed++
-      if (!dryRun && match.decision === 'matched') try { $app.runInTransaction((tx) => { const current = tx.findRecordById('karaoke_songs', songId); if (!current || str(current, 'identity_status') !== 'missing') return; correctCatalogIdentity(tx, current, { title: match.recording.title, artist: match.recording.artist, reason: match.reason, actorId: id(auth(c)), at: now(), source: 'musicbrainz', recordingId: match.recording.id, runnerUp: match.runnerUp || null, matchReason: match.reason, matchConfidence: match.confidence || 0, provenance: { releases: match.recording.releases || [], source: 'musicbrainz' } }) }) } catch (error) { if (error.message === 'identity_conflict') { results[results.length - 1].decision = 'deferred'; results[results.length - 1].reason = 'canonical_collision' } else throw error }
+      results.push({ id: songId, decision: match.decision, reason: match.reason, confidence: match.confidence || 0, consensus: match.consensus || null, runnerUp: match.runnerUp || null, recording: match.recording || null, provenance: match.recording ? { query: `recording:"${parsed.title}" AND artist:"${parsed.artist}"`, candidateRecordingIds: match.consensus?.recordingIds || [match.recording.id].filter(Boolean), releases: match.recording.releases || [], source: 'musicbrainz' } : null }); processed++
+      if (!dryRun && match.decision === 'matched') try { $app.runInTransaction((tx) => { const current = tx.findRecordById('karaoke_songs', songId); if (!current || str(current, 'identity_status') !== 'missing') return; correctCatalogIdentity(tx, current, { title: match.recording.title, artist: match.recording.artist, reason: match.reason, actorId: id(auth(c)), at: now(), source: 'musicbrainz', recordingId: match.recording.id, runnerUp: match.runnerUp || null, matchReason: match.reason, matchConfidence: match.confidence || 0, provenance: { candidateRecordingIds: match.consensus?.recordingIds || [match.recording.id].filter(Boolean), consensus: match.consensus || null, releases: match.recording.releases || [], source: 'musicbrainz' } }) }) } catch (error) { if (error.message === 'identity_conflict') { results[results.length - 1].decision = 'deferred'; results[results.length - 1].reason = 'canonical_collision' } else throw error }
       if (!dryRun && job) { set(job, 'cursor', cursor + 1); setJson(job, 'report_json', results); $app.save(job) }
     }
     if (!dryRun && job && !retryable) { set(job, 'status', 'complete'); set(job, 'cursor', ids.length); setJson(job, 'report_json', results); $app.save(job) }
@@ -1561,6 +1561,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/musicbrainz/match', (c) => {
 // bound to one durable digest; the browser never supplies canonical identity or song IDs.
 const LEGACY_PLAYLIST_ID = 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R'
 const LEGACY_BINDING_KIND = 'operator_assumed_legacy_playlist'
+const LEGACY_POLICY_VERSION = 'mb-majority-v2'
 const LEGACY_BATCH_SIZE = 20
 const LEGACY_LEASE_MS = 6 * 60 * 1000
 const LEGACY_CACHE_MS = 7 * 24 * 60 * 60 * 1000
@@ -1617,11 +1618,26 @@ function legacySaveJob(q, job, token, update) {
   return saved
 }
 
+function legacyReportSummary(report) {
+  const rows = Array.isArray(report) ? report : []
+  const reasons = {}
+  for (const row of rows) reasons[row.reason || row.decision || 'unknown'] = (reasons[row.reason || row.decision || 'unknown'] || 0) + 1
+  return {
+    processed: rows.length,
+    corrected: rows.filter((row) => row.decision === 'matched').length,
+    deferred: rows.filter((row) => row.decision === 'deferred').length,
+    replayed: rows.filter((row) => row.decision === 'replay').length,
+    musicBrainzRequests: rows.filter((row) => row.cacheHit === false).length,
+    cacheHits: rows.filter((row) => row.cacheHit === true).length,
+    reasons,
+  }
+}
+
 function legacyRunJob() {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const q = globalThis.__partyQueue
   let job = null
-  try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'status != {:complete}', { complete: 'complete' }) } catch (_) { return }
+  try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'status != {:complete} && policy_version = {:policy}', { complete: 'complete', policy: q.legacyPolicyVersion }) } catch (_) { return }
   if (!job || (q.str(job, 'lease_expires_at') && Date.parse(q.str(job, 'lease_expires_at')) > Date.now())) return
   const token = `${Date.now()}-${q.hash(String(Math.random()))}`
   try {
@@ -1643,11 +1659,12 @@ function legacyRunJob() {
         if (!song || q.str(song, 'source') !== 'youtube_playlist' || !['needs_review', 'unreviewed'].includes(q.str(song, 'review_status')) || q.str(song, 'identity_status') !== 'missing') throw new Error('scope_mismatch')
         const rowDigest = q.hash(q.serializeJson(row));
         if (q.str(song, 'binding_input_digest') === q.str(job, 'input_digest') && q.str(song, 'binding_row_digest') === rowDigest) { outcome.decision = 'replay'; report.push(outcome); if (!legacySaveJob(q, job, token, (current) => { q.set(current, 'cursor', cursor + 1); q.setJson(current, 'report_json', report); q.set(current, 'updated_at', q.now()) })) break; continue }
-        const parsed = matcher.parseYouTubeTitle(q.str(song, 'video_title')); if (parsed.status !== 'parsed') throw new Error('title_unparsed')
+        const parsed = matcher.parseYouTubeTitle(q.str(song, 'video_title')); if (parsed.status !== 'parsed') throw new Error(parsed.reason || 'title_unparsed')
         const queryText = `recording:"${parsed.title}" AND artist:"${parsed.artist}"`; const cacheKey = `mb:recording:${matcher.normalize(queryText)}`; let payload = null
         let cached = null
         try { cached = $app.findFirstRecordByFilter('karaoke_musicbrainz_cache', 'cache_key = {:key}', { key: cacheKey }); if (cached && (!q.str(cached, 'expires_at') || Date.parse(q.str(cached, 'expires_at')) > Date.now())) payload = q.jsonValue(cached, 'payload_json', null) } catch (_) {}
-        if (!payload) { if (!legacyAcquireRate(q)) { outcome.reason = 'rate_limited'; report.push(outcome); break } payload = legacyFetch(q, matcher, queryText); const cache = cached || new Record($app.findCollectionByNameOrId('karaoke_musicbrainz_cache')); q.set(cache, 'cache_key', cacheKey); q.setJson(cache, 'payload_json', payload); q.set(cache, 'updated_at', q.now()); q.set(cache, 'expires_at', q.future(q.legacyCacheMs)); $app.save(cache) }
+        if (payload) outcome.cacheHit = true
+        if (!payload) { if (!legacyAcquireRate(q)) { outcome.reason = 'rate_limited'; report.push(outcome); break } outcome.cacheHit = false; payload = legacyFetch(q, matcher, queryText); const cache = cached || new Record($app.findCollectionByNameOrId('karaoke_musicbrainz_cache')); q.set(cache, 'cache_key', cacheKey); q.setJson(cache, 'payload_json', payload); q.set(cache, 'updated_at', q.now()); q.set(cache, 'expires_at', q.future(q.legacyCacheMs)); $app.save(cache) }
         const match = matcher.evaluateCandidates(parsed, payload.recordings)
         if (match.decision !== 'matched') throw new Error(match.reason || 'low_confidence')
         let applied = false; let driftReason = ''
@@ -1656,10 +1673,10 @@ function legacyRunJob() {
           const exact = current && q.str(current, 'youtube_id') === row.youtubeId && q.str(current, 'video_title') === row.videoTitle && q.num(current, 'playlist_position') === row.playlistPosition && q.str(current, 'source') === row.source && q.str(current, 'playlist_source_id') === row.playlistSourceId && q.str(current, 'review_status') === row.reviewStatus && q.str(current, 'identity_status') === row.identityStatus
           if (!exact) { driftReason = 'input_drift'; return }
           if (q.str(current, 'binding_input_digest') === q.str(job, 'input_digest')) { driftReason = 'already_bound'; return }
-          q.correctCatalogIdentity(tx, current, { title: match.recording.title, artist: match.recording.artist, reason: match.reason, actorId: q.str(job, 'initiated_by'), at: q.now(), source: 'musicbrainz', recordingId: match.recording.id, runnerUp: match.runnerUp || null, matchReason: match.reason, matchConfidence: match.confidence || 0, provenance: { bindingKind: q.legacyBindingKind, playlistId: q.legacyPlaylistId, inputDigest: q.str(job, 'input_digest'), rowDigest, query: queryText, source: 'musicbrainz' } })
+          q.correctCatalogIdentity(tx, current, { title: match.recording.title, artist: match.recording.artist, reason: match.reason, actorId: q.str(job, 'initiated_by'), at: q.now(), source: 'musicbrainz', recordingId: match.recording.id, runnerUp: match.runnerUp || null, matchReason: match.reason, matchConfidence: match.confidence || 0, provenance: { bindingKind: q.legacyBindingKind, policyVersion: q.legacyPolicyVersion, playlistId: q.legacyPlaylistId, inputDigest: q.str(job, 'input_digest'), rowDigest, query: queryText, candidateRecordingIds: match.consensus?.recordingIds || [match.recording.id].filter(Boolean), consensus: match.consensus || null, releases: match.recording.releases || [], source: 'musicbrainz' } })
           q.set(current, 'binding_kind', q.legacyBindingKind); q.set(current, 'binding_playlist_id', q.legacyPlaylistId); q.set(current, 'binding_input_digest', q.str(job, 'input_digest')); q.set(current, 'binding_row_digest', rowDigest); tx.save(current); applied = true
         })
-        if (!applied) { outcome.reason = driftReason || 'input_drift' } else { outcome.decision = 'matched'; outcome.reason = match.reason; outcome.confidence = match.confidence || 0; outcome.recordingId = match.recording.id }
+        if (!applied) { outcome.reason = driftReason || 'input_drift' } else { outcome.decision = 'matched'; outcome.reason = match.reason; outcome.confidence = match.confidence || 0; outcome.recordingId = match.recording.id; outcome.candidateRecordingIds = match.consensus?.recordingIds || [match.recording.id].filter(Boolean); outcome.consensus = match.consensus || null; outcome.runnerUp = match.runnerUp || null }
       } catch (error) { outcome.reason = error.message === 'identity_conflict' ? 'canonical_collision' : error.message || 'deferred' }
       report.push(outcome); if (!legacySaveJob(q, job, token, (current) => { q.set(current, 'cursor', cursor + 1); q.setJson(current, 'report_json', report); q.set(current, 'updated_at', q.now()) })) break
     }
@@ -1680,7 +1697,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   if (!rows.length) return q.json(c, 404, 'legacy_scope_empty', 'No retained legacy playlist rows require review')
   // Callback globals are recreated by PocketBase worker VMs. Keep the operator-scoped
   // constants in this closure rather than looking them up on the helper object.
-  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${inputDigest}`); let job = null
+  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${LEGACY_POLICY_VERSION}:${inputDigest}`); let job = null
   try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
   // A transport-decoding failure changes no song identity. Permit this precise,
   // durable retry after a runtime repair, but never replay completed matches.
@@ -1690,19 +1707,19 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
       q.set(job, 'cursor', 0); q.set(job, 'status', 'pending'); q.set(job, 'lease_token', ''); q.set(job, 'lease_expires_at', ''); q.setJson(job, 'report_json', []); q.set(job, 'last_error', ''); q.set(job, 'updated_at', q.now()); $app.save(job)
     }
   }
-  if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
+  if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'policy_version', LEGACY_POLICY_VERSION); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
   // Route callbacks retain the initial helper object in PocketBase worker VMs; kick a
   // bounded batch now so creation and replay do not depend on a browser-side timer.
   try { q.legacyRunJob() } catch (_) {}
   try { job = $app.findRecordById('karaoke_legacy_playlist_jobs', q.id(job)) } catch (_) {}
-  return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length })
+  return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, policyVersion: LEGACY_POLICY_VERSION, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length, summary: legacyReportSummary(q.jsonValue(job, 'report_json', [])) })
 })
 
 routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const q = globalThis.__partyQueue; if (!q.tablet(q.auth(c))) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required'); const key = String(q.query(c, 'jobKey') || ''); if (!key) return q.json(c, 422, 'job_key_required', 'jobKey is required')
   try { q.legacyRunJob() } catch (_) {}
-  try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), report: q.jsonValue(job, 'report_json', []) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
+  try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); const report = q.jsonValue(job, 'report_json', []); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), policyVersion: q.str(job, 'policy_version'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), count: q.jsonValue(job, 'rows_json', []).length, inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), summary: legacyReportSummary(report), report }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
 })
 
 // Cron callbacks run in a bare VM, while request callbacks retain the initial

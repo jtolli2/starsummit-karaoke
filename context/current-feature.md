@@ -14,13 +14,15 @@ In Progress
 - Query and compare MusicBrainz recording candidates with an identifying User-Agent, no more than
   one request per second, durable replayable cache, normalized artist/title comparison, aliases,
   featured artists, and recording/release evidence.
-- Apply only unambiguous, high-confidence canonical corrections through the existing constrained,
-  audited application workflow. Corrected songs must remain `needs_review` and ineligible.
+- Apply high-confidence canonical corrections when a strict majority of strong MusicBrainz
+  candidates agree on normalized artist/title identity, through the existing constrained, audited
+  application workflow. Corrected songs must remain `needs_review` and ineligible.
 - Make the runner resumable, restart-safe, bounded, idempotent, dry-run capable, and report
   confidence, evidence, match reason, runner-up separation, and reason-coded deferrals.
-- Fail closed for malformed data, covers, medleys, live/remix/version ambiguity, competing
-  recordings, canonical conflicts, weak/near-tied candidates, and no-result cases; never call
-  YouTube for matching work or alter unrelated/pre-existing rows or retained state.
+- Fail closed for malformed data, covers, medleys, live/remix/version ambiguity, canonical
+  conflicts, weak candidates, identity groups without a majority, and no-result cases. Competing
+  recording IDs that agree on identity may establish artist/title but must not select one recording
+  ID. Never call YouTube for matching work or alter unrelated/pre-existing rows or retained state.
 - Evaluate durable, audited MusicBrainz recording/release provenance without making identity depend
   on a single release; validate against the pinned PocketBase 0.39.7 runtime and independently
   review the completed local implementation.
@@ -57,3 +59,7 @@ In Progress
   every correction `needs_review`/ineligible, and persistently defers all ambiguous rows. Local
   focused matcher/job/scope tests pass 10/10, focused admin tests pass 12/12, and the production
   build passes; pinned runtime validation remains pending deployment because no local binary exists.
+- 2026-07-25: The operator relaxed canonical identity policy for this personal staging app: a
+  strict majority of strong, exact MusicBrainz candidates may establish artist/title. Multiple
+  agreeing recording entries are retained as audited evidence without assigning a single recording
+  ID. Legacy runs are policy-versioned so previously deferred rows can be reconsidered cleanly.
