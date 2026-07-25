@@ -447,5 +447,6 @@
   known expiry, candidate, rate, and duplicate errors remain specific.
 - Signed SHA `05dd13c03c1f74cde3134ce36f506d7f87400c47` deployed to retained Compose staging as
   `s2bd7mbl58v2zcd9swmdhpcl`, preserving the external PocketBase volume. The cached validation
-  party `N5P6LYXA` was expired when opened; no live fallback search, catalog mutation, or queue
-  mutation occurred.
+  party `N5P6LYXA` was expired when opened, so the automated check made no live fallback search,
+  catalog mutation, or queue mutation. The user then manually queued cached `careless whisper`
+  successfully, proving the deployed guest path without a new YouTube lookup.
