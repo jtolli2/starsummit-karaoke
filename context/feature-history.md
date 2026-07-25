@@ -27,6 +27,27 @@
 
 ## Entries
 
+### 2026-07-25 — Catalog Review Retained-State Repair and Approval Integrity
+
+- Added forward-only migration `1784991000_repair_musicbrainz_match_status.js`, which repairs
+  only blank or invalid retained MusicBrainz match status values to `not_attempted`; it leaves
+  canonical identity, review/eligibility state, history, provenance, matcher evidence, and all
+  unrelated values untouched and is idempotent under pinned PocketBase 0.39.7.
+- Unified individual, selection, and bulk approval behind the server-side approvability policy;
+  approval now requires verified/operator-corrected complete identity, karaoke confidence,
+  availability, no canonical collision, and the existing invariants. Rejection remains a
+  transactional review-history and ineligibility transition, while normalized errors distinguish
+  identity, karaoke/availability, schema, and collision failures.
+- Improved the tablet-admin catalog review UI with invalid-approved warnings, policy-aware
+  controls, conflict-specific messages, and audit/eligibility visibility. Retained staging
+  deployment `eqqr6glbot3xf4qc1wp8b6tk` imported `08a31939aeff95dced4ef417047ded321c852ee3`;
+  the affected approved/missing-identity rendition was rejected and ineligible, and its canonical
+  owner remained unchanged. A read-only matcher lookup found no latest job row, leaving a
+  separately documented post-deploy matcher-continuity verification risk; no job was created,
+  restarted, or modified.
+- Validation: pinned PocketBase 0.39.7 migration/route integrations 7/7, Vue tests 57/57,
+  production build, static legacy-job contract test, and independent final review approved.
+
 ### 2026-07-24 — Admin-Confirmed Public Playlist Import and Safe Bulk Approval
 
 - Replaced playlist-source allowlisting as an authorization gate with constrained tablet-admin

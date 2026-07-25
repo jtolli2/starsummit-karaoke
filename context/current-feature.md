@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+ Complete
 
 ## Goals
 
@@ -43,5 +43,14 @@ In Progress
 - 2026-07-25: Added the forward-only `mb_match_status` repair and one shared server approval
   policy across individual, batch, and selection workflows. Pinned PocketBase 0.39.7 migration
   and route integrations pass, along with 57 Vue unit tests, the production build, and independent
-  review. Deployment, retained-record rejection, matcher continuity, and final staging evidence
-  remain pending.
+  review. Staging deployment `eqqr6glbot3xf4qc1wp8b6tk` imported
+  `08a31939aeff95dced4ef417047ded321c852ee3`; `/healthz` and `/api/health` returned 200.
+- 2026-07-25: Through the constrained tablet-admin UI, record `gi7jvgyrbml4rg4`
+  (`046zCU6C5qY`) was rejected and displayed as ineligible with its review audit transition;
+  the canonical owner `IQs4p65sgLQ` remained approved/eligible. A Sam Smith / Like I Can
+  correction returned the expected clear identity-conflict response without changing either row.
+- 2026-07-25: The external volume was retained and no matcher job was created, restarted, or
+  mutated. Historical retained evidence recorded job `sqwd85vrfrwrzym` advancing 640/1024 to
+  700/1024 before this feature. The newly added read-only latest-job lookup returned 404 in
+  staging, so this feature does not claim fresh post-deploy matcher continuity; this is the
+  remaining operational verification risk and requires separate non-mutating diagnosis.
