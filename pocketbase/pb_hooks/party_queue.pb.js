@@ -1725,13 +1725,14 @@ routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
 // hook helper object. The cron wakes this loopback-only route; no browser
 // credentials, playlist metadata, or canonical values cross the boundary.
 routerAdd('POST', '/api/karaoke/internal/legacy-playlist/run', (c) => {
-  const q = globalThis.__partyQueue; const headers = q.info(c).headers || {}
+  const q = globalThis.__partyQueue
   // PocketBase 0.39.7 logs the loopback address but does not expose it through
-  // requestInfo(). Authenticate the cron intent explicitly; the route can only
-  // wake an already-created, policy-bound, leased job.
-  const wake = String(headers['x-karaoke-internal-wake'] || headers['X-Karaoke-Internal-Wake'] || '')
+  // requestInfo(), and its cron HTTP client omits custom headers there as well.
+  // Authenticate the cron intent explicitly; the route can only wake an
+  // already-created, policy-bound, leased job.
+  const wake = String(q.query(c, 'wake') || '')
   if (wake !== 'legacy-playlist-cron-v1') return q.json(c, 404, 'not_found', 'Not found')
   try { q.legacyRunJob() } catch (_) {}
   return c.json(204, {})
 })
-try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => { try { $http.send({ url: 'http://127.0.0.1:8090/api/karaoke/internal/legacy-playlist/run', method: 'POST', headers: { 'X-Karaoke-Internal-Wake': 'legacy-playlist-cron-v1' }, timeout: 55 }) } catch (_) {} }) } catch (_) {}
+try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => { try { $http.send({ url: 'http://127.0.0.1:8090/api/karaoke/internal/legacy-playlist/run?wake=legacy-playlist-cron-v1', method: 'POST', timeout: 55 }) } catch (_) {} }) } catch (_) {}
