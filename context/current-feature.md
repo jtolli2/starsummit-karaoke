@@ -45,3 +45,9 @@ Complete
   redesign. Final local evidence: 61 Vue tests, 16 backend protocol tests, production build, hook
   syntax, diff, secret-pattern review, and independent review all passed. The three integration
   scenarios are present but skipped because `POCKETBASE_BIN` is not configured locally.
+- 2026-07-25: Retained Compose staging app `wyxit9qifbwgskjrwibxb330` deployed exact commit
+  `e20c6b6` successfully without volume replacement; public `/api/health` returned 200. An
+  isolated party `FTTDDCJV` received three existing approved catalog requests. A stale tablet move
+  after the third request returned the expected refresh/error state while preserving all three
+  rows; a fresh move placed `2 Become 1` before `18`, retaining `2 Poor Kids` third. No playback,
+  controller, catalog, or existing-party state was changed.

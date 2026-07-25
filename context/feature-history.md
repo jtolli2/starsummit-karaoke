@@ -464,3 +464,13 @@
   diff/secret checks, and independent final review. The 3 pinned-runtime scenarios are skipped only
   because this workspace has no configured `POCKETBASE_BIN`; no deployment, queue mutation, commit,
   or push was performed.
+
+### 2026-07-25 — Staging deployment and isolated live validation follow-up
+
+- Retained Compose staging app `wyxit9qifbwgskjrwibxb330` deployed exact commit
+  `e20c6b63ac214436a35f461af907ccd29ed5420d` successfully and retained external storage; public
+  `/api/health` returned 200.
+- In isolated party `FTTDDCJV`, three existing approved catalog requests established a queue.
+  A post-snapshot request caused the tablet reorder action to reject stale state and refetch without
+  losing the new row. A fresh move then produced the expected order: `2 Become 1`, `18`, and
+  `2 Poor Kids`. No existing party, controller, playback, catalog, volume, or device state changed.

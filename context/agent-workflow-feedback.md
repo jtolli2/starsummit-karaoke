@@ -4,6 +4,17 @@
 
 ## Entries
 
+### 2026-07-25 — Use the authoritative tablet snapshot for queue live proof
+
+- **Feedback:** During isolated guest validation, the guest page displayed an expired-session
+  message after queue submission even though the server had persisted the request. The authenticated
+  tablet status was the accurate queue authority and showed the expected row count and order.
+- **Improvement:** For queue mutation validation, confirm request survival and ordering through the
+  sanitized tablet snapshot after each guest-side action; report guest confirmation-state drift as a
+  separate UX observation instead of treating it as evidence that the backend write failed.
+- **Follow-up:** Diagnose the guest post-request session-state message in a separately scoped fix;
+  do not alter the proven reorder path while preparing a party-ready delivery.
+
 ### 2026-07-25 — Keep optimistic mutation snapshot bounds and runtime proof aligned
 
 - **Feedback:** Review of a stale-safe queue reorder route found the tablet snapshot returned 200
