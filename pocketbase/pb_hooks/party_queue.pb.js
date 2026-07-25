@@ -1561,7 +1561,6 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/musicbrainz/match', (c) => {
 // bound to one durable digest; the browser never supplies canonical identity or song IDs.
 const LEGACY_PLAYLIST_ID = 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R'
 const LEGACY_BINDING_KIND = 'operator_assumed_legacy_playlist'
-const LEGACY_POLICY_VERSION = 'mb-majority-v2'
 const LEGACY_BATCH_SIZE = 20
 const LEGACY_LEASE_MS = 6 * 60 * 1000
 const LEGACY_CACHE_MS = 7 * 24 * 60 * 60 * 1000
@@ -1697,7 +1696,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   if (!rows.length) return q.json(c, 404, 'legacy_scope_empty', 'No retained legacy playlist rows require review')
   // Callback globals are recreated by PocketBase worker VMs. Keep the operator-scoped
   // constants in this closure rather than looking them up on the helper object.
-  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${LEGACY_POLICY_VERSION}:${inputDigest}`); let job = null
+  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${q.legacyPolicyVersion}:${inputDigest}`); let job = null
   try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
   // A transport-decoding failure changes no song identity. Permit this precise,
   // durable retry after a runtime repair, but never replay completed matches.
@@ -1707,12 +1706,12 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
       q.set(job, 'cursor', 0); q.set(job, 'status', 'pending'); q.set(job, 'lease_token', ''); q.set(job, 'lease_expires_at', ''); q.setJson(job, 'report_json', []); q.set(job, 'last_error', ''); q.set(job, 'updated_at', q.now()); $app.save(job)
     }
   }
-  if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'policy_version', LEGACY_POLICY_VERSION); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
+  if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'policy_version', q.legacyPolicyVersion); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
   // Route callbacks retain the initial helper object in PocketBase worker VMs; kick a
   // bounded batch now so creation and replay do not depend on a browser-side timer.
   try { q.legacyRunJob() } catch (_) {}
   try { job = $app.findRecordById('karaoke_legacy_playlist_jobs', q.id(job)) } catch (_) {}
-  return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, policyVersion: LEGACY_POLICY_VERSION, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length, summary: legacyReportSummary(q.jsonValue(job, 'report_json', [])) })
+  return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, policyVersion: q.legacyPolicyVersion, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length, summary: legacyReportSummary(q.jsonValue(job, 'report_json', [])) })
 })
 
 routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
