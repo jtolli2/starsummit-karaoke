@@ -495,6 +495,7 @@ onRealtimeSubscribeRequest((e) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   globalThis.__partyQueueRealtime.authorize(e)
 })
+
 onRecordAfterCreateSuccess((e) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   try { globalThis.__partyQueueRealtime.publish(e) } finally { e.next() }
@@ -1556,3 +1557,140 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/musicbrainz/match', (c) => {
     return c.json(200, { dryRun, bounded: ids.length, results, report: { processed, deferred: results.filter((row) => row.decision === 'deferred').length, cursor: retryable && job ? num(job, 'cursor') : ids.length, resumable: Boolean(job), retryable } })
   } catch (_) { return json(c, 503, 'musicbrainz_match_failed', 'MusicBrainz matching failed') }
 })
+// Operator-assumed legacy playlist reconciliation. Rows are selected by the server and
+// bound to one durable digest; the browser never supplies canonical identity or song IDs.
+const LEGACY_PLAYLIST_ID = 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R'
+const LEGACY_BINDING_KIND = 'operator_assumed_legacy_playlist'
+const LEGACY_BATCH_SIZE = 20
+const LEGACY_LEASE_MS = 6 * 60 * 1000
+const LEGACY_CACHE_MS = 7 * 24 * 60 * 60 * 1000
+
+function legacySleep(ms) {
+  try { if (typeof sleep === 'function') sleep(ms) } catch (_) {}
+}
+
+function legacyScopeRows(q) {
+  const songs = $app.findRecordsByFilter(
+    'karaoke_songs',
+    'source = {:source} && playlist_source_id = {:playlist} && (review_status = {:needs} || review_status = {:unreviewed}) && identity_status = {:missing}',
+    '+playlist_position,+id',
+    100000,
+    0,
+    { source: 'youtube_playlist', playlist: LEGACY_PLAYLIST_ID, needs: 'needs_review', unreviewed: 'unreviewed' },
+  )
+  return songs.map((song) => ({
+    id: q.id(song),
+    youtubeId: q.str(song, 'youtube_id'),
+    videoTitle: q.str(song, 'video_title'),
+    playlistPosition: q.num(song, 'playlist_position'),
+    source: q.str(song, 'source'),
+    playlistSourceId: q.str(song, 'playlist_source_id'),
+    reviewStatus: q.str(song, 'review_status'),
+    identityStatus: q.str(song, 'identity_status'),
+  }))
+}
+
+function legacyAcquireRate(q) {
+  let acquired = false
+  try {
+    $app.runInTransaction((tx) => {
+      let gate = null
+      try { gate = tx.findFirstRecordByFilter('karaoke_musicbrainz_cache', 'cache_key = {:key}', { key: '__rate__' }) } catch (_) {}
+      const until = gate && q.str(gate, 'expires_at') ? Date.parse(q.str(gate, 'expires_at')) : 0
+      if (until > Date.now()) throw new Error('rate_limited')
+      if (!gate) { gate = new Record(tx.findCollectionByNameOrId('karaoke_musicbrainz_cache')); q.set(gate, 'cache_key', '__rate__') }
+      q.set(gate, 'updated_at', q.now()); q.set(gate, 'expires_at', q.future(1000)); tx.save(gate); acquired = true
+    })
+  } catch (error) { if (error.message !== 'rate_limited') throw error }
+  return acquired
+}
+
+function legacyFetch(q, matcher, queryText) {
+  const response = $http.send({ url: `${matcher.MB_ROOT}/recording?query=${encodeURIComponent(queryText)}&fmt=json&limit=10`, method: 'GET', headers: { Accept: 'application/json', 'User-Agent': matcher.USER_AGENT }, timeout: 15 })
+  try { if (typeof sleep === 'function') sleep(1000) } catch (_) {}
+  const status = Number(response?.statusCode || response?.status || 0)
+  if (!response || status < 200 || status >= 300) throw new Error('musicbrainz_http_error')
+  let payload
+  try { payload = JSON.parse(String(response.body || '')) } catch (_) { throw new Error('musicbrainz_json_error') }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Array.isArray(payload.recordings)) throw new Error('musicbrainz_payload_invalid')
+  return payload
+}
+
+function legacySaveJob(q, job, token, update) {
+  let saved = false
+  try { $app.runInTransaction((tx) => { const current = tx.findRecordById('karaoke_legacy_playlist_jobs', q.id(job)); if (!current || q.str(current, 'lease_token') !== token) throw new Error('lease_lost'); update(current); tx.save(current); saved = true }) } catch (_) {}
+  return saved
+}
+
+function legacyRunJob() {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue
+  let job = null
+  try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'status != {:complete}', { complete: 'complete' }) } catch (_) { return }
+  if (!job || (q.str(job, 'lease_expires_at') && Date.parse(q.str(job, 'lease_expires_at')) > Date.now())) return
+  const token = `${Date.now()}-${q.hash(String(Math.random()))}`
+  try {
+    $app.runInTransaction((tx) => {
+      const current = tx.findRecordById('karaoke_legacy_playlist_jobs', q.id(job));
+      if (!current || (q.str(current, 'lease_expires_at') && Date.parse(q.str(current, 'lease_expires_at')) > Date.now())) throw new Error('leased')
+      q.set(current, 'status', 'running'); q.set(current, 'lease_token', token); q.set(current, 'lease_expires_at', q.future(LEGACY_LEASE_MS)); q.set(current, 'updated_at', q.now()); tx.save(current); job = current
+    })
+  } catch (_) { return }
+  const rows = q.jsonValue(job, 'rows_json', []); const report = q.jsonValue(job, 'report_json', []) || []; let cursor = q.num(job, 'cursor')
+  try {
+    const matcher = require(__hooks + '/../catalog/musicbrainz-identity.cjs')
+    for (let end = Math.min(rows.length, cursor + LEGACY_BATCH_SIZE); cursor < end; cursor++) {
+      const leaseCheck = $app.findRecordById('karaoke_legacy_playlist_jobs', q.id(job))
+      if (!leaseCheck || q.str(leaseCheck, 'lease_token') !== token || (q.str(leaseCheck, 'lease_expires_at') && Date.parse(q.str(leaseCheck, 'lease_expires_at')) <= Date.now())) break
+      const row = rows[cursor]; const outcome = { id: row.id, decision: 'deferred' }
+      try {
+        const song = $app.findRecordById('karaoke_songs', row.id)
+        if (!song || q.str(song, 'source') !== 'youtube_playlist' || q.str(song, 'playlist_source_id') !== LEGACY_PLAYLIST_ID || !['needs_review', 'unreviewed'].includes(q.str(song, 'review_status')) || q.str(song, 'identity_status') !== 'missing') throw new Error('scope_mismatch')
+        const rowDigest = q.hash(q.serializeJson(row));
+        if (q.str(song, 'binding_input_digest') === q.str(job, 'input_digest') && q.str(song, 'binding_row_digest') === rowDigest) { outcome.decision = 'replay'; report.push(outcome); if (!legacySaveJob(q, job, token, (current) => { q.set(current, 'cursor', cursor + 1); q.setJson(current, 'report_json', report); q.set(current, 'updated_at', q.now()) })) break; continue }
+        const parsed = matcher.parseYouTubeTitle(q.str(song, 'video_title')); if (parsed.status !== 'parsed') throw new Error('title_unparsed')
+        const queryText = `recording:"${parsed.title}" AND artist:"${parsed.artist}"`; const cacheKey = `mb:recording:${matcher.normalize(queryText)}`; let payload = null
+        let cached = null
+        try { cached = $app.findFirstRecordByFilter('karaoke_musicbrainz_cache', 'cache_key = {:key}', { key: cacheKey }); if (cached && (!q.str(cached, 'expires_at') || Date.parse(q.str(cached, 'expires_at')) > Date.now())) payload = q.jsonValue(cached, 'payload_json', null) } catch (_) {}
+        if (!payload) { if (!legacyAcquireRate(q)) { outcome.reason = 'rate_limited'; report.push(outcome); break } payload = legacyFetch(q, matcher, queryText); const cache = cached || new Record($app.findCollectionByNameOrId('karaoke_musicbrainz_cache')); q.set(cache, 'cache_key', cacheKey); q.setJson(cache, 'payload_json', payload); q.set(cache, 'updated_at', q.now()); q.set(cache, 'expires_at', q.future(LEGACY_CACHE_MS)); $app.save(cache) }
+        const match = matcher.evaluateCandidates(parsed, payload.recordings)
+        if (match.decision !== 'matched') throw new Error(match.reason || 'low_confidence')
+        let applied = false; let driftReason = ''
+        $app.runInTransaction((tx) => {
+          const current = tx.findRecordById('karaoke_songs', row.id)
+          const exact = current && q.str(current, 'youtube_id') === row.youtubeId && q.str(current, 'video_title') === row.videoTitle && q.num(current, 'playlist_position') === row.playlistPosition && q.str(current, 'source') === row.source && q.str(current, 'playlist_source_id') === row.playlistSourceId && q.str(current, 'review_status') === row.reviewStatus && q.str(current, 'identity_status') === row.identityStatus
+          if (!exact) { driftReason = 'input_drift'; return }
+          if (q.str(current, 'binding_input_digest') === q.str(job, 'input_digest')) { driftReason = 'already_bound'; return }
+          q.correctCatalogIdentity(tx, current, { title: match.recording.title, artist: match.recording.artist, reason: match.reason, actorId: q.str(job, 'initiated_by'), at: q.now(), source: 'musicbrainz', recordingId: match.recording.id, runnerUp: match.runnerUp || null, matchReason: match.reason, matchConfidence: match.confidence || 0, provenance: { bindingKind: LEGACY_BINDING_KIND, playlistId: LEGACY_PLAYLIST_ID, inputDigest: q.str(job, 'input_digest'), rowDigest, query: queryText, source: 'musicbrainz' } })
+          q.set(current, 'binding_kind', LEGACY_BINDING_KIND); q.set(current, 'binding_playlist_id', LEGACY_PLAYLIST_ID); q.set(current, 'binding_input_digest', q.str(job, 'input_digest')); q.set(current, 'binding_row_digest', rowDigest); tx.save(current); applied = true
+        })
+        if (!applied) { outcome.reason = driftReason || 'input_drift' } else { outcome.decision = 'matched'; outcome.reason = match.reason; outcome.confidence = match.confidence || 0; outcome.recordingId = match.recording.id }
+      } catch (error) { outcome.reason = error.message === 'identity_conflict' ? 'canonical_collision' : error.message || 'deferred' }
+      report.push(outcome); if (!legacySaveJob(q, job, token, (current) => { q.set(current, 'cursor', cursor + 1); q.setJson(current, 'report_json', report); q.set(current, 'updated_at', q.now()) })) break
+    }
+    legacySaveJob(q, job, token, (current) => { q.set(current, 'status', q.num(current, 'cursor') >= rows.length ? 'complete' : 'pending'); q.set(current, 'lease_token', ''); q.set(current, 'lease_expires_at', ''); q.setJson(current, 'report_json', report) })
+  } catch (error) { legacySaveJob(q, job, token, (current) => { q.set(current, 'status', 'failed'); q.set(current, 'last_error', String(error.message || 'job_failed').slice(0, 160)); q.set(current, 'lease_token', ''); q.set(current, 'lease_expires_at', '') }) }
+}
+
+routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue; const actor = q.auth(c); if (!q.tablet(actor)) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  let rows; try { rows = q.legacyScopeRows(q) } catch (_) { return q.json(c, 503, 'legacy_scope_unavailable', 'Legacy playlist scope unavailable') }
+  if (!rows.length) return q.json(c, 404, 'legacy_scope_empty', 'No retained legacy playlist rows require review')
+  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${inputDigest}`); let job = null
+  try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
+  if (!job) { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) }
+  return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length })
+})
+
+routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue; if (!q.tablet(q.auth(c))) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required'); const key = String(q.query(c, 'jobKey') || ''); if (!key) return q.json(c, 422, 'job_key_required', 'jobKey is required')
+  try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), report: q.jsonValue(job, 'report_json', []) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
+})
+
+globalThis.__partyQueue.legacyPlaylistId = LEGACY_PLAYLIST_ID
+globalThis.__partyQueue.legacyBindingKind = LEGACY_BINDING_KIND
+globalThis.__partyQueue.legacyRunJob = legacyRunJob
+globalThis.__partyQueue.legacyScopeRows = legacyScopeRows
+try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => { try { require(__hooks + '/party_queue.pb.js') } catch (_) {}; globalThis.__partyQueue.legacyRunJob() }) } catch (_) {}

@@ -11,6 +11,8 @@ import {
   loadActiveParty,
   loadCatalog,
   loadCatalogReport,
+  assumeLegacyPlaylist,
+  loadLegacyPlaylistJob,
   importTrustedPlaylist,
   revalidateTrustedPlaylist,
   loadNext,
@@ -33,6 +35,7 @@ import {
   type PlaylistUnavailableReasons,
   type TabletQueueItem,
   type TabletStatus,
+  type LegacyPlaylistJob,
 } from '@/services/tabletApi'
 
 const storageKey = 'karaoke:tablet:session'
@@ -77,6 +80,9 @@ const publicPlaylistContinuation = ref<string | null>(null)
 const approvalSelection = ref<ApprovalSelectionSnapshot | null>(null)
 const approvalConfirmOpen = ref(false)
 const musicBrainzResult = ref<Awaited<ReturnType<typeof runMusicBrainzMatch>> | null>(null)
+const legacyJob = ref<LegacyPlaylistJob | null>(null)
+const legacyLoading = ref(false)
+let legacyPollTimer: ReturnType<typeof setTimeout> | undefined
 const musicBrainzBindingGroup = computed(() => {
   const groups = new Map<string, { sourceId: string; snapshotFingerprint: string; rows: CatalogSong[]; firstIndex: number }>()
   catalog.value
@@ -577,6 +583,26 @@ async function replaceSong(song: CatalogSong) {
   }
 }
 
+async function pollLegacyJob() {
+  if (!token.value || !legacyJob.value?.jobKey) return
+  try {
+    legacyJob.value = await loadLegacyPlaylistJob(token.value, legacyJob.value.jobKey)
+    if (!['complete', 'failed'].includes(legacyJob.value.status)) legacyPollTimer = setTimeout(pollLegacyJob, 3000)
+  } catch (cause) { message.value = explain(cause, 'Could not refresh legacy playlist job status.'); error.value = true }
+}
+
+async function startLegacyJob() {
+  if (!token.value || legacyLoading.value) return
+  legacyLoading.value = true
+  try {
+    legacyJob.value = await assumeLegacyPlaylist(token.value)
+    message.value = 'Operator-assumed legacy playlist reconciliation started.'
+    error.value = false
+    await pollLegacyJob()
+  } catch (cause) { message.value = explain(cause, 'Could not start legacy playlist reconciliation.'); error.value = true }
+  finally { legacyLoading.value = false }
+}
+
 async function refresh() {
   if (!token.value || !partyId.value) return
   try {
@@ -806,6 +832,8 @@ onMounted(async () => {
   }
   refreshTimer = setInterval(refresh, 15000)
 })
+
+onUnmounted(() => { if (legacyPollTimer) clearTimeout(legacyPollTimer) })
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
 })
@@ -940,6 +968,16 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="playlist-import">
+          <div class="legacy-runner" aria-labelledby="legacy-runner-heading">
+            <h3 id="legacy-runner-heading">Legacy playlist identity reconciliation</h3>
+            <p>Source scope is operator-assumed for playlist <code>PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R</code>, not a fetched playlist snapshot.</p>
+            <p>Only high-confidence canonical identity matches are changed automatically. All other results remain <code>needs_review</code> or ineligible.</p>
+            <button type="button" @click="startLegacyJob" :disabled="legacyLoading">{{ legacyJob && !['complete', 'failed'].includes(legacyJob.status) ? 'Reconcile running…' : 'Start operator-assumed reconciliation' }}</button>
+            <div v-if="legacyJob" role="status">
+              <p>Status: {{ legacyJob.status }} · {{ legacyJob.cursor }}/{{ legacyJob.count || legacyJob.report?.length || 0 }} processed</p>
+              <ul><li v-for="(row, index) in (legacyJob.report || [])" :key="`${row.id}-${index}`">{{ row.decision }} · {{ row.reason || 'no reason' }}</li></ul>
+            </div>
+          </div>
           <label for="public-playlist">Public YouTube playlist URL or ID</label>
           <input id="public-playlist" v-model="publicPlaylistInput" placeholder="https://youtube.com/playlist?list=…" @keyup.enter="previewPublic" />
           <button type="button" @click="previewPublic" :disabled="catalogLoading || !publicPlaylistInput.trim()">Preview public playlist</button>

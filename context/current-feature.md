@@ -50,3 +50,10 @@ In Progress
   hook syntax and diff checks pass. Pinned PocketBase 0.39.7 route validation is blocked locally
   because no `POCKETBASE_BIN` is installed. An existing checkpoint-health regex test is unrelated
   to this feature and continues to fail against the unchanged baseline route.
+- 2026-07-25: The operator explicitly authorized an assumed legacy scope for
+  `PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R`. Added a server-selected, durable, cron-resumed
+  reconciliation job that records this as `operator_assumed_legacy_playlist` rather than a
+  YouTube-fetched snapshot. It only applies existing high-confidence MusicBrainz decisions, keeps
+  every correction `needs_review`/ineligible, and persistently defers all ambiguous rows. Local
+  focused matcher/job/scope tests pass 10/10, focused admin tests pass 12/12, and the production
+  build passes; pinned runtime validation remains pending deployment because no local binary exists.

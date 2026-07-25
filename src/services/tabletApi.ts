@@ -122,6 +122,18 @@ export type PlaylistUnavailableReasons = {
   uploadStatus: Record<string, number>
 }
 
+export type LegacyPlaylistJob = {
+  jobKey: string
+  playlistId: string
+  bindingKind?: string
+  inputDigest?: string
+  status: string
+  cursor: number
+  count?: number
+  initiatedBy?: string
+  report?: Array<{ id: string; decision: string; reason?: string; confidence?: number; recordingId?: string }>
+}
+
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('accept', 'application/json')
@@ -288,6 +300,15 @@ export function correctCatalogIdentity(
 
 export function loadCatalogReport(token: string) {
   return request<CatalogReport>('/api/karaoke/tablet/catalog/report', {}, token)
+}
+
+export function assumeLegacyPlaylist(token: string) {
+  return request<LegacyPlaylistJob>('/api/karaoke/tablet/catalog/legacy-playlist/assume', { method: 'POST', body: '{}' }, token)
+}
+
+export function loadLegacyPlaylistJob(token: string, jobKey: string) {
+  const params = new URLSearchParams({ jobKey })
+  return request<LegacyPlaylistJob>(`/api/karaoke/tablet/catalog/legacy-playlist/assume?${params}`, {}, token)
 }
 
 export type MusicBrainzMatchResponse = {
