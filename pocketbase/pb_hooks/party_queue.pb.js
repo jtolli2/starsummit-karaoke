@@ -1058,7 +1058,22 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   // from a bounded count query over the same filter.
   const totalItems = allRows.length
   const totalPages = Math.max(1, Math.ceil(totalItems / perPage))
-  return c.json(200, { page, perPage, totalItems, totalPages, songs: sliced.map((song) => ({ id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist'), eligible: song.getBool ? song.getBool('eligible') : false, classification: str(song, 'classification') || 'unknown', classificationConfidence: num(song, 'classification_confidence'), alternativeCount: Array.isArray(jsonValue(song, 'alternatives_json', [])) ? jsonValue(song, 'alternatives_json', []).length : 0, classificationReason: str(song, 'eligibility_reason'), approvalReason: catalogApprovalReason(song, $app) || null, reviewState: str(song, 'review_status') || 'unreviewed', provenance: str(song, 'provenance'), source: str(song, 'source'), sourceId: str(song, 'source_id'), sourceList: str(song, 'source_list'), sourceRank: num(song, 'source_rank'), playlistSourceId: str(song, 'playlist_source_id'), playlistSnapshotFingerprint: str(song, 'playlist_snapshot_fingerprint'), identityStatus: str(song, 'identity_status') || 'missing', identityReason: str(song, 'identity_reason'), videoTitle: str(song, 'video_title'), videoChannelTitle: str(song, 'video_channel_title'), videoChannelId: str(song, 'video_channel_id'), replacementYoutubeId: str(song, 'replacement_youtube_id'), importedAt: str(song, 'imported_at') })) })
+  const auditTail = (song) => { const events = jsonValue(song, 'review_history_json', []); return (Array.isArray(events) ? events : []).slice(-5).map((event) => ({ action: String(event?.action || 'unknown').slice(0, 80), at: String(event?.at || '').slice(0, 40), state: String(event?.state || event?.status || '').slice(0, 40), reason: String(event?.reason || '').slice(0, 160) })) }
+  const view = (song) => { const audit = auditTail(song); return { id: id(song), youtubeId: str(song, 'youtube_id'), title: str(song, 'title'), artist: str(song, 'artist'), eligible: song.getBool ? song.getBool('eligible') : false, classification: str(song, 'classification') || 'unknown', classificationConfidence: num(song, 'classification_confidence'), alternativeCount: Array.isArray(jsonValue(song, 'alternatives_json', [])) ? jsonValue(song, 'alternatives_json', []).length : 0, classificationReason: str(song, 'eligibility_reason'), approvalReason: catalogApprovalReason(song, $app) || null, reviewState: str(song, 'review_status') || 'unreviewed', auditTail: audit, auditAction: audit.length ? audit[audit.length - 1].action : null, updatedAt: str(song, 'updated'), provenance: str(song, 'provenance'), source: str(song, 'source'), sourceId: str(song, 'source_id'), sourceList: str(song, 'source_list'), sourceRank: num(song, 'source_rank'), playlistSourceId: str(song, 'playlist_source_id'), playlistSnapshotFingerprint: str(song, 'playlist_snapshot_fingerprint'), identityStatus: str(song, 'identity_status') || 'missing', identityReason: str(song, 'identity_reason'), videoTitle: str(song, 'video_title'), videoChannelTitle: str(song, 'video_channel_title'), videoChannelId: str(song, 'video_channel_id'), replacementYoutubeId: str(song, 'replacement_youtube_id'), importedAt: str(song, 'imported_at') } }
+  return c.json(200, { page, perPage, totalItems, totalPages, songs: sliced.map(view) })
+})
+
+routerAdd('GET', '/api/karaoke/tablet/catalog/{id}/audit', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue
+  if (!q.tablet(q.auth(c))) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  try {
+    const song = $app.findRecordById('karaoke_songs', c.request.pathValue('id'))
+    if (!song) return q.json(c, 404, 'song_not_found', 'Song was not found')
+    const events = q.jsonValue(song, 'review_history_json', [])
+    const tail = (Array.isArray(events) ? events : []).slice(-5).map((event) => ({ action: String(event?.action || 'unknown').slice(0, 80), at: String(event?.at || '').slice(0, 40), state: String(event?.state || event?.status || '').slice(0, 40), reason: String(event?.reason || '').slice(0, 160) }))
+    return c.json(200, { id: q.id(song), title: q.str(song, 'title'), artist: q.str(song, 'artist'), reviewState: q.str(song, 'review_status') || 'unreviewed', eligible: Boolean(song.getBool ? song.getBool('eligible') : false), auditTail: tail, auditAction: tail.length ? tail[tail.length - 1].action : null, updatedAt: q.str(song, 'updated') })
+  } catch (_) { return q.json(c, 500, 'catalog_audit_failed', 'Catalog audit could not be loaded') }
 })
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/import', (c) => {
@@ -1743,9 +1758,8 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
 
 routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const q = globalThis.__partyQueue; if (!q.tablet(q.auth(c))) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required'); const key = String(q.query(c, 'jobKey') || ''); if (!key) return q.json(c, 422, 'job_key_required', 'jobKey is required')
-  try { q.legacyRunJob() } catch (_) {}
-  try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); const report = q.jsonValue(job, 'report_json', []); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), policyVersion: q.str(job, 'policy_version'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), count: q.jsonValue(job, 'rows_json', []).length, inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), summary: legacyReportSummary(report), report }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
+  const q = globalThis.__partyQueue; if (!q.tablet(q.auth(c))) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required'); const key = String(q.query(c, 'jobKey') || '')
+  try { const job = key ? $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key} && policy_version = {:policy}', { key, policy: q.legacyPolicyVersion }) : ($app.findRecordsByFilter('karaoke_legacy_playlist_jobs', 'policy_version = {:policy}', '-updated_at', 1, 0, { policy: q.legacyPolicyVersion }) || [])[0]; if (!job) throw new Error('missing'); const report = q.jsonValue(job, 'report_json', []); return c.json(200, { jobKey: q.str(job, 'job_key'), playlistId: q.str(job, 'playlist_id'), policyVersion: q.str(job, 'policy_version'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), total: q.jsonValue(job, 'rows_json', []).length, reportCount: Array.isArray(report) ? report.length : 0, updatedAt: q.str(job, 'updated_at'), summary: legacyReportSummary(report) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
 })
 
 // Cron callbacks run in a bare VM, while request callbacks retain the initial

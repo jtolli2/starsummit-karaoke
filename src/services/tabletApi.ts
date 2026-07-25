@@ -51,6 +51,9 @@ export type CatalogSong = {
   reviewState: 'unreviewed' | 'needs_review' | 'approved' | 'rejected'
   approvalReason?: string | null
   reviewNote?: string
+  auditAction?: string | null
+  auditTail?: Array<{ action: string; at?: string; state?: string; reason?: string }>
+  updatedAt?: string
 }
 
 export type CatalogReport = {
@@ -126,13 +129,16 @@ export type PlaylistUnavailableReasons = {
 export type LegacyPlaylistJob = {
   jobKey: string
   playlistId: string
+  policyVersion?: string
   bindingKind?: string
   inputDigest?: string
   status: string
   cursor: number
   count?: number
-  initiatedBy?: string
-  report?: Array<{ id: string; decision: string; reason?: string; confidence?: number; recordingId?: string }>
+  total?: number
+  reportCount?: number
+  updatedAt?: string
+  summary?: Record<string, unknown>
 }
 
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -345,6 +351,10 @@ export function correctCatalogIdentity(
 
 export function loadCatalogReport(token: string) {
   return request<CatalogReport>('/api/karaoke/tablet/catalog/report', {}, token)
+}
+
+export function loadCatalogAudit(token: string, id: string) {
+  return request<{ id: string; title: string; artist: string; reviewState: string; eligible: boolean; auditAction?: string | null; auditTail: CatalogSong['auditTail']; updatedAt?: string }>(`/api/karaoke/tablet/catalog/${encodeURIComponent(id)}/audit`, {}, token)
 }
 
 export function assumeLegacyPlaylist(token: string) {

@@ -1103,8 +1103,7 @@ onUnmounted(() => {
             <p>Only high-confidence canonical identity matches are changed automatically. All other results remain <code>needs_review</code> or ineligible.</p>
             <button type="button" @click="startLegacyJob" :disabled="legacyLoading">{{ legacyJob && !['complete', 'failed'].includes(legacyJob.status) ? 'Reconcile running…' : 'Start operator-assumed reconciliation' }}</button>
             <div v-if="legacyJob" role="status">
-              <p>Status: {{ legacyJob.status }} · {{ legacyJob.cursor }}/{{ legacyJob.count || legacyJob.report?.length || 0 }} processed</p>
-              <ul><li v-for="(row, index) in (legacyJob.report || [])" :key="`${row.id}-${index}`">{{ row.decision }} · {{ row.reason || 'no reason' }}</li></ul>
+              <p>Status: {{ legacyJob.status }} · {{ legacyJob.cursor }}/{{ legacyJob.total || legacyJob.count || 0 }} processed · {{ legacyJob.reportCount || 0 }} reports · policy {{ legacyJob.policyVersion || 'unknown' }} · updated {{ legacyJob.updatedAt || 'unknown' }}</p>
             </div>
           </div>
           <label for="public-playlist">Public YouTube playlist URL or ID</label>
@@ -1224,6 +1223,7 @@ onUnmounted(() => {
                     Math.round((song.classificationConfidence || 0) * 100)
                   }}%) · {{ song.classificationReason || 'no reason' }}</small
                 >
+                <small>Eligibility: {{ song.eligible === true ? 'eligible' : 'ineligible' }} · Last audit: {{ song.auditAction || 'none' }} · {{ song.updatedAt || 'unknown' }}</small>
                 <div class="identity-correction">
                   <input
                     v-model="correction[song.id]!.title"
