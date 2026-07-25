@@ -13,6 +13,7 @@ RUN apk add --no-cache ca-certificates curl \
 WORKDIR /pb
 COPY pb_migrations /pb/pb_migrations
 COPY pb_hooks /pb/pb_hooks
+COPY catalog /pb/catalog
 COPY README.md /pb/README.md
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

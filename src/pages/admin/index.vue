@@ -77,14 +77,25 @@ const publicPlaylistContinuation = ref<string | null>(null)
 const approvalSelection = ref<ApprovalSelectionSnapshot | null>(null)
 const approvalConfirmOpen = ref(false)
 const musicBrainzResult = ref<Awaited<ReturnType<typeof runMusicBrainzMatch>> | null>(null)
-const musicBrainzIds = computed(() => catalog.value.filter((song) => song.source === 'youtube_playlist' && song.identityStatus === 'missing').slice(0, 20))
+const musicBrainzBindingGroup = computed(() => {
+  const groups = new Map<string, { sourceId: string; snapshotFingerprint: string; rows: CatalogSong[]; firstIndex: number }>()
+  catalog.value
+    .filter((song) => song.source === 'youtube_playlist' && song.identityStatus === 'missing')
+    .forEach((song, index) => {
+      const sourceId = song.playlistSourceId
+      const snapshotFingerprint = song.playlistSnapshotFingerprint
+      if (!sourceId || !snapshotFingerprint || !/^[a-f0-9]{64}$/i.test(snapshotFingerprint)) return
+      const key = `${sourceId}\u0000${snapshotFingerprint.toLowerCase()}`
+      const group = groups.get(key)
+      if (group) group.rows.push(song)
+      else groups.set(key, { sourceId, snapshotFingerprint, rows: [song], firstIndex: index })
+    })
+  return [...groups.values()].sort((a, b) => b.rows.length - a.rows.length || a.firstIndex - b.firstIndex)[0] || null
+})
+const musicBrainzIds = computed(() => musicBrainzBindingGroup.value?.rows.slice(0, 20) || [])
 const musicBrainzBinding = computed(() => {
-  const rows = musicBrainzIds.value
-  const sourceId = rows[0]?.playlistSourceId
-  const snapshotFingerprint = rows[0]?.playlistSnapshotFingerprint
-  return sourceId && snapshotFingerprint && /^[a-f0-9]{64}$/i.test(snapshotFingerprint) && rows.every((row) => row.playlistSourceId === sourceId && row.playlistSnapshotFingerprint === snapshotFingerprint)
-    ? { sourceId, snapshotFingerprint }
-    : null
+  const group = musicBrainzBindingGroup.value
+  return group ? { sourceId: group.sourceId, snapshotFingerprint: group.snapshotFingerprint } : null
 })
 const approvalOperationId = ref('')
 const playlistContinuation = ref<{ sourceKey: string; pageToken: string } | null>(null)
@@ -971,9 +982,10 @@ onUnmounted(() => {
           <div class="musicbrainz-review" aria-labelledby="musicbrainz-heading">
             <h3 id="musicbrainz-heading">Canonical identity matcher</h3>
             <p>Runs only on unresolved playlist records shown here. Dry run only; results never auto-approve songs.</p>
+            <p v-if="musicBrainzBinding">Scoped batch: {{ musicBrainzIds.length }} record{{ musicBrainzIds.length === 1 ? '' : 's' }} · source {{ musicBrainzBinding.sourceId }} · snapshot {{ musicBrainzBinding.snapshotFingerprint }}</p>
+            <p v-else>Apply is disabled because no unresolved rows share a valid immutable playlist snapshot.</p>
             <button type="button" class="quiet" @click="runScopedMusicBrainzDryRun" :disabled="catalogLoading">Run bounded dry run (max 20)</button>
             <button type="button" class="quiet" @click="applyScopedMusicBrainz" :disabled="catalogLoading || !musicBrainzBinding">Apply bounded matches</button>
-            <p v-if="!musicBrainzBinding">Apply is disabled until all scoped rows share the same immutable playlist snapshot.</p>
             <div v-if="musicBrainzResult" role="status">
               <p>{{ musicBrainzResult.report.processed }} processed · {{ musicBrainzResult.report.deferred }} deferred · {{ musicBrainzResult.report.retryable ? 'retryable' : 'complete' }}<span v-if="musicBrainzResult.report.replay"> · cached replay</span></p>
               <ul><li v-for="row in musicBrainzResult.results" :key="row.id">{{ row.decision }} · {{ row.reason }}</li></ul>
