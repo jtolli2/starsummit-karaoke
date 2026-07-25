@@ -1,5 +1,26 @@
 # Feature History
 
+## 2026-07-25 — One-Tap Controller Enrollment and Pairing Wizard
+
+- Added protected tablet-admin controller enrollment with five-minute operator-scoped grants,
+  hash-only persisted one-time and manual-code material, transactional single redemption/revocation,
+  host and destination binding, sanitized grant states, and heartbeat-authoritative connection
+  status. The web wizard keeps raw launch material out of rendered markup and makes Lounge
+  TV-code pairing an explicitly separate optional step.
+- Added package-targeted companion enrollment links and a manual fallback. The companion validates
+  the expected server and device before deep-link redemption, retains controller credentials only
+  in its Android Keystore store, safely permits a retry after a failed manual attempt, and restarts
+  its controller loop when new credentials replace an existing session.
+- Local validation passed protocol contracts 9/9, pinned PocketBase 0.39.7 integration 1/1,
+  focused Vue tests 13/13, Vue build, and Android debug tests/APK assembly. Retained staging
+  deployment `rs48m6eyxs8h7ab197mih43z` imported `1cc4d2a9a3d8928be8ab43a309a6d700546901c6`;
+  health checks passed. The retained Fire tablet installed the final APK and its authoritative
+  admin status became connected after fresh grant redemption and heartbeat.
+- Preserved the external PocketBase volume, all matcher records/hooks, `mb-majority-v2`, and the
+  PocketBase query-marker cron wake. Job `sqwd85vrfrwrzym` advanced from pending 640/1024 at
+  2026-07-25T07:58:05Z before deployment to pending 700/1024 at 2026-07-25T08:01:05.857Z after.
+  No catalog, party, queue, Lounge, Wi-Fi, or destructive mutation was performed.
+
 > Append-only record of completed features and fixes. Add a dated, concise entry after completion; do not edit, reorder, or remove earlier entries.
 
 ## Entries

@@ -529,6 +529,33 @@ class ControllerProtocolTest {
   }
 
   @Test
+  fun bridgeCloseClosesTheRetainedRealtimeConnection() = runTest {
+    var closes = 0
+    val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
+    val api = object : ControllerApi {
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun authenticate(credentials: ControllerCredentials) = auth
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long) = emptyList<ControllerCommand>()
+      override suspend fun acknowledge(auth: ControllerAuth, session: ControllerSession, command: ControllerCommand, success: Boolean, errorCode: String?) = Unit
+      override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) = Unit
+    }
+    val realtime = object : ControllerRealtimeTransport {
+      override suspend fun connect(auth: ControllerAuth) = object : ControllerRealtimeConnection {
+        override val events: Flow<PocketBaseRealtimeEvent> = flowOf(PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"client\"}"))
+        override suspend fun subscribe(clientId: String, collection: String) = Unit
+        override fun close() { closes++ }
+      }
+    }
+    val bridge = PocketBaseControllerBridge(api, realtime, InMemoryProgressStore(), ControllerCredentials("https://karaoke.example", "key", "secret"), now = { future - 1 })
+
+    bridge.establish()
+    bridge.close()
+
+    assertEquals(1, closes)
+  }
+
+  @Test
   fun bridgeFallsBackToAuthoritativePollingForRealtimeAuthorizationMismatch() = runTest {
     val callbacks = mutableListOf<String>()
     val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")

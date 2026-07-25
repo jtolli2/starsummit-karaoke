@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -53,3 +53,13 @@ In Progress
 - 2026-07-25: Local evidence passed: controller protocol contracts 9/9, pinned PocketBase 0.39.7
   integration 1/1, focused admin tests 13/13, Vue production build, and Android debug unit tests
   plus APK assembly. Independent review approved after adversarial replay/revoke/deep-link checks.
+- 2026-07-25: Retained staging deployment `rs48m6eyxs8h7ab197mih43z` imported
+  `1cc4d2a9a3d8928be8ab43a309a6d700546901c6` with PocketBase 0.39.7 and the existing external
+  volume unchanged. The durable `sqwd85vrfrwrzym` matcher was recorded pre-deploy as pending
+  at 640/1024 (2026-07-25T07:58:05Z) and post-deploy as pending at 700/1024
+  (2026-07-25T08:01:05.857Z), proving the same job resumed and advanced on cron.
+- 2026-07-25: Installed the final Android debug APK on the retained Fire tablet and redeemed a
+  fresh manual fallback grant. Authoritative `/admin` status reported `connected · Starsummit
+  tablet` after restart recovery and heartbeat. The Android-only follow-ups retain the retry field
+  after a failed attempt and restart the controller loop after storing new Keystore credentials;
+  neither mutates the deployed matcher.

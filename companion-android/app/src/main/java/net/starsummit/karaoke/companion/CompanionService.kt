@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
@@ -85,14 +86,15 @@ class CompanionService : Service() {
     /** Native enrollment entry point; grant and returned secret never enter UI state or logs. */
     fun enrollController(baseUrl: String, grant: String, deviceName: String = "Starsummit tablet", serverHost: String = "", destination: String = "") {
       scope.launch {
-        runCatching { controllerApi.enroll(baseUrl, grant, deviceName, serverHost, destination) }
-          .onSuccess {
-            controllerStore.saveCredentials(it)
-            controllerJob?.cancel()
-            controllerJob = null
-            startControllerLoop()
-          }
-          .onFailure { diagnosticsStore.error(it, setErrorState = false) }
+        val credentials = runCatching { controllerApi.enroll(baseUrl, grant, deviceName, serverHost, destination) }
+          .getOrElse { failure -> diagnosticsStore.error(failure, setErrorState = false); return@launch }
+        controllerStore.saveCredentials(credentials)
+        controllerBridge?.close()
+        controllerBridge = null
+        val previousControllerJob = controllerJob
+        controllerJob = null
+        previousControllerJob?.cancelAndJoin()
+        startControllerLoop()
       }
     }
   }
@@ -209,6 +211,9 @@ class CompanionService : Service() {
           diagnosticsStore.error(failure, setErrorState = false)
           delay(ControllerReconnectPolicy.delayMillis(attempt))
           attempt = (attempt + 1).coerceAtMost(ControllerReconnectPolicy.MAX_ATTEMPTS)
+        } finally {
+          bridge.close()
+          if (controllerBridge === bridge) controllerBridge = null
         }
       }
     }
