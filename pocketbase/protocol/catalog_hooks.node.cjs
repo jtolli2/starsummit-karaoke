@@ -55,11 +55,15 @@ test('fallback search normalizes, bounds, classifies, and caches durable candida
   assert.ok(hook.includes("let song = null; try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}"))
   assert.ok(hook.includes("let duplicate = null; try { duplicate = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && active_song_key = {:key}', { party: q.id(party), key: youtubeId }) } catch (_) {}"))
   assert.ok(hook.includes("let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}'"))
+  assert.match(hook, /return c\.json\(replayed \? 200 : 201, result\)/)
   assert.match(hook, /reason\.toLowerCase\(\)\.includes\('unique'\)/)
   assert.match(hook, /return c\.json\(200, replay\)/)
   assert.match(hook, /if \(retry\) return c\.json\(replayed \? 200 : 201, retry\)/)
-  assert.match(hook, /\['party_expired', 'fallback_candidate_unavailable', 'rate_limited'\]\.includes\(retryReason\)/)
+  assert.match(hook, /\['party_expired', 'fallback_candidate_unavailable', 'rate_limited', 'duplicate_song'\]\.includes\(retryReason\)/)
   assert.ok(hook.includes("if (!song) { song = new Record(tx.findCollectionByNameOrId('karaoke_songs'))"))
+  assert.match(hook, /set\(song, 'mb_match_status', 'not_attempted'\)/)
+  assert.match(hook, /fallback_persistence_unavailable/)
+  assert.match(hook, /Fallback request could not be saved; retry shortly/)
 })
 
 test('fallback query normalization rejects empty and oversized token input', () => {

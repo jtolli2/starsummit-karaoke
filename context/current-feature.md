@@ -1,49 +1,45 @@
-# Completed Matcher One-Time Catalog Approval
+# Fallback Queue Request Persistence Repair
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
 
 ## Status
 
- Complete
+In Progress
 
 ## Goals
 
-- Add a constrained `tablet_admin` endpoint that previews and commits approvals only for songs
-  authoritatively matched by completed legacy matcher job `sqwd85vrfrwrzym`.
-- Bind the operation to immutable job input and row digests, reapply the shared catalog approval
-  policy, preserve rejected/deferred/conflicting/unrelated rows, and audit every approved song.
-- Make the one-time operation resumable and idempotent in bounded chunks using the existing durable
-  catalog approval operation collection.
-- Expose a guarded `/admin` control for preview and explicit confirmation, with useful totals and
-  exclusion reasons.
-- Validate contracts, Vue behavior, build output, retained staging deployment, and final live totals
-  without replacing the PocketBase volume or altering the completed matcher evidence.
+- Repair fallback queue requests so newly persisted YouTube fallback candidates satisfy every
+  currently required catalog default in real PocketBase 0.39.7, including `mb_match_status`.
+- Add a pinned-runtime regression for party-scoped claim/grant fallback request persistence, queue
+  creation, idempotent replay, and relevant rejection behavior.
+- Normalize unexpected persistence/schema failures into safe guest-facing fallback errors without
+  weakening known duplicate, rate, expiry, or candidate-specific responses.
+- Validate backend contracts, pinned runtime integration, Vue tests, build, syntax, diff/secret
+  checks, independent review, signed delivery to `main`, retained Compose staging deployment, and
+  constrained cached live verification without consuming new YouTube quota.
 
 ## Constraints and Notes
 
-- Preserve the constrained `tablet_admin` boundary, completed matcher job, `mb-majority-v2` policy,
-  matcher cache/hooks, retained volume, and unrelated catalog/party/queue/controller/tablet state.
-- Never approve rows that are deferred, rejected, unavailable, non-karaoke, low-confidence,
-  conflicting, malformed, or no longer bound to the completed job evidence.
-- Standing approval covers the scoped local implementation, signed commit and push to `main`,
-  retained staging deployment, and the exact constrained batch mutation. It excludes deletion,
-  volume replacement, DNS/cutover, Wi-Fi testing, superuser browser writes, and unrelated curation.
+- Preserve the retained external PocketBase volume and all unrelated party, queue, controller,
+  catalog, matcher, enrollment, and review records. Do not manufacture canonical identity or
+  approve/reject fallback catalog records.
+- Standing approval covers scoped local edits, tests, signed commit/push to `main`, exact retained
+  Coolify deployment, constrained guest queue validation, and browser actions. It excludes deletion,
+  cleanup, volume replacement, production DNS/cutover, Wi-Fi/tablet/Lounge changes, matcher work,
+  raw database writes, and a new YouTube lookup when cached replay can validate.
 
 ## Implementation Notes
 
-- 2026-07-25: Started from clean synchronized `main` at
-  `772df917583a2d6edb07c57e54c256ba28db6288`. User confirmed matcher job
-  `sqwd85vrfrwrzym` is complete and approved the exact one-time commit, deployment, and mutation.
-- 2026-07-25: Added a constrained, completed-job-bound preview/commit route with immutable row
-  binding checks, shared approval-policy revalidation, durable 20-row transactions, idempotent
-  operation binding, per-song audit, and an explicit `/admin` confirmation control. Focused backend
-  contracts passed 8/8, Vue passed 58/58, and the production type-check/build and hook syntax passed.
-- 2026-07-25: Signed product commit `72de9202df44c8390117f8c83ace58d4f26d963b`
-  was pushed and deployed by Coolify as `ye7n8b6m466upc2zqyfcn6uf`; exact imported SHA and terminal
-  deployment status were verified. Frontend, `/admin`, same-origin API, and controller health
-  returned 200 after the rolling handoff; the external PocketBase volume was preserved.
-- 2026-07-25: Constrained live preview found 1,408 job-bound matches: 1,335 approvable, 73 already
-  approved, and zero policy exclusions. The approved resumable operation newly approved all 1,335
-  and treated the 73 as idempotent exclusions. A fresh authoritative preview found 1,408 already
-  approved, zero approvable, and zero excluded; the review backlog fell from 2,116 to 781.
+- 2026-07-25: Started from current `main` at `f521a17706b1234c7344c4bd738809ef711d9276`.
+  Confirmed staging symptom and local real-runtime reproduction identify omitted required
+  `mb_match_status` on the new fallback-song record as the immediate cause.
+- 2026-07-25: New fallback records now explicitly persist `mb_match_status: not_attempted`.
+  The replay lookup remains party/requester scoped and returns the existing queue row with HTTP 200;
+  expired grants use PocketBase's canonical filter date format. Known rejections remain specific,
+  while unexpected persistence errors return the safe retryable
+  `fallback_persistence_unavailable` contract without database validation text.
+- 2026-07-25: Focused fallback static contract and pinned PocketBase 0.39.7 integration passed.
+  The runtime regression seeds an isolated party guest, ready claim, and party-scoped grant, then
+  verifies persistence, `mb_match_status`, queue linkage, exact idempotent replay, and a
+  cross-party candidate rejection. Full Vue tests (58) and production build also passed.
