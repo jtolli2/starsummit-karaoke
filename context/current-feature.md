@@ -51,3 +51,10 @@ Complete
   tests (9), focused Vue tests (22), production build/type-check, hook syntax, and multiple
   independent security reviews passed. Pinned runtime and retained-staging evidence are recorded
   separately where available.
+- 2026-07-24: User authorized continuous conservative curation of the remaining public-playlist
+  review backlog. Each rendition must receive evidence-backed correction/approval or a retained
+  non-approval outcome; no mass approval or exception cleanup is permitted.
+- 2026-07-24: Manual curator and its 20-minute watchdog were stopped by explicit scope
+  correction. The uncommitted automated MusicBrainz pipeline scaffolding was removed; canonical
+  automation is deferred to a separate feature. Existing public-playlist import and safe bulk
+  approval delivery remains complete and staging is retained on commit 35984dd.
