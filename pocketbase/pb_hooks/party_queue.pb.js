@@ -1605,8 +1605,8 @@ function legacyFetch(q, matcher, queryText) {
   try { if (typeof sleep === 'function') sleep(1000) } catch (_) {}
   const status = Number(response?.statusCode || response?.status || 0)
   if (!response || status < 200 || status >= 300) throw new Error('musicbrainz_http_error')
-  let payload
-  try { payload = JSON.parse(String(response.body || '')) } catch (_) { throw new Error('musicbrainz_json_error') }
+  let payload = response.json
+  if (!payload || typeof payload !== 'object') try { payload = JSON.parse(String(response.raw || response.body || '')) } catch (_) { throw new Error('musicbrainz_json_error') }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Array.isArray(payload.recordings)) throw new Error('musicbrainz_payload_invalid')
   return payload
 }
@@ -1682,6 +1682,14 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   // constants in this closure rather than looking them up on the helper object.
   const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${inputDigest}`); let job = null
   try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
+  // A transport-decoding failure changes no song identity. Permit this precise,
+  // durable retry after a runtime repair, but never replay completed matches.
+  if (job) {
+    const prior = q.jsonValue(job, 'report_json', [])
+    if (q.num(job, 'cursor') >= rows.length && Array.isArray(prior) && prior.length === rows.length && prior.every((row) => row?.reason === 'musicbrainz_json_error')) {
+      q.set(job, 'cursor', 0); q.set(job, 'status', 'pending'); q.set(job, 'lease_token', ''); q.set(job, 'lease_expires_at', ''); q.setJson(job, 'report_json', []); q.set(job, 'last_error', ''); q.set(job, 'updated_at', q.now()); $app.save(job)
+    }
+  }
   if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
   // Route callbacks retain the initial helper object in PocketBase worker VMs; kick a
   // bounded batch now so creation and replay do not depend on a browser-side timer.
