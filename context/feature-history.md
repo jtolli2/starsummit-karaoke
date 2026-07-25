@@ -27,6 +27,22 @@
 
 ## Entries
 
+### 2026-07-25 — Catalog Review Search by YouTube Title
+
+- Added a constrained `tablet_admin` catalog `videoTitle` search and a separate `/admin` search
+  control. Input is NFKC-normalized, trimmed, capped at 160 characters, case-insensitive, and
+  composed with existing review/classification and exact YouTube-ID filters. Canonical title/artist
+  remain visibly distinct from stored YouTube title and uploader provenance.
+- Literal `%`, `_`, and backslash queries are parameterized and handled server-side before
+  deterministic pagination, avoiding PocketBase 0.39.7 LIKE escape drift and keeping the full
+  catalog out of Vue. Exact ID lookup and private collection boundaries remain unchanged.
+- Validation passed 63 Vue tests, focused hook checks, a temporary pinned PocketBase 0.39.7
+  integration, production build, all hook syntax, diff/secret checks, and independent review.
+  Signed product SHA `8cd4f1ecbe7e0f41c0f4415c2a48022d42ec237e` deployed to retained Compose
+  staging as `pndvuz6s4mz7iojdnck1aall`; public health returned 200. An authenticated admin session
+  verified partial match, no-match, and Needs-review title-search pagination without mutating any
+  catalog, queue, party, controller, matcher, device, volume, or YouTube state.
+
 ### 2026-07-25 — Catalog Review Retained-State Repair and Approval Integrity
 
 - Added forward-only migration `1784991000_repair_musicbrainz_match_status.js`, which repairs

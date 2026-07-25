@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -46,4 +46,12 @@ In Progress
   pinned PocketBase 0.39.7 runtime integration covering tablet authorization, case-insensitive
   partial matches, review/classification/exact-ID composition, deterministic two-page pagination,
   literal `%`/`_`, and empty results; production build; all hook syntax; diff/secret review; and
-  independent review. Delivery and authenticated staging browser validation remain pending.
+  independent review.
+- 2026-07-25: Signed product commit `8cd4f1ecbe7e0f41c0f4415c2a48022d42ec237e` was pushed to
+  `main` and deployed unchanged to retained Compose staging app `wyxit9qifbwgskjrwibxb330` as
+  Coolify deployment `pndvuz6s4mz7iojdnck1aall`. Coolify marked it finished at that exact SHA;
+  public `/api/health` settled at 200 after the rolling handoff. The existing authenticated `/admin`
+  session verified lower-case partial `when we all fall asleep`, a title-aware no-match state, and
+  `karaoke version` pagination from page 1 of 36 to page 2 of 36 while retaining Needs review and
+  displayed YouTube source provenance. No review, identity, catalog, queue, party, controller,
+  tablet enrollment, Lounge, Fire, Wi-Fi, matcher, or YouTube API mutation was performed.
