@@ -12,6 +12,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,6 +29,9 @@ class MainActivity : Activity() {
   private lateinit var videoId: EditText
   private lateinit var controllerUrl: EditText
   private lateinit var enrollmentGrant: EditText
+  private var pendingEnrollment: Triple<String, String, String>? = null
+  private lateinit var pairingPrompt: TextView
+  private lateinit var pairingConfirm: Button
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -46,6 +50,44 @@ class MainActivity : Activity() {
     super.onCreate(savedInstanceState)
     setContentView(buildView())
     startServiceAndBind()
+    handlePairingIntent(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    handlePairingIntent(intent)
+  }
+
+  /** Accept only the package-targeted HTTPS server link emitted by the protected admin UI. */
+  private fun handlePairingIntent(intent: Intent?) {
+    val data = intent?.data ?: return
+    if (data.scheme != "starsummit-controller" || data.host != "enroll") return
+    val server = data.getQueryParameter("server") ?: return
+    val grant = data.getQueryParameter("grant") ?: return
+    val device = data.getQueryParameter("device")?.trim().orEmpty()
+    val host = runCatching { android.net.Uri.parse(server).host }.getOrNull() ?: return
+    val allowedHosts = setOf("karaoke.app.starsummit.net", "karaoke-test.app.starsummit.net")
+    if (android.net.Uri.parse(server).scheme != "https" || host !in allowedHosts || grant.length !in 8..256 || device.length !in 1..64) {
+      Toast.makeText(this, "Pairing link is for an untrusted server.", Toast.LENGTH_LONG).show()
+      return
+    }
+    pendingEnrollment = Triple(server, grant, device)
+    pairingPrompt.text = "Pair controller with server $host for device $device?"
+    pairingPrompt.visibility = TextView.VISIBLE
+    pairingConfirm.visibility = Button.VISIBLE
+    Toast.makeText(this, "Pairing request received for $device.", Toast.LENGTH_SHORT).show()
+    intent.replaceExtras(Bundle())
+    intent.data = null
+  }
+
+  private fun confirmPendingEnrollment() {
+    val pending = pendingEnrollment ?: return
+    val currentService = service ?: run { Toast.makeText(this, "Controller service is still starting.", Toast.LENGTH_SHORT).show(); return }
+    currentService.enrollController(pending.first, pending.second, pending.third, android.net.Uri.parse(pending.first).host.orEmpty(), "controller")
+    pendingEnrollment = null
+    pairingPrompt.visibility = TextView.GONE
+    pairingConfirm.visibility = Button.GONE
   }
 
   override fun onDestroy() {
@@ -91,11 +133,15 @@ class MainActivity : Activity() {
     }
     root.addView(controllerUrl, match())
     enrollmentGrant = EditText(this).apply {
-      hint = "One-time controller enrollment grant"
+      hint = "Manual one-time pairing grant"
       inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
       maxLines = 1
     }
     root.addView(enrollmentGrant, match())
+    pairingPrompt = TextView(this).apply { visibility = TextView.GONE; textSize = 15f }
+    root.addView(pairingPrompt, match())
+    pairingConfirm = Button(this).apply { text = "Confirm controller pairing"; visibility = Button.GONE; setOnClickListener { confirmPendingEnrollment() } }
+    root.addView(pairingConfirm, match())
     root.addView(Button(this).apply {
       text = "Enroll PocketBase controller"
       setOnClickListener {

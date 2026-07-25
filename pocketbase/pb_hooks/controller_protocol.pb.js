@@ -21,6 +21,8 @@ function requestData(c) {
 
 function authRecord(c) { return requestInfo(c).auth || null }
 function query(c, key) { const value = requestInfo(c).query?.[key]; return Array.isArray(value) ? value[0] : value }
+function header(c, key) { const h = requestInfo(c).headers || {}; return h[key] || h[key.toLowerCase()] || '' }
+function validHost(value) { return typeof value === 'string' && value.length >= 1 && value.length <= 255 && /^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(value) }
 
 function jsonError(c, status, code, message) {
   return c.json(status, { error: code, message })
@@ -54,6 +56,11 @@ function jsonField(record, field) {
 
 function randomSecret(length = 32) {
   return typeof $security !== 'undefined' && $security.randomString ? $security.randomString(length) : Math.random().toString(36).slice(2) + Date.now().toString(36)
+}
+function randomShortCode(length = 16) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const raw = randomSecret(length + 4)
+  return Array.from({ length }, (_, index) => alphabet.charCodeAt(Math.abs(raw.charCodeAt(index)) % alphabet.length) ? alphabet[Math.abs(raw.charCodeAt(index)) % alphabet.length] : 'A').join('')
 }
 
 function hashSecret(value) {
@@ -139,32 +146,38 @@ function commandView(command) {
 }
 
 globalThis.__controllerProtocol = {
-  ACTIONS, TERMINAL, requestInfo, requestData, authRecord, query, jsonError, now, future, string, number, bool, set,
-  randomSecret, hashSecret, sanitizePayload, sanitizeState, collection, find, first, save, newRecord, recordId,
+  ACTIONS, TERMINAL, requestInfo, requestData, authRecord, query, header, validHost, jsonError, now, future, string, number, bool, set,
+  randomSecret, randomShortCode, hashSecret, sanitizePayload, sanitizeState, collection, find, first, save, newRecord, recordId,
   recordName, isTabletAdmin, isDevice, requireDevice, requireTablet, sessionFor, jsonField, commandView,
 }
 
 routerAdd('POST', '/api/karaoke/controllers/enroll', (c) => {
   try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
-  const { requestData, jsonError, hashSecret, string, now, randomSecret, set, recordId } = globalThis.__controllerProtocol
+  const { requestData, jsonError, hashSecret, string, now, randomSecret, randomShortCode, set, recordId, header, validHost } = globalThis.__controllerProtocol
   const body = requestData(c)
-  if (typeof body.token !== 'string' || typeof body.deviceName !== 'string' || !body.deviceName.trim()) return jsonError(c, 400, 'invalid_request', 'token and deviceName are required')
+  if ((typeof body.token !== 'string' && typeof body.shortCode !== 'string') || typeof body.deviceName !== 'string' || !body.deviceName.trim()) return jsonError(c, 400, 'invalid_request', 'token or shortCode and deviceName are required')
   let result
   try {
     $app.runInTransaction((txApp) => {
-      const grant = txApp.findFirstRecordByFilter('controller_enrollment_grants', 'grant_hash = {:hash}', { hash: hashSecret(body.token) })
-      if (!grant || string(grant, 'used_at') || new Date(string(grant, 'expires_at')).getTime() <= Date.now()) throw new Error('enrollment_grant_invalid')
+      const credential = String(body.token || body.shortCode || '')
+      const grant = txApp.findFirstRecordByFilter('controller_enrollment_grants', '(grant_hash = {:hash} || short_code_hash = {:hash})', { hash: hashSecret(credential) })
+      if (!grant || string(grant, 'used_at') || string(grant, 'revoked_at') || new Date(string(grant, 'expires_at')).getTime() <= Date.now()) throw new Error('enrollment_grant_invalid')
+      const expectedHost = (string(grant, 'expected_server_host') || header(c, 'Host').split(':')[0]).toLowerCase()
+      const destination = string(grant, 'destination') || expectedHost
+      const actualHost = String(body.serverHost || header(c, 'Host').split(':')[0]).toLowerCase()
+      const actualDestination = String(body.destination || actualHost)
+      if (!validHost(actualHost) || !validHost(actualDestination) || actualHost !== expectedHost || actualDestination !== destination) throw new Error('enrollment_grant_wrong_server')
       const deviceKey = `device_${randomSecret(20)}`
       const deviceSecret = randomSecret(48)
       const device = new Record(txApp.findCollectionByNameOrId('controller_devices'))
       set(device, 'email', `${deviceKey}@controller.invalid`); set(device, 'password', deviceSecret); set(device, 'passwordConfirm', deviceSecret)
       set(device, 'device_name', body.deviceName.trim().slice(0, 120)); set(device, 'revoked', false); set(device, 'command_sequence', 0); set(device, 'session_generation', 0)
       txApp.save(device)
-      set(grant, 'used_at', now()); txApp.save(grant)
+      set(grant, 'used_at', now()); set(grant, 'redeemed_device', recordId(device)); txApp.save(grant)
       result = { deviceId: recordId(device), deviceKey: `${deviceKey}@controller.invalid`, deviceSecret }
     })
   } catch (error) {
-    return jsonError(c, error.message === 'enrollment_grant_invalid' ? 410 : 500, error.message, 'Enrollment failed')
+    return jsonError(c, error.message === 'enrollment_grant_invalid' || error.message === 'enrollment_grant_wrong_server' ? 410 : 500, error.message, 'Enrollment failed')
   }
   return c.json(201, result)
 })
@@ -342,25 +355,63 @@ routerAdd('PUT', '/api/karaoke/controllers/state', (c) => {
   } catch (error) { return jsonError(c, 409, error.message, 'Session is not current') }
 })
 
-// Operator-only helper route. It is deliberately not reachable by browser tablet accounts.
+// Operator-scoped enrollment grant. Plaintext token is returned once and never persisted.
 routerAdd('POST', '/api/karaoke/controllers/enrollment-grants', (c) => {
   try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
-  const { authRecord, requestData, jsonError, randomSecret, newRecord, recordId, recordName, set, future, hashSecret, string, save } = globalThis.__controllerProtocol
+  const { authRecord, requestData, jsonError, randomSecret, randomShortCode, recordId, set, future, hashSecret, string, isTabletAdmin, header, now, validHost } = globalThis.__controllerProtocol
   const auth = authRecord(c)
-  const superuser = auth && ((typeof auth.isSuperuser === 'function' && auth.isSuperuser()) || recordName(auth) === '_superusers')
-  if (!superuser) return jsonError(c, 403, 'forbidden', 'PocketBase operator authentication required')
+  if (!isTabletAdmin(auth)) return jsonError(c, 403, 'forbidden', 'tablet_admin authentication required')
   const body = requestData(c)
-  const ttlMinutes = Math.min(60, Math.max(1, Number(body.ttlMinutes || 15)))
+  const expectedServerHost = String(body.expectedServerHost || header(c, 'Host').split(':')[0]).trim().toLowerCase()
+  const destination = String(body.destination || expectedServerHost).trim()
+  if (!validHost(expectedServerHost) || !validHost(destination)) return jsonError(c, 400, 'invalid_destination', 'expectedServerHost and destination are invalid')
   const token = randomSecret(32)
-  const grant = newRecord('controller_enrollment_grants')
-  set(grant, 'grant_hash', hashSecret(token)); set(grant, 'expires_at', future(ttlMinutes * 60 * 1000)); set(grant, 'created_by', recordId(auth)); save(grant)
-  return c.json(201, { token, expiresAt: string(grant, 'expires_at') })
+  const shortCode = randomShortCode(16)
+  let grant
+  try {
+    $app.runInTransaction((txApp) => {
+      const active = txApp.findRecordsByFilter('controller_enrollment_grants', 'operator_id = {:operator} && used_at = "" && revoked_at = "" && expires_at > {:now}', '', 2, 0, { operator: recordId(auth), now: now() })
+      if (active.length) throw new Error('enrollment_grant_active')
+      grant = new Record(txApp.findCollectionByNameOrId('controller_enrollment_grants'))
+      set(grant, 'grant_hash', hashSecret(token)); set(grant, 'short_code_hash', hashSecret(shortCode)); set(grant, 'expires_at', future(5 * 60 * 1000)); set(grant, 'created_by', recordId(auth)); set(grant, 'operator_id', recordId(auth)); set(grant, 'expected_server_host', expectedServerHost); set(grant, 'destination', destination); txApp.save(grant)
+    })
+  } catch (error) { return jsonError(c, error.message === 'enrollment_grant_active' ? 409 : 500, error.message, 'Enrollment grant unavailable') }
+  return c.json(201, { id: recordId(grant), token, shortCode, expiresAt: string(grant, 'expires_at'), expectedServerHost, destination })
+})
+
+routerAdd('GET', '/api/karaoke/controllers/enrollment-grants/{id}', (c) => {
+  try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
+  const { authRecord, jsonError, isTabletAdmin, find, recordId, string, bool, number } = globalThis.__controllerProtocol
+  const auth = authRecord(c); if (!isTabletAdmin(auth)) return jsonError(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const grant = find(c.request.pathValue('id'), 'controller_enrollment_grants')
+  if (!grant || string(grant, 'operator_id') !== recordId(auth)) return jsonError(c, 404, 'not_found', 'Enrollment grant not found')
+  const redeemed = string(grant, 'redeemed_device')
+  const device = redeemed ? find(redeemed, 'controller_devices') : null
+  const stateRecord = device ? (() => { try { return $app.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: redeemed }) } catch (_) { return null } })() : null
+  const state = string(grant, 'revoked_at') ? 'revoked' : string(grant, 'used_at') ? (device && !bool(device, 'revoked') ? (string(device, 'last_seen_at') && Date.now() - new Date(string(device, 'last_seen_at')).getTime() < 90000 ? 'connected' : 'unavailable') : 'used') : new Date(string(grant, 'expires_at')).getTime() <= Date.now() ? 'expired' : 'active'
+  return c.json(200, { id: recordId(grant), state, status: state, expiresAt: string(grant, 'expires_at'), usedAt: string(grant, 'used_at') || null, revokedAt: string(grant, 'revoked_at') || null, expectedServerHost: string(grant, 'expected_server_host'), destination: string(grant, 'destination'), device: device ? { id: recordId(device), name: string(device, 'device_name'), revoked: bool(device, 'revoked'), lastSeenAt: string(device, 'last_seen_at') || null, sessionGeneration: number(device, 'session_generation') } : null, connectionState: stateRecord ? string(stateRecord, 'connection_state') : null })
+})
+
+routerAdd('POST', '/api/karaoke/controllers/enrollment-grants/{id}/revoke', (c) => {
+  try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
+  const { authRecord, jsonError, isTabletAdmin, find, recordId, string, set, save, now } = globalThis.__controllerProtocol
+  const auth = authRecord(c); if (!isTabletAdmin(auth)) return jsonError(c, 403, 'forbidden', 'tablet_admin authentication required')
+  let result
+  try {
+    $app.runInTransaction((txApp) => {
+      const grant = txApp.findRecordById('controller_enrollment_grants', c.request.pathValue('id'))
+      if (!grant || string(grant, 'operator_id') !== recordId(auth)) throw new Error('not_found')
+      if (!string(grant, 'used_at') && !string(grant, 'revoked_at')) { set(grant, 'revoked_at', now()); txApp.save(grant) }
+      result = { id: recordId(grant), status: string(grant, 'used_at') ? 'used' : 'revoked', revokedAt: string(grant, 'revoked_at') || null }
+    })
+  } catch (error) { return jsonError(c, 404, 'not_found', 'Enrollment grant not found') }
+  return c.json(200, result)
 })
 
 // PocketBase serializes route callbacks and executes them in a worker VM. Expose the helper
 // contract so callbacks can re-load this hook module in that VM without relying on closures.
 globalThis.__controllerProtocol = {
-  ACTIONS, TERMINAL, requestInfo, requestData, authRecord, jsonError, now, future, string, number, bool, set,
-  randomSecret, hashSecret, sanitizePayload, sanitizeState, collection, find, first, save, newRecord, recordId,
+  ACTIONS, TERMINAL, requestInfo, requestData, authRecord, query, header, validHost, jsonError, now, future, string, number, bool, set,
+  randomSecret, randomShortCode, hashSecret, sanitizePayload, sanitizeState, collection, find, first, save, newRecord, recordId,
   recordName, isTabletAdmin, isDevice, requireDevice, requireTablet, sessionFor, jsonField, commandView,
 }

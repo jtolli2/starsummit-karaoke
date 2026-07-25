@@ -118,6 +118,10 @@ function hashSecret(secret) {
 function randomSecret(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url')
 }
+function randomShortCode(length = 16) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from(crypto.randomBytes(length), (byte) => alphabet[byte % alphabet.length]).join('')
+}
 
 class ProtocolStore {
   constructor(now = () => Date.now()) {
@@ -130,25 +134,48 @@ class ProtocolStore {
     this.sequence = new Map()
   }
 
-  createEnrollmentGrant({ ttlMs = 15 * 60 * 1000, createdBy = 'operator' } = {}) {
+  createEnrollmentGrant({ ttlMs = 5 * 60 * 1000, createdBy = 'operator', expectedServerHost = 'localhost', destination = expectedServerHost } = {}) {
+    if (typeof expectedServerHost !== 'string' || !expectedServerHost.trim() || typeof destination !== 'string' || !destination.trim()) throw new Error('invalid_grant_destination')
+    ttlMs = Math.min(5 * 60 * 1000, Math.max(1, Number(ttlMs) || 0))
+    const active = [...this.grants.values()].find((grant) => grant.createdBy === createdBy && !grant.usedAt && !grant.revokedAt && grant.expiresAt > this.now())
+    if (active) throw new Error('enrollment_grant_active')
     const token = randomSecret(24)
+    const shortCode = randomShortCode()
     const id = randomSecret(12)
-    this.grants.set(id, { id, tokenHash: hashSecret(token), expiresAt: this.now() + ttlMs, usedAt: null, createdBy })
-    return { id, token, expiresAt: this.grants.get(id).expiresAt }
+    this.grants.set(id, { id, tokenHash: hashSecret(token), shortCodeHash: hashSecret(shortCode), expiresAt: this.now() + ttlMs, usedAt: null, revokedAt: null, redeemedDeviceId: null, createdBy, expectedServerHost: expectedServerHost.trim().toLowerCase(), destination: destination.trim() })
+    return { id, token, shortCode, expiresAt: this.grants.get(id).expiresAt }
   }
 
-  enroll({ token, deviceName }) {
-    if (typeof token !== 'string' || token.length < 16 || typeof deviceName !== 'string' || !deviceName.trim()) {
+  enroll({ token, shortCode, deviceName, serverHost = 'localhost', destination = serverHost }) {
+    if ((!token && !shortCode) || typeof deviceName !== 'string' || !deviceName.trim()) {
       throw new Error('invalid enrollment request')
     }
-    const grant = [...this.grants.values()].find((candidate) => candidate.tokenHash === hashSecret(token))
-    if (!grant || grant.usedAt || grant.expiresAt <= this.now()) throw new Error('enrollment_grant_invalid')
+    const credentialHash = hashSecret(token || shortCode)
+    const grant = [...this.grants.values()].find((candidate) => candidate.tokenHash === credentialHash || candidate.shortCodeHash === credentialHash)
+    if (!grant || grant.usedAt || grant.revokedAt || grant.expiresAt <= this.now()) throw new Error('enrollment_grant_invalid')
+    if (String(serverHost).trim().toLowerCase() !== grant.expectedServerHost || String(destination).trim() !== grant.destination) throw new Error('enrollment_grant_wrong_server')
     const deviceKey = `device_${randomSecret(18)}`
     const deviceSecret = randomSecret(32)
     const device = { id: randomSecret(12), deviceKey, secretHash: hashSecret(deviceSecret), deviceName, revoked: false, lastSeenAt: null }
     this.devices.set(device.id, device)
     grant.usedAt = this.now()
+    grant.redeemedDeviceId = device.id
     return { device: clone(device), deviceKey, deviceSecret }
+  }
+
+  revokeEnrollmentGrant(id, createdBy = null) {
+    const grant = this.grants.get(id)
+    if (!grant || (createdBy !== null && grant.createdBy !== createdBy)) throw new Error('enrollment_grant_not_found')
+    if (!grant.usedAt && !grant.revokedAt) grant.revokedAt = this.now()
+    return this.enrollmentGrantStatus(id, createdBy)
+  }
+
+  enrollmentGrantStatus(id, createdBy = null) {
+    const grant = this.grants.get(id)
+    if (!grant || (createdBy !== null && grant.createdBy !== createdBy)) throw new Error('enrollment_grant_not_found')
+    const device = grant.redeemedDeviceId ? this.devices.get(grant.redeemedDeviceId) : null
+    const state = grant.revokedAt ? 'revoked' : grant.usedAt ? (device && !device.revoked && device.lastSeenAt ? (this.now() - device.lastSeenAt < 90000 ? 'connected' : 'unavailable') : 'used') : grant.expiresAt <= this.now() ? 'expired' : 'active'
+    return { id: grant.id, expiresAt: grant.expiresAt, usedAt: grant.usedAt, revokedAt: grant.revokedAt, state, status: state, redeemedDeviceId: grant.redeemedDeviceId, expectedServerHost: grant.expectedServerHost, destination: grant.destination }
   }
 
   startSession(deviceId, resumeSessionId) {
@@ -237,5 +264,6 @@ module.exports = {
   sanitizeState,
   hashSecret,
   randomSecret,
+  randomShortCode,
   ProtocolStore,
 }

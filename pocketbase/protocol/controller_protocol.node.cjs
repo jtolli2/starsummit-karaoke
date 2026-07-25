@@ -25,6 +25,39 @@ test('enrollment grants are single-use and device secrets are not grant data', (
   assert.throws(() => store.enroll({ token: expired.token, deviceName: 'expired' }), /enrollment_grant_invalid/)
 })
 
+test('short code is one-time bearer equivalent and only its hash is retained', () => {
+  const store = new ProtocolStore(() => 1000)
+  const grant = store.createEnrollmentGrant()
+  assert.match(grant.shortCode, /^[A-Z2-9]{16}$/)
+  const enrolled = store.enroll({ shortCode: grant.shortCode, deviceName: 'short-code tablet' })
+  assert.equal(enrolled.device.deviceName, 'short-code tablet')
+  assert.equal(store.grants.get(grant.id).shortCodeHash.includes(grant.shortCode), false)
+  assert.throws(() => store.enroll({ shortCode: grant.shortCode, deviceName: 'replay' }), /enrollment_grant_invalid/)
+})
+
+test('enrollment grants are host-bound, operator-scoped, revocable, and only one is active', () => {
+  const store = new ProtocolStore(() => 1000)
+  const grant = store.createEnrollmentGrant({ createdBy: 'tablet-1', expectedServerHost: 'karaoke.test', destination: 'tablet-1' })
+  assert.throws(() => store.createEnrollmentGrant({ createdBy: 'tablet-1', expectedServerHost: 'karaoke.test', destination: 'tablet-1' }), /enrollment_grant_active/)
+  assert.throws(() => store.enroll({ token: grant.token, deviceName: 'wrong', serverHost: 'evil.test', destination: 'tablet-1' }), /enrollment_grant_wrong_server/)
+  assert.equal(store.enrollmentGrantStatus(grant.id).status, 'active')
+  store.revokeEnrollmentGrant(grant.id, 'tablet-1')
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').status, 'revoked')
+  assert.throws(() => store.enroll({ token: grant.token, deviceName: 'revoked', serverHost: 'karaoke.test', destination: 'tablet-1' }), /enrollment_grant_invalid/)
+  assert.throws(() => store.revokeEnrollmentGrant(grant.id, 'other'), /enrollment_grant_not_found/)
+})
+
+test('revoke versus redemption has one terminal outcome and never rewrites used_at', () => {
+  const store = new ProtocolStore(() => 1000)
+  const grant = store.createEnrollmentGrant({ createdBy: 'tablet-1', expectedServerHost: 'karaoke.test', destination: 'tablet-1' })
+  const enrolled = store.enroll({ token: grant.token, deviceName: 'tablet', serverHost: 'karaoke.test', destination: 'tablet-1' })
+  const usedAt = store.grants.get(grant.id).usedAt
+  const status = store.revokeEnrollmentGrant(grant.id, 'tablet-1')
+  assert.equal(status.status, 'used')
+  assert.equal(store.grants.get(grant.id).usedAt, usedAt)
+  assert.equal(store.grants.get(grant.id).redeemedDeviceId, enrolled.device.id)
+})
+
 test('resume keeps the current generation while a new session stales the old one', () => {
   let clock = 1000
   const store = new ProtocolStore(() => clock)

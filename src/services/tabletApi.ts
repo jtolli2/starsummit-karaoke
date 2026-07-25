@@ -213,6 +213,50 @@ export function loadActiveParty(token: string) {
   return request<{ party: TabletStatus['party'] | null }>('/api/karaoke/tablet/active', {}, token)
 }
 
+export type ControllerPairingGrant = {
+  id?: string
+  grantId?: string
+  token?: string
+  shortCode?: string
+  expiresAt: string
+  apiBaseUrl?: string
+  expectedHost?: string
+  expectedServerHost?: string
+  destination?: string
+  deepLink?: string
+}
+
+export type ControllerPairingStatus = {
+  state: 'none' | 'issued' | 'pending' | 'connected' | 'expired' | 'revoked' | 'replayed' | 'unavailable'
+  expiresAt?: string
+  device?: { id?: string; name?: string; lastSeenAt?: string | null } | null
+  connectionState?: string
+  retryable?: boolean
+}
+
+/** Issue an operator-scoped, one-time controller grant. Raw material is never persisted. */
+export function createControllerPairingGrant(token: string, ttlMinutes = 5) {
+  return request<ControllerPairingGrant>('/api/karaoke/controllers/enrollment-grants', {
+    method: 'POST',
+    body: JSON.stringify({ expectedServerHost: window.location.hostname, destination: 'controller' }),
+  }, token)
+}
+
+export function loadControllerPairingStatus(token: string, grantId?: string) {
+  if (!grantId) return Promise.resolve<ControllerPairingStatus>({ state: 'none' })
+  return request<ControllerPairingStatus & { status?: string }>(`/api/karaoke/controllers/enrollment-grants/${encodeURIComponent(grantId)}`, {}, token).then((result) => ({
+    ...result,
+    state: result.state || (result.status === 'active' ? 'pending' : result.status === 'used' ? 'pending' : result.status === 'expired' ? 'expired' : result.status === 'revoked' ? 'revoked' : 'unavailable'),
+  }))
+}
+
+export function clearControllerPairingGrant(token: string, grantId?: string) {
+  if (!grantId) return Promise.resolve({ cleared: false })
+  return request<{ cleared: boolean }>(`/api/karaoke/controllers/enrollment-grants/${encodeURIComponent(grantId)}/revoke`, {
+    method: 'POST', body: '{}',
+  }, token)
+}
+
 export function loadNext(token: string, partyId: string) {
   const params = new URLSearchParams({ partyId })
   return request<{ queue: TabletQueueItem | null }>(`/api/karaoke/queue/next?${params}`, {}, token)

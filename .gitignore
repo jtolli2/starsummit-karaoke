@@ -40,6 +40,7 @@ __screenshots__/
 
 # Android companion build outputs (keep Gradle wrapper files tracked)
 /companion-android/.gradle/
+/companion-android/.kotlin/
 /companion-android/build/
 /companion-android/app/build/
 /companion-android/local.properties

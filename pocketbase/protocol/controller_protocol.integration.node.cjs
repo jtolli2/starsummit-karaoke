@@ -48,10 +48,15 @@ test('PocketBase controller protocol authorization and transitions', { skip: !bi
   const superAuth = await call('/api/collections/_superusers/auth-with-password', 'POST', { identity: 'operator@example.test', password: 'CorrectHorseBatteryStaple123!' })
   assert.equal(superAuth.status, 200)
   const superToken = superAuth.json.token
-  assert.equal((await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 })).status, 403)
-  const grant = await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 }, superToken)
+  const user = await call('/api/collections/users/records', 'POST', { email: 'tablet@example.test', password: 'TabletPassword123!', passwordConfirm: 'TabletPassword123!', role: 'tablet_admin' }, superToken)
+  assert.equal(user.status, 200)
+  const tabletAuth = await call('/api/collections/users/auth-with-password', 'POST', { identity: 'tablet@example.test', password: 'TabletPassword123!' })
+  assert.equal(tabletAuth.status, 200)
+  const tabletToken = tabletAuth.json.token
+  assert.equal((await call('/api/karaoke/controllers/enrollment-grants', 'POST', { expectedServerHost: '127.0.0.1', destination: '127.0.0.1' })).status, 403)
+  const grant = await call('/api/karaoke/controllers/enrollment-grants', 'POST', { expectedServerHost: '127.0.0.1', destination: '127.0.0.1' }, tabletToken)
   assert.equal(grant.status, 201)
-  const enrolled = await call('/api/karaoke/controllers/enroll', 'POST', { token: grant.json.token, deviceName: 'integration tablet' })
+  const enrolled = await call('/api/karaoke/controllers/enroll', 'POST', { token: grant.json.token, deviceName: 'integration tablet', serverHost: '127.0.0.1', destination: '127.0.0.1' })
   assert.equal(enrolled.status, 201)
   assert.equal((await call('/api/karaoke/controllers/enroll', 'POST', { token: grant.json.token, deviceName: 'replay' })).status, 410)
   const deviceAuth = await call('/api/collections/controller_devices/auth-with-password', 'POST', { identity: enrolled.json.deviceKey, password: enrolled.json.deviceSecret })
@@ -61,12 +66,6 @@ test('PocketBase controller protocol authorization and transitions', { skip: !bi
   assert.equal(session.status, 201)
   const resumed = await call('/api/karaoke/controllers/sessions', 'POST', { resumeSessionId: session.json.id }, deviceToken)
   assert.deepEqual([resumed.status, resumed.json.id, resumed.json.generation], [201, session.json.id, session.json.generation])
-  const user = await call('/api/collections/users/records', 'POST', { email: 'tablet@example.test', password: 'TabletPassword123!', passwordConfirm: 'TabletPassword123!', role: 'tablet_admin' }, superToken)
-  assert.equal(user.status, 200)
-  const tabletAuth = await call('/api/collections/users/auth-with-password', 'POST', { identity: 'tablet@example.test', password: 'TabletPassword123!' })
-  assert.equal(tabletAuth.status, 200)
-  const tabletToken = tabletAuth.json.token
-  assert.equal((await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 }, tabletToken)).status, 403)
   const commandBody = { deviceId: enrolled.json.deviceId, action: 'open_video', payload: { videoId: 'dQw4w9WgXcQ' }, idempotencyKey: 'integration-open-001' }
   const command = await call('/api/karaoke/controller-commands', 'POST', commandBody, tabletToken)
   assert.equal(command.status, 201)

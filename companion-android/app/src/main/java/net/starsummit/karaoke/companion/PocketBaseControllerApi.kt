@@ -18,7 +18,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 interface ControllerApi {
-  suspend fun enroll(baseUrl: String, grant: String, deviceName: String): ControllerCredentials
+  suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String = "", destination: String = ""): ControllerCredentials
   suspend fun authenticate(credentials: ControllerCredentials): ControllerAuth
   suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession
   suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand>
@@ -55,8 +55,8 @@ class PocketBaseControllerApi(
 ) : ControllerApi {
   private data class HttpResponse(val code: Int, val body: String)
 
-  override suspend fun enroll(baseUrl: String, grant: String, deviceName: String): ControllerCredentials = withContext(Dispatchers.IO) {
-    val response = request(baseUrl, PocketBaseControllerPaths.ENROLL, null, JSONObject().put("token", grant).put("deviceName", deviceName), "POST")
+  override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String): ControllerCredentials = withContext(Dispatchers.IO) {
+    val response = request(baseUrl, PocketBaseControllerPaths.ENROLL, null, JSONObject().put("token", grant).put("deviceName", deviceName).put("serverHost", serverHost).put("destination", destination), "POST")
     val json = JSONObject(response)
     ControllerCredentials(baseUrl.trimEnd('/'), json.getString("deviceKey"), json.getString("deviceSecret"), json.optString("deviceId").takeIf { it.isNotBlank() })
   }

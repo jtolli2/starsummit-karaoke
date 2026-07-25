@@ -83,9 +83,9 @@ class CompanionService : Service() {
     fun seekTo(seconds: Double) { command { seekTo(seconds) } }
     fun getNowPlaying() { command { getNowPlaying() } }
     /** Native enrollment entry point; grant and returned secret never enter UI state or logs. */
-    fun enrollController(baseUrl: String, grant: String, deviceName: String = "Starsummit tablet") {
+    fun enrollController(baseUrl: String, grant: String, deviceName: String = "Starsummit tablet", serverHost: String = "", destination: String = "") {
       scope.launch {
-        runCatching { controllerApi.enroll(baseUrl, grant, deviceName) }
+        runCatching { controllerApi.enroll(baseUrl, grant, deviceName, serverHost, destination) }
           .onSuccess { controllerStore.saveCredentials(it); startControllerLoop() }
           .onFailure { diagnosticsStore.error(it, setErrorState = false) }
       }

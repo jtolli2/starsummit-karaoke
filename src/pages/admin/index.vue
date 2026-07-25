@@ -7,6 +7,9 @@ import {
   bindAvailableController,
   correctCatalogIdentity,
   createParty,
+  createControllerPairingGrant,
+  loadControllerPairingStatus,
+  clearControllerPairingGrant,
   issuePlaybackCommand,
   loadActiveParty,
   loadCatalog,
@@ -36,6 +39,8 @@ import {
   type TabletQueueItem,
   type TabletStatus,
   type LegacyPlaylistJob,
+  type ControllerPairingGrant,
+  type ControllerPairingStatus,
 } from '@/services/tabletApi'
 
 const storageKey = 'karaoke:tablet:session'
@@ -55,6 +60,10 @@ const status = ref<TabletStatus | null>(null)
 const partyId = ref('')
 const loading = ref(false)
 const busy = ref(false)
+const pairingGrant = ref<ControllerPairingGrant | null>(null)
+const pairingStatus = ref<ControllerPairingStatus>({ state: 'none' })
+const pairingLoading = ref(false)
+let pairingTimer: ReturnType<typeof setInterval> | undefined
 const message = ref('')
 const error = ref(false)
 const confirmFailure = ref<TabletQueueItem | null>(null)
@@ -742,6 +751,59 @@ async function bindController() {
   }
 }
 
+async function issuePairingGrant() {
+  if (!token.value || pairingLoading.value) return
+  pairingLoading.value = true
+  try {
+    pairingGrant.value = await createControllerPairingGrant(token.value)
+    pairingStatus.value = { state: 'issued', expiresAt: pairingGrant.value.expiresAt }
+    message.value = 'One-time controller link ready. It expires in five minutes.'
+    error.value = false
+    await refreshPairingStatus()
+  } catch (cause) {
+    message.value = explain(cause, 'Could not create a controller pairing grant.')
+    error.value = true
+  } finally { pairingLoading.value = false }
+}
+
+async function refreshPairingStatus() {
+  if (!token.value || !pairingGrant.value) return
+  try {
+    pairingStatus.value = await loadControllerPairingStatus(token.value, pairingGrant.value?.id || pairingGrant.value?.grantId)
+    if (['connected', 'expired', 'revoked', 'replayed'].includes(pairingStatus.value.state)) {
+      pairingGrant.value = null
+    }
+  } catch (cause) {
+    const statusCode = (cause as { status?: number }).status
+    if (statusCode !== 401 && statusCode !== 403) pairingStatus.value = { state: 'unavailable', retryable: true }
+  }
+}
+
+async function clearPairing() {
+  if (!token.value) return
+  const grantId = pairingGrant.value?.id || pairingGrant.value?.grantId
+  pairingGrant.value = null
+  await clearControllerPairingGrant(token.value, grantId).catch(() => undefined)
+  pairingStatus.value = { state: 'revoked' }
+}
+
+async function copyPairingGrant() {
+  const value = pairingGrant.value?.shortCode
+  if (!value) return
+  await navigator.clipboard?.writeText(value)
+  message.value = 'One-time grant copied. Treat it like a password; it expires shortly.'
+}
+
+function launchPairing() {
+  const grant = pairingGrant.value
+  if (!grant?.token) return
+  const server = grant.apiBaseUrl || window.location.origin
+  const intent = grant.deepLink || `intent://enroll?server=${encodeURIComponent(server)}&grant=${encodeURIComponent(grant.token)}&device=${encodeURIComponent('Starsummit tablet')}#Intent;scheme=starsummit-controller;package=net.starsummit.karaoke.companion;end`
+  window.location.assign(intent)
+  // Erase only the raw one-time material locally; retain the id for status polling.
+  pairingGrant.value = { ...grant, token: undefined, deepLink: undefined }
+}
+
 function playbackIdempotencyKey(action: 'play' | 'pause') {
   const unique =
     typeof crypto?.randomUUID === 'function'
@@ -815,6 +877,8 @@ function signOut() {
   message.value = ''
   identity.value = ''
   clearSession()
+  pairingGrant.value = null
+  pairingStatus.value = { state: 'none' }
 }
 
 onMounted(async () => {
@@ -833,11 +897,14 @@ onMounted(async () => {
     } else await restoreActiveParty()
   }
   refreshTimer = setInterval(refresh, 15000)
+  pairingTimer = setInterval(refreshPairingStatus, 5000)
+  if (token.value) await refreshPairingStatus()
 })
 
 onUnmounted(() => { if (legacyPollTimer) clearTimeout(legacyPollTimer) })
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
+  if (pairingTimer) clearInterval(pairingTimer)
 })
 </script>
 
@@ -930,6 +997,29 @@ onUnmounted(() => {
         >
           {{ busy ? 'Working…' : 'Bind available controller' }}
         </button>
+      </section>
+      <section class="card pairing" aria-labelledby="pairing-heading">
+        <h2 id="pairing-heading">Pair controller</h2>
+        <p>Connect the Starsummit companion on the tablet. The one-time link is never saved.</p>
+        <button type="button" @click="issuePairingGrant" :disabled="pairingLoading">
+          {{ pairingLoading ? 'Preparing…' : 'Create one-tap pairing link' }}
+        </button>
+        <div v-if="pairingGrant" class="pairing-grant" role="status">
+          <p><strong>Open on the tablet:</strong></p>
+          <button v-if="pairingGrant.token" type="button" @click="launchPairing">Open Starsummit companion</button>
+          <p v-if="pairingGrant.shortCode"><strong>Manual fallback code:</strong> <code>{{ pairingGrant.shortCode }}</code></p>
+          <button v-if="pairingGrant.shortCode" type="button" class="quiet" @click="copyPairingGrant">Copy short code</button>
+          <p class="quiet-text">This material expires {{ pairingGrant.expiresAt ? new Date(pairingGrant.expiresAt).toLocaleTimeString() : 'soon' }} and is cleared after use.</p>
+          <button type="button" class="quiet" @click="clearPairing">Clear pairing grant</button>
+        </div>
+        <p :data-state="pairingStatus.state" role="status">
+          Pairing status: {{ pairingStatus.state === 'pending' ? 'waiting for companion' : pairingStatus.state }}
+          <span v-if="pairingStatus.device?.name"> · {{ pairingStatus.device.name }}</span>
+        </p>
+        <details>
+          <summary>Optional SmartTube Lounge pairing</summary>
+          <p>After the controller is enrolled, pair SmartTube separately with its TV code in the companion. Lounge credentials stay on the tablet.</p>
+        </details>
       </section>
       <section v-if="status && !partyExpired" class="card queue" aria-labelledby="queue-heading">
         <div class="queue-head">

@@ -68,6 +68,31 @@ describe('advanced administration route', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
   })
 
+  it('creates a one-time controller link and polls sanitized enrollment status', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ party: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'grant-1', token: 'opaque-grant', shortCode: '482901', expiresAt: '2099-01-01T00:00:00Z' }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'pending', expiresAt: '2099-01-01T00:00:00Z' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper.findAll('button').find((button) => button.text() === 'Create one-tap pairing link')!.trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('Manual fallback code:')
+    expect(wrapper.text()).toContain('482901')
+    expect(wrapper.html()).not.toContain('opaque-grant')
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/karaoke/controllers/enrollment-grants')
+    expect(JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body))).toEqual({
+      expectedServerHost: window.location.hostname,
+      destination: 'controller',
+    })
+    expect(fetchMock.mock.calls[3]?.[0]).toBe('/api/karaoke/controllers/enrollment-grants/grant-1')
+  })
+
   it('previews a pasted public playlist and requires explicit confirmation', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 }))
