@@ -1670,7 +1670,13 @@ function legacyRunJob() {
 routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const q = globalThis.__partyQueue; const actor = q.auth(c); if (!q.tablet(actor)) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required')
-  let rows; try { rows = q.legacyScopeRows(q) } catch (_) { return q.json(c, 503, 'legacy_scope_unavailable', 'Legacy playlist scope unavailable') }
+  let rows
+  try {
+    rows = q.records('karaoke_songs', '', '+id', 5000)
+      .filter((song) => q.str(song, 'source') === 'youtube_playlist' && ['needs_review', 'unreviewed'].includes(q.str(song, 'review_status')) && q.str(song, 'identity_status') === 'missing')
+      .sort((a, b) => q.num(a, 'playlist_position') - q.num(b, 'playlist_position') || q.id(a).localeCompare(q.id(b)))
+      .map((song) => ({ id: q.id(song), youtubeId: q.str(song, 'youtube_id'), videoTitle: q.str(song, 'video_title'), playlistPosition: q.num(song, 'playlist_position'), source: q.str(song, 'source'), playlistSourceId: q.str(song, 'playlist_source_id'), reviewStatus: q.str(song, 'review_status'), identityStatus: q.str(song, 'identity_status') }))
+  } catch (_) { return q.json(c, 503, 'legacy_scope_unavailable', 'Legacy playlist scope unavailable') }
   if (!rows.length) return q.json(c, 404, 'legacy_scope_empty', 'No retained legacy playlist rows require review')
   const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${inputDigest}`); let job = null
   try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
