@@ -1570,14 +1570,9 @@ function legacySleep(ms) {
 }
 
 function legacyScopeRows(q) {
-  const songs = $app.findRecordsByFilter(
-    'karaoke_songs',
-    'source = {:source} && (review_status = {:needs} || review_status = {:unreviewed}) && identity_status = {:missing}',
-    '+playlist_position,+id',
-    100000,
-    0,
-    { source: 'youtube_playlist', needs: 'needs_review', unreviewed: 'unreviewed' },
-  )
+  const songs = q.records('karaoke_songs', '', '+id', 5000)
+    .filter((song) => q.str(song, 'source') === 'youtube_playlist' && ['needs_review', 'unreviewed'].includes(q.str(song, 'review_status')) && q.str(song, 'identity_status') === 'missing')
+    .sort((a, b) => q.num(a, 'playlist_position') - q.num(b, 'playlist_position') || q.id(a).localeCompare(q.id(b)))
   return songs.map((song) => ({
     id: q.id(song),
     youtubeId: q.str(song, 'youtube_id'),
