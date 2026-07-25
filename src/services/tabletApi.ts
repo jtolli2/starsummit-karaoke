@@ -49,6 +49,7 @@ export type CatalogSong = {
   videoChannelTitle?: string
   videoChannelId?: string
   reviewState: 'unreviewed' | 'needs_review' | 'approved' | 'rejected'
+  approvalReason?: string | null
   reviewNote?: string
 }
 

@@ -126,6 +126,36 @@ const playing = computed(() => activeQueue.value.find((item) => item.status === 
 const nextQueued = computed(() => activeQueue.value.find((item) => item.status === 'queued'))
 const selectedApprovalCount = computed(() => selectedApprovals.value.length)
 const selectedApprovalNames = computed(() => catalog.value.filter((song) => selectedApprovals.value.includes(song.id)).map((song) => `${song.artist} — ${song.title}`))
+function catalogApprovalIssue(song: CatalogSong) {
+  const serverReason = {
+    already_approved: 'already approved',
+    review_state_invalid: 'review state is not approvable',
+    missing_identity: 'identity is not verified',
+    non_karaoke: 'not classified as karaoke',
+    low_confidence: 'classification confidence is below 80%',
+    alternative_exists: 'has unresolved identity alternatives',
+    unavailable: 'rendition is unavailable or not embeddable',
+    identity_conflict: 'identity conflicts with another catalog song',
+    schema_invalid: 'catalog metadata has an invalid schema',
+  } as Record<string, string>
+  if (song.approvalReason && song.approvalReason !== 'already_approved')
+    return serverReason[song.approvalReason] || 'server policy rejected this rendition'
+  const reasons: string[] = []
+  if (song.classification !== 'karaoke') reasons.push('not classified as karaoke')
+  if ((song.classificationConfidence || 0) < 0.8) reasons.push('classification confidence is below 80%')
+  if (!['verified_source', 'operator_corrected'].includes(song.identityStatus || '')) reasons.push('identity is not verified')
+  if (!song.title?.trim() || !song.artist?.trim()) reasons.push('canonical title or artist is missing')
+  if (song.alternativeCount) reasons.push('has unresolved identity alternatives')
+  // Candidates are normally ineligible until approval is committed. Treat the
+  // flag as a stale/invalid-row warning only after a row claims to be approved.
+  if (song.reviewState === 'approved' && song.eligible === false)
+    reasons.push('server marked this rendition ineligible')
+  return reasons.length ? reasons.join('; ') : ''
+}
+
+function canApproveCatalogSong(song: CatalogSong) {
+  return song.reviewState !== 'approved' && !catalogApprovalIssue(song)
+}
 const partyCode = computed(() => status.value?.party?.code || '')
 const joinUrl = computed(() =>
   partyCode.value ? `${window.location.origin}/party/${partyCode.value}` : '',
@@ -295,6 +325,13 @@ function explain(value: unknown, fallback: string) {
         playlist_import_settle_success_failed: 'Trusted playlist results were not finalized. No songs were approved; try again later.',
         legacy_scope_unavailable: 'The retained legacy playlist scope could not be read safely.',
         legacy_scope_empty: 'No retained YouTube-playlist rows currently need identity review.',
+        identity_conflict: 'Identity conflict: those canonical title and artist values already belong to another catalog song. Choose different values.',
+        identity_correction_failed: 'Identity correction could not be saved because catalog storage rejected the change. No identity was changed; try again later.',
+        song_not_found: 'This catalog song no longer exists. Refresh the catalog before retrying.',
+        batch_song_ineligible: 'Approval rejected by server policy: every selected song must be an unapproved, identity-verified karaoke rendition with no alternatives.',
+        batch_review_failed: 'Approval could not be saved because catalog storage rejected the batch. No approval was applied; refresh and try again later.',
+        review_failed: 'Approval could not be saved because catalog storage rejected the review. No approval was applied; refresh and try again later.',
+        selection_snapshot_stale: 'Approval selection expired or changed. Recalculate the approvable set before committing.',
       } as Record<string, string>
     )[code || ''] || fallback
   )
@@ -1146,8 +1183,14 @@ onUnmounted(() => {
           <ul v-else>
             <li v-for="song in catalog" :key="song.id">
               <div class="catalog-details">
+                <p v-if="song.reviewState === 'approved' && catalogApprovalIssue(song)" class="catalog-warning" role="status">
+                  Approved record is currently invalid for playback policy: {{ catalogApprovalIssue(song) }}. Refresh or correct its identity before relying on it.
+                </p>
+                <p v-else-if="song.reviewState !== 'approved' && !canApproveCatalogSong(song)" class="catalog-warning" role="status">
+                  Cannot approve this rendition yet: {{ catalogApprovalIssue(song) }}.
+                </p>
                 <label
-                v-if="song.reviewState !== 'approved' && song.classification === 'karaoke' && (song.classificationConfidence || 0) >= 0.8 && !song.alternativeCount && ['verified_source', 'operator_corrected'].includes(song.identityStatus || '')"
+                v-if="song.reviewState !== 'approved' && canApproveCatalogSong(song)"
                   class="batch-select"
                 >
                   <input v-model="selectedApprovals" type="checkbox" :value="song.id" :disabled="catalogLoading" @change="updateSelectionAfterDeselect(song.id)" />
@@ -1217,9 +1260,10 @@ onUnmounted(() => {
                   v-if="song.reviewState !== 'approved'"
                   type="button"
                   @click="setCatalogReview(song, 'approved')"
-                  :disabled="catalogLoading"
+                  :disabled="catalogLoading || !canApproveCatalogSong(song)"
+                  :title="canApproveCatalogSong(song) ? 'Approve this rendition' : `Cannot approve: ${catalogApprovalIssue(song)}`"
                 >
-                  Approve</button
+                  {{ canApproveCatalogSong(song) ? 'Approve' : 'Approval unavailable' }}</button
                 ><button
                   v-if="song.reviewState !== 'rejected'"
                   type="button"
