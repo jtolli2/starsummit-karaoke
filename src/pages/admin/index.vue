@@ -639,6 +639,18 @@ async function pollLegacyJob() {
   } catch (cause) { message.value = explain(cause, 'Could not refresh legacy playlist job status.'); error.value = true }
 }
 
+async function refreshLegacyJobStatus() {
+  if (!token.value || legacyLoading.value) return
+  legacyLoading.value = true
+  try {
+    legacyJob.value = await loadLegacyPlaylistJob(token.value, '')
+    error.value = false
+  } catch (cause) {
+    message.value = explain(cause, 'Could not read retained legacy playlist job status.')
+    error.value = true
+  } finally { legacyLoading.value = false }
+}
+
 async function startLegacyJob() {
   if (!token.value || legacyLoading.value) return
   legacyLoading.value = true
@@ -1102,6 +1114,7 @@ onUnmounted(() => {
             <p>Source scope is operator-assumed for playlist <code>PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R</code>, not a fetched playlist snapshot.</p>
             <p>Only high-confidence canonical identity matches are changed automatically. All other results remain <code>needs_review</code> or ineligible.</p>
             <button type="button" @click="startLegacyJob" :disabled="legacyLoading">{{ legacyJob && !['complete', 'failed'].includes(legacyJob.status) ? 'Reconcile running…' : 'Start operator-assumed reconciliation' }}</button>
+            <button type="button" class="quiet" @click="refreshLegacyJobStatus" :disabled="legacyLoading">Refresh retained matcher status</button>
             <div v-if="legacyJob" role="status">
               <p>Status: {{ legacyJob.status }} · {{ legacyJob.cursor }}/{{ legacyJob.total || legacyJob.count || 0 }} processed · {{ legacyJob.reportCount || 0 }} reports · policy {{ legacyJob.policyVersion || 'unknown' }} · updated {{ legacyJob.updatedAt || 'unknown' }}</p>
             </div>
