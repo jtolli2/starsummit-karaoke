@@ -5,7 +5,7 @@
 
 ## Status
 
- In Progress
+ Complete
 
 ## Goals
 
@@ -35,3 +35,15 @@
 - 2026-07-25: Started from clean synchronized `main` at
   `772df917583a2d6edb07c57e54c256ba28db6288`. User confirmed matcher job
   `sqwd85vrfrwrzym` is complete and approved the exact one-time commit, deployment, and mutation.
+- 2026-07-25: Added a constrained, completed-job-bound preview/commit route with immutable row
+  binding checks, shared approval-policy revalidation, durable 20-row transactions, idempotent
+  operation binding, per-song audit, and an explicit `/admin` confirmation control. Focused backend
+  contracts passed 8/8, Vue passed 58/58, and the production type-check/build and hook syntax passed.
+- 2026-07-25: Signed product commit `72de9202df44c8390117f8c83ace58d4f26d963b`
+  was pushed and deployed by Coolify as `ye7n8b6m466upc2zqyfcn6uf`; exact imported SHA and terminal
+  deployment status were verified. Frontend, `/admin`, same-origin API, and controller health
+  returned 200 after the rolling handoff; the external PocketBase volume was preserved.
+- 2026-07-25: Constrained live preview found 1,408 job-bound matches: 1,335 approvable, 73 already
+  approved, and zero policy exclusions. The approved resumable operation newly approved all 1,335
+  and treated the 73 as idempotent exclusions. A fresh authoritative preview found 1,408 already
+  approved, zero approvable, and zero excluded; the review backlog fell from 2,116 to 781.

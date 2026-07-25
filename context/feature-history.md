@@ -418,3 +418,20 @@
   product SHA `5eaf04e61395caca851db91d7f57a2abfeb227ce` and finished healthy; `/tablet`, same-origin
   `/api/health`, and controller `/api/health` each returned HTTP 200. No PocketBase data mutation
   or tablet action occurred.
+
+## 2026-07-25 — Completed Matcher One-Time Catalog Approval
+
+- Added a constrained `tablet_admin` operation that can approve only successful results from one
+  authoritatively completed legacy matcher job. It binds immutable job and row digests, reuses the
+  shared catalog approval policy, audits each mutation, and resumes idempotently in 20-row
+  transactions without rewriting matcher evidence.
+- Deployed exact signed product SHA `72de9202df44c8390117f8c83ace58d4f26d963b` through retained
+  Compose staging deployment `ye7n8b6m466upc2zqyfcn6uf`. All public health checks passed after the
+  rolling handoff and the external PocketBase volume was preserved.
+- Live preview found 1,408 job-bound successful matches: 1,335 approvable, 73 already approved, and
+  no safety exclusions. The one-time operation approved the 1,335 and safely treated the 73 as
+  idempotent no-ops. Final preview proved all 1,408 approved with zero remaining approvable or
+  excluded; the overall review backlog decreased from 2,116 to 781.
+- Validation passed 8 focused backend contracts, all 58 Vue tests, production type-check/build,
+  hook syntax, whitespace, exact-SHA deployment inspection, and authenticated post-operation
+  verification. Deferred, rejected, conflicting, unrelated, and unmatched records were unchanged.

@@ -4,6 +4,16 @@
 
 ## Entries
 
+### 2026-07-25 — Project Coolify reads before displaying output
+
+- **Feedback:** An unprojected `coolify app get --format json` response includes rendered Compose
+  environment values even without the CLI's sensitive-output flag.
+- **Improvement:** Pipe Coolify application reads directly through an allowlisted `jq` projection
+  in the same command and display only identifiers, status, revision, topology, or other required
+  non-secret fields. Never emit the full application object.
+- **Follow-up:** Rotate any credential that may have appeared in local diagnostic output according
+  to the existing operations plan; do not copy it into code, documentation, or chat.
+
 ### 2026-07-23 — Never clear a PocketBase composite unique key to blank
 
 - **Feedback:** The first queue completion succeeded, but every later completion or failure returned
