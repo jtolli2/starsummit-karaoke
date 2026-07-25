@@ -77,6 +77,7 @@ const catalogLoading = ref(false)
 const catalogShown = ref(false)
 const catalogReview = ref<CatalogSong['reviewState']>('unreviewed')
 const catalogYoutubeId = ref('')
+const catalogYoutubeTitle = ref('')
 const catalogPage = ref(1)
 const catalogTotalPages = ref(1)
 const catalogReport = ref<CatalogReport | null>(null)
@@ -368,6 +369,7 @@ async function refreshCatalog() {
       loadCatalog(token.value, {
         review: catalogReview.value,
         youtubeId: catalogYoutubeId.value.trim(),
+        videoTitle: catalogYoutubeTitle.value.trim().slice(0, 160),
         page: catalogPage.value,
         perPage: 20,
       }),
@@ -440,6 +442,12 @@ function changeCatalogReview() {
 }
 
 function findCatalogYoutubeId() {
+  catalogPage.value = 1
+  selectedApprovals.value = []
+  void refreshCatalog()
+}
+
+function findCatalogYoutubeTitle() {
   catalogPage.value = 1
   selectedApprovals.value = []
   void refreshCatalog()
@@ -1215,6 +1223,15 @@ onUnmounted(() => {
           <label for="catalog-youtube-id">Find YouTube ID</label>
           <input id="catalog-youtube-id" v-model="catalogYoutubeId" placeholder="Exact 11-character video ID" @keyup.enter="findCatalogYoutubeId" />
           <button type="button" class="quiet" @click="findCatalogYoutubeId" :disabled="catalogLoading">Find rendition</button>
+          <label for="catalog-youtube-title">Search YouTube title</label>
+          <input
+            id="catalog-youtube-title"
+            v-model="catalogYoutubeTitle"
+            maxlength="160"
+            placeholder="Partial video title"
+            @keyup.enter="findCatalogYoutubeTitle"
+          />
+          <button type="button" class="quiet" @click="findCatalogYoutubeTitle" :disabled="catalogLoading">Search title</button>
           <div class="musicbrainz-review" aria-labelledby="musicbrainz-heading">
             <h3 id="musicbrainz-heading">Canonical identity matcher</h3>
             <p>Runs only on unresolved playlist records shown here. Dry run only; results never auto-approve songs.</p>
@@ -1243,7 +1260,9 @@ onUnmounted(() => {
             <p v-if="approvalSelection" role="status">{{ approvalSelection.selectedCount }} selected · {{ approvalSelection.excludedCount || 0 }} excluded by policy</p>
           </div>
           <p v-if="catalogLoading" role="status">Loading catalog…</p>
-          <p v-else-if="!catalog.length">No songs match this review state.</p>
+          <p v-else-if="!catalog.length">
+            {{ catalogYoutubeTitle.trim() ? `No songs match YouTube title “${catalogYoutubeTitle.trim()}”.` : 'No songs match this review state.' }}
+          </p>
           <ul v-else>
             <li v-for="song in catalog" :key="song.id">
               <div class="catalog-details">

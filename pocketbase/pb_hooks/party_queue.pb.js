@@ -9,6 +9,10 @@ const JOIN_WINDOW = 60 * 1000
 const JOIN_LIMIT = 20
 const PARTY_REQUEST_LIMIT = 20
 const FALLBACK_QUERY_MAX = 80
+// Keep operator title searches bounded before they reach PocketBase's filter
+// parser.  This is below the retained video_title field limit and keeps
+// accidental pasted blobs from becoming expensive LIKE scans.
+const CATALOG_VIDEO_TITLE_QUERY_MAX = 160
 const FALLBACK_CANDIDATE_MAX = 5
 const FALLBACK_GUEST_LIMIT = 5
 const FALLBACK_PARTY_LIMIT = 20
@@ -160,6 +164,14 @@ function catalogBatchMismatch(batch, expected, checkTotal) {
 function id(r) { return r?.id || r?.getString?.('id') }
 function name(r) { return r?.collection?.()?.name || r?.collection?.name || '' }
 function tablet(a) { return a && !a.getBool?.('revoked') && str(a, 'role') === 'tablet_admin' && ['users', '_pb_users_auth_'].includes(name(a)) }
+function catalogVideoTitleQuery(value) {
+  return String(value || '').normalize('NFKC').trim().slice(0, CATALOG_VIDEO_TITLE_QUERY_MAX)
+}
+function escapeCatalogLikeLiteral(value) {
+  // PocketBase's `~` matcher is backed by SQLite LIKE. Escape all wildcard
+  // metacharacters while retaining parameter binding for user input.
+  return String(value).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+}
 function hash(v) { return typeof $security !== 'undefined' && $security.sha256 ? $security.sha256(String(v)) : String(v) }
 // Trusted-playlist helpers are defined in this hook's worker-safe scope. Route
 // callbacks execute in Goja workers where Node's `require` is unavailable.
@@ -479,7 +491,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, catalogApprovalReason, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, queueOrderDigest, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, CATALOG_VIDEO_TITLE_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, catalogApprovalReason, catalogVideoTitleQuery, escapeCatalogLikeLiteral, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, queueOrderDigest, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
 globalThis.__partyQueue.correctCatalogIdentity = correctCatalogIdentity
 globalThis.__partyQueueRealtime = {
   authorize(e) {
@@ -1055,11 +1067,11 @@ routerAdd('GET', '/api/karaoke/tablet/catalog/checkpoint-health', (c) => {
 
 routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, query, records, str, id, num, jsonValue, catalogApprovalReason } = globalThis.__partyQueue
+  const { auth, tablet, json, query, records, str, id, num, jsonValue, catalogApprovalReason, catalogVideoTitleQuery, escapeCatalogLikeLiteral } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const page = Math.max(1, Number(query(c, 'page') || 1) || 1)
   const perPage = Math.min(100, Math.max(1, Number(query(c, 'perPage') || 25) || 25))
-  const review = String(query(c, 'review') || '').trim(); const classification = String(query(c, 'classification') || '').trim(); const youtubeId = String(query(c, 'youtubeId') || '').trim()
+  const review = String(query(c, 'review') || '').trim(); const classification = String(query(c, 'classification') || '').trim(); const youtubeId = String(query(c, 'youtubeId') || '').trim(); const videoTitle = catalogVideoTitleQuery(query(c, 'videoTitle'))
   const clauses = []; const params = {}
   // The tablet's "Needs review" view is the actionable backlog: both records
   // awaiting their first decision and identity-corrected records returned to
@@ -1068,10 +1080,21 @@ routerAdd('GET', '/api/karaoke/tablet/catalog', (c) => {
   else if (review) { clauses.push('review_status = {:review}'); params.review = review }
   if (classification) { clauses.push('classification = {:classification}'); params.classification = classification }
   if (youtubeId) { clauses.push('youtube_id = {:youtubeId}'); params.youtubeId = youtubeId }
+  // PocketBase 0.39.7's LIKE escape behavior differs across retained SQLite
+  // builds for wildcard characters. Keep the bound matcher for ordinary
+  // input; special-character searches use the same bounded candidate query
+  // and a case-insensitive literal post-filter below.
+  const literalTitleSearch = videoTitle && /[%_\\]/.test(videoTitle)
+  if (videoTitle && !literalTitleSearch) { clauses.push('video_title ~ {:videoTitle}'); params.videoTitle = escapeCatalogLikeLiteral(videoTitle) }
   const filter = clauses.join(' && ') || ''
   let rows = []; let allRows = []
-  try { rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+youtube_id', perPage, (page - 1) * perPage, params); allRows = $app.findRecordsByFilter('karaoke_songs', filter, '+id', 100000, 0, params) } catch (_) { return json(c, 500, 'catalog_failed', 'Catalog could not be loaded') }
-  const sliced = rows.slice(0, perPage)
+  try { rows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+youtube_id,+id', literalTitleSearch ? 100000 : perPage, literalTitleSearch ? 0 : (page - 1) * perPage, params); allRows = $app.findRecordsByFilter('karaoke_songs', filter, '+title,+youtube_id,+id', 100000, 0, params) } catch (_) { return json(c, 500, 'catalog_failed', 'Catalog could not be loaded') }
+  if (literalTitleSearch) {
+    const needle = videoTitle.toLocaleLowerCase()
+    const matches = (song) => String(str(song, 'video_title') || '').toLocaleLowerCase().includes(needle)
+    rows = rows.filter(matches); allRows = allRows.filter(matches)
+  }
+  const sliced = rows.slice(literalTitleSearch ? (page - 1) * perPage : 0, literalTitleSearch ? page * perPage : perPage)
   // Historical extra-row pagination used perPage + 1; exact totals now come
   // from a bounded count query over the same filter.
   const totalItems = allRows.length

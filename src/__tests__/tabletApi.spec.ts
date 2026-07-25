@@ -87,6 +87,24 @@ describe('tablet API', () => {
     expect(fetchMock.mock.calls[4]?.[0]).toBe('/api/karaoke/tablet/catalog/report')
   })
 
+  it('composes review, exact ID, and bounded YouTube title filters with URL encoding', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ songs: [], page: 1, perPage: 20, totalItems: 0, totalPages: 1 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const title = '  Live + Karaoke?  ' + 'x'.repeat(200)
+    await loadCatalog('tablet-token', {
+      review: 'needs_review',
+      youtubeId: 'dQw4w9WgXcQ',
+      videoTitle: title,
+      page: 2,
+      perPage: 20,
+    })
+    const url = String(fetchMock.mock.calls[0]?.[0])
+    expect(url).toContain('review=needs_review')
+    expect(url).toContain('youtubeId=dQw4w9WgXcQ')
+    expect(new URL(url, 'https://example.test').searchParams.get('videoTitle')).toBe(('Live + Karaoke?  ' + 'x'.repeat(200)).slice(0, 160))
+    expect(url).toContain('page=2')
+  })
+
   it('binds unavailable revalidation to the exact retained snapshot', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ unavailable: 2, unavailableReasons: { total: 2, metadataMissing: 1, nonEmbeddable: 1, privacy: {}, uploadStatus: {} }, revalidated: true, replay: false }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)

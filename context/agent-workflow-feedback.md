@@ -4,6 +4,18 @@
 
 ## Entries
 
+### 2026-07-25 — Prove PocketBase wildcard semantics in the pinned runtime
+
+- **Feedback:** Parameter binding prevented filter-expression injection for catalog title search,
+  but PocketBase 0.39.7 did not honor backslash escapes for `%` and `_` consistently in its `~`
+  matcher, so a static escape test overstated literal-match behavior.
+- **Improvement:** For any literal text search using a PocketBase matcher, run special-character
+  cases in the pinned runtime. If matcher escaping is not portable, retain parameterized database
+  prefilters and apply the literal comparison server-side before pagination; never move the full
+  catalog into Vue.
+- **Follow-up:** Keep bounded candidate-set and pagination tests with normal and special text
+  searches whenever this filter is changed.
+
 ### 2026-07-25 — Use the authoritative tablet snapshot for queue live proof
 
 - **Feedback:** During isolated guest validation, the guest page displayed an expired-session

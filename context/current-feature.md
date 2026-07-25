@@ -1,53 +1,49 @@
-# Simple Tablet Queue Reordering and Visibility Fixes
+# Catalog Review Search by YouTube Title
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
 
 ## Status
 
-Complete
+In Progress
 
 ## Goals
 
-- Let a signed-in `tablet_admin` move queued songs up or down on `/tablet`, while the playing song
-  remains fixed and non-movable.
-- Add one constrained atomic server reorder endpoint that rejects stale/conflicting queue input and
-  preserves membership, statuses, existing playback, controller, and guest-request contracts.
-- Make the manual queued order authoritative for the current queued set; safely preserve it when
-  new guest requests are added through the existing placement rules.
-- Improve only the visibly weak guest request/search/confirmation/error colors and related tablet
-  queue controls, without a broader accessibility or design-system rewrite.
-- Add focused stale/concurrency backend and Vue move/error/immovability/visibility tests; validate
-  the pinned PocketBase runtime where applicable, full Vue suite, production build, hook syntax,
-  diff/secret checks, and review.
+- Let a signed-in `tablet_admin` search catalog-review songs by stored YouTube `video_title` on
+  `/admin`, without changing public catalog access or exposing privileged credentials.
+- Retain exact 11-character YouTube-ID lookup and compose title search with current review-state,
+  source, and deterministic pagination filters through safe PocketBase parameterization.
+- Normalize bounded literal title queries safely, preserve canonical identity versus uploader/channel
+  provenance, and show a clear empty state.
+- Add focused backend, runtime, and Vue coverage, then validate staging deployment and live
+  authenticated admin search without mutating catalog review or identity records.
 
 ## Constraints and Notes
 
-- Preserve the retained external PocketBase volume and all party, queue, catalog, controller,
-  enrollment, matcher, and playback state. No live queue mutation, deployment, commit, push,
-  DNS/cutover, tablet/Wi-Fi/Lounge action, catalog work, raw database write, or cleanup is in scope.
-- Use clear touch move-up/move-down controls only unless a drag interaction proves genuinely small
-  and dependable; do not add reorder audit metadata.
+- Preserve the retained external PocketBase volume and all existing records. Do not approve,
+  reject, replace, correct, or otherwise mutate catalog identity/review state during validation;
+  do not invoke YouTube, mutate matcher jobs, queues, parties, controller/tablet enrollment,
+  Lounge, Fire, Wi-Fi, DNS, or raw database records.
+- Search input is literal, trimmed, case-insensitive, capped, and additive to exact-ID lookup.
 
 ## Implementation Notes
 
-- 2026-07-25: Started from synchronized `main` at `1b10127`, after the fallback repair product
-  commit `05dd13c` and its validation documentation were present. Local implementation and
-  validation are approved; all delivery or live-state mutation remains separately approval-gated.
-- 2026-07-25: Added a constrained `tablet_admin` reorder route using an authoritative active-queue
-  revision and digest. It atomically swaps only adjacent queued rows, rejects stale/conflicting
-  snapshots with `stale_reorder`, and leaves the playing row, membership, and statuses unchanged.
-  The persisted sequence is now the next-song and tablet-display order; later guest requests retain
-  their existing safe append sequence.
-- 2026-07-25: `/tablet` now has touch-sized Up/Down controls with first/last boundaries and no
-  controls for the playing row. The client refetches authoritative status after success or failure.
-  Targeted dark guest message/search and tablet-control colors improve legibility without a visual
-  redesign. Final local evidence: 61 Vue tests, 16 backend protocol tests, production build, hook
-  syntax, diff, secret-pattern review, and independent review all passed. The three integration
-  scenarios are present but skipped because `POCKETBASE_BIN` is not configured locally.
-- 2026-07-25: Retained Compose staging app `wyxit9qifbwgskjrwibxb330` deployed exact commit
-  `e20c6b6` successfully without volume replacement; public `/api/health` returned 200. An
-  isolated party `FTTDDCJV` received three existing approved catalog requests. A stale tablet move
-  after the third request returned the expected refresh/error state while preserving all three
-  rows; a fresh move placed `2 Become 1` before `18`, retaining `2 Poor Kids` third. No playback,
-  controller, catalog, or existing-party state was changed.
+- 2026-07-25: Synchronized `main` at `394ab83`; prerequisite queue-reorder product commit
+  `e20c6b6` and its evidence commit `394ab83` are both present. Standing approval covers scoped
+  local edits/tests, signed commit/push to `main`, retained staging deployment, and constrained
+  browser validation.
+- 2026-07-25: Added a `tablet_admin`-only `videoTitle` query to the catalog-review route. It
+  normalizes NFKC text, trims and caps input at 160 characters, composes with review,
+  classification, and exact YouTube-ID filters, and retains `+title,+youtube_id,+id` pagination.
+  User text is always bound as a PocketBase parameter. `%`, `_`, and backslash use a bounded
+  server-side literal post-filter because PocketBase 0.39.7 LIKE escaping is not portable across
+  retained SQLite builds; no catalog is loaded into Vue.
+- 2026-07-25: `/admin` now supplies a separate explicit “Search YouTube title” control. It keeps
+  the exact 11-character ID lookup additive, resets the current page and selection on submit, and
+  makes the empty state title-aware. Canonical title/artist and YouTube title/uploader remain
+  separately labeled.
+- 2026-07-25: Local evidence passed: 63 Vue tests; focused catalog-hook assertions; a temporary
+  pinned PocketBase 0.39.7 runtime integration covering tablet authorization, case-insensitive
+  partial matches, review/classification/exact-ID composition, deterministic two-page pagination,
+  literal `%`/`_`, and empty results; production build; all hook syntax; diff/secret review; and
+  independent review. Delivery and authenticated staging browser validation remain pending.

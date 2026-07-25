@@ -112,7 +112,33 @@ test('catalog API exposes frontend review and pagination contract', () => {
   assert.match(hook, /catalog\/\{id\}\/review/)
   assert.match(hook, /review === 'pending' \|\| review === 'needs_review'/)
   const catalogRoute = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/catalog',\s*\(c\) => \{[\s\S]*?\n\}\)/)?.[0] || ''
-  assert.match(catalogRoute, /num, jsonValue \} = globalThis\.__partyQueue/)
+  assert.match(catalogRoute, /num, jsonValue, catalogApprovalReason, catalogVideoTitleQuery, escapeCatalogLikeLiteral \} = globalThis\.__partyQueue/)
+})
+
+test('catalog review search is bounded, literal, parameterized, and deterministic', () => {
+  const catalogRoute = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/catalog',[\s\S]*?\n}\)/)?.[0] || ''
+  assert.match(hook, /CATALOG_VIDEO_TITLE_QUERY_MAX = 160/)
+  assert.match(hook, /function catalogVideoTitleQuery\(value\)/)
+  assert.match(hook, /normalize\('NFKC'\)\.trim\(\)\.slice\(0, CATALOG_VIDEO_TITLE_QUERY_MAX\)/)
+  assert.match(hook, /function escapeCatalogLikeLiteral\(value\)/)
+  assert.match(hook, /replace\(\/\\\\\/g, '\\\\\\\\'\)\.replace\(\/%\/g, '\\\\%'\)\.replace\(\/_\/g, '\\\\_'\)/)
+  assert.match(catalogRoute, /query\(c, 'videoTitle'\)/)
+  assert.match(catalogRoute, /video_title ~ \{:\\?videoTitle\}/)
+  assert.match(catalogRoute, /params\.videoTitle = escapeCatalogLikeLiteral\(videoTitle\)/)
+  assert.match(catalogRoute, /\+title,\+youtube_id,\+id/)
+  assert.match(catalogRoute, /review_status = \{:\\?review\}/)
+  assert.match(catalogRoute, /classification = \{:\\?classification\}/)
+  assert.match(catalogRoute, /youtube_id = \{:\\?youtubeId\}/)
+})
+
+test('catalog title search helper normalizes and escapes literal matcher input', () => {
+  const start = hook.indexOf('function catalogVideoTitleQuery(')
+  const end = hook.indexOf('function hash(', start)
+  const helpers = new Function(`const CATALOG_VIDEO_TITLE_QUERY_MAX = 160; ${hook.slice(start, end)}; return { catalogVideoTitleQuery, escapeCatalogLikeLiteral }`)()
+  assert.equal(helpers.catalogVideoTitleQuery('  ＹｏｕＴｕｂｅ  '), 'YouTube')
+  assert.equal(helpers.catalogVideoTitleQuery('x'.repeat(200)).length, 160)
+  assert.equal(helpers.catalogVideoTitleQuery('   '), '')
+  assert.equal(helpers.escapeCatalogLikeLiteral('100%_ready\\now'), '100\\%\\_ready\\\\now')
 })
 
 test('numeric reader preserves PocketBase decimal confidence and integer counters', () => {

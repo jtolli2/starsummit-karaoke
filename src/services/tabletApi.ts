@@ -325,12 +325,17 @@ export function loadCatalog(
     review?: CatalogSong['reviewState']
     classification?: string
     youtubeId?: string
+    videoTitle?: string
     page?: number
     perPage?: number
   } = {},
 ) {
   const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(options)) if (value) params.set(key, String(value))
+  for (const [key, value] of Object.entries(options)) {
+    if (!value) continue
+    const normalized = key === 'videoTitle' ? String(value).trim().slice(0, 160) : String(value)
+    if (normalized) params.set(key, normalized)
+  }
   return request<{
     songs: CatalogSong[]
     page: number
