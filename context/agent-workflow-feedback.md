@@ -4,6 +4,16 @@
 
 ## Entries
 
+### 2026-07-25 — Use PocketBase canonical dates in fallback grant filters
+
+- **Feedback:** A real PocketBase 0.39.7 fallback request fixture initially could not read a valid
+  ready grant because the filter used RFC3339 `T` formatting against PocketBase's canonical stored
+  datetime representation.
+- **Improvement:** Use the existing `filterDate()` helper for fallback grant expiry filters and
+  prove the complete claim/grant-to-queue path in the pinned runtime, including exact replay scope.
+- **Follow-up:** Keep browser fallback errors normalized when an unexpected schema/persistence
+  error occurs; do not expose PocketBase validation details to guests.
+
 ### 2026-07-25 — Project Coolify reads before displaying output
 
 - **Feedback:** An unprojected `coolify app get --format json` response includes rendered Compose

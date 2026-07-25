@@ -5,7 +5,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Goals
 
@@ -43,3 +43,8 @@ In Progress
   The runtime regression seeds an isolated party guest, ready claim, and party-scoped grant, then
   verifies persistence, `mb_match_status`, queue linkage, exact idempotent replay, and a
   cross-party candidate rejection. Full Vue tests (58) and production build also passed.
+- 2026-07-25: Signed commit `05dd13c03c1f74cde3134ce36f506d7f87400c47` was pushed to
+  `main` and deployed to retained Compose staging as `s2bd7mbl58v2zcd9swmdhpcl`; Coolify
+  confirmed the exact imported SHA and a healthy PocketBase container without volume replacement.
+  The requested cached party `N5P6LYXA` had expired at live validation time, so no guest fallback
+  record or queue row was created and no new YouTube request was made.

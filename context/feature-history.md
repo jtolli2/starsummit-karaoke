@@ -435,3 +435,17 @@
 - Validation passed 8 focused backend contracts, all 58 Vue tests, production type-check/build,
   hook syntax, whitespace, exact-SHA deployment inspection, and authenticated post-operation
   verification. Deferred, rejected, conflicting, unrelated, and unmatched records were unchanged.
+
+## 2026-07-25 — Fallback queue request persistence repair
+
+- Fixed fallback-only candidate persistence for current PocketBase 0.39.7 by explicitly writing
+  `mb_match_status: not_attempted`; other catalog/identity defaults remain deliberately ineligible
+  and missing canonical identity.
+- Added an isolated pinned-runtime regression for a ready party-scoped claim/grant, song/queue
+  persistence, exact 200 idempotent replay, and same-/cross-party grant rejection. Unexpected
+  persistence failures now have a safe retryable `fallback_persistence_unavailable` response while
+  known expiry, candidate, rate, and duplicate errors remain specific.
+- Signed SHA `05dd13c03c1f74cde3134ce36f506d7f87400c47` deployed to retained Compose staging as
+  `s2bd7mbl58v2zcd9swmdhpcl`, preserving the external PocketBase volume. The cached validation
+  party `N5P6LYXA` was expired when opened; no live fallback search, catalog mutation, or queue
+  mutation occurred.
