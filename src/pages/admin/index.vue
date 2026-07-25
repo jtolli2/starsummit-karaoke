@@ -1130,7 +1130,7 @@ onUnmounted(() => {
           </div>
           <div class="batch-review">
             <span>{{ selectedApprovalCount }} selected</span>
-            <button type="button" class="quiet" @click="selectAllApprovable" :disabled="catalogLoading || !playlistSourceKey.trim()">Select all approvable</button>
+            <button type="button" class="quiet" @click="selectAllApprovable" :disabled="catalogLoading">Select all approvable</button>
             <button type="button" class="quiet" @click="selectedApprovals = []; approvalSelection = null">Clear selection</button>
             <button
               type="button"
