@@ -1572,11 +1572,11 @@ function legacySleep(ms) {
 function legacyScopeRows(q) {
   const songs = $app.findRecordsByFilter(
     'karaoke_songs',
-    'source = {:source} && playlist_source_id = {:playlist} && (review_status = {:needs} || review_status = {:unreviewed}) && identity_status = {:missing}',
+    'source = {:source} && (review_status = {:needs} || review_status = {:unreviewed}) && identity_status = {:missing}',
     '+playlist_position,+id',
     100000,
     0,
-    { source: 'youtube_playlist', playlist: LEGACY_PLAYLIST_ID, needs: 'needs_review', unreviewed: 'unreviewed' },
+    { source: 'youtube_playlist', needs: 'needs_review', unreviewed: 'unreviewed' },
   )
   return songs.map((song) => ({
     id: q.id(song),
@@ -1645,7 +1645,7 @@ function legacyRunJob() {
       const row = rows[cursor]; const outcome = { id: row.id, decision: 'deferred' }
       try {
         const song = $app.findRecordById('karaoke_songs', row.id)
-        if (!song || q.str(song, 'source') !== 'youtube_playlist' || q.str(song, 'playlist_source_id') !== LEGACY_PLAYLIST_ID || !['needs_review', 'unreviewed'].includes(q.str(song, 'review_status')) || q.str(song, 'identity_status') !== 'missing') throw new Error('scope_mismatch')
+        if (!song || q.str(song, 'source') !== 'youtube_playlist' || !['needs_review', 'unreviewed'].includes(q.str(song, 'review_status')) || q.str(song, 'identity_status') !== 'missing') throw new Error('scope_mismatch')
         const rowDigest = q.hash(q.serializeJson(row));
         if (q.str(song, 'binding_input_digest') === q.str(job, 'input_digest') && q.str(song, 'binding_row_digest') === rowDigest) { outcome.decision = 'replay'; report.push(outcome); if (!legacySaveJob(q, job, token, (current) => { q.set(current, 'cursor', cursor + 1); q.setJson(current, 'report_json', report); q.set(current, 'updated_at', q.now()) })) break; continue }
         const parsed = matcher.parseYouTubeTitle(q.str(song, 'video_title')); if (parsed.status !== 'parsed') throw new Error('title_unparsed')
