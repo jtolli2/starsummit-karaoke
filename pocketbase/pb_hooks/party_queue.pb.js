@@ -1683,12 +1683,17 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${inputDigest}`); let job = null
   try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
   if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
+  // Route callbacks retain the initial helper object in PocketBase worker VMs; kick a
+  // bounded batch now so creation and replay do not depend on a browser-side timer.
+  try { q.legacyRunJob() } catch (_) {}
+  try { job = $app.findRecordById('karaoke_legacy_playlist_jobs', q.id(job)) } catch (_) {}
   return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length })
 })
 
 routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const q = globalThis.__partyQueue; if (!q.tablet(q.auth(c))) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required'); const key = String(q.query(c, 'jobKey') || ''); if (!key) return q.json(c, 422, 'job_key_required', 'jobKey is required')
+  try { q.legacyRunJob() } catch (_) {}
   try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), report: q.jsonValue(job, 'report_json', []) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
 })
 
