@@ -1,60 +1,52 @@
-# Admin-Confirmed Public Playlist Import and Safe Bulk Approval
+# Automated MusicBrainz Canonical Identity Matching
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
 
 ## Status
 
-Complete
+In Progress
 
 ## Goals
 
-- Replace trusted-source allowlisting as an import authorization gate with authenticated
-  `tablet_admin` public-playlist preview, strict local URL/ID parsing, official fixed YouTube Data
-  API calls, public ownership/visibility verification, bounded quota/caching, and sanitized errors.
-- Bind an explicit, expiring, single-purpose server confirmation to the verified immutable playlist
-  snapshot and operator; make import restart-safe, idempotent, delta-only, provenance-preserving,
-  and never automatically approve or establish canonical identity for untrusted sources.
-- Provide an `/admin` preview/confirmation/import experience that distinguishes known parser
-  profiles from admin-confirmed public sources and safely recovers cache, expiry, and retry state.
-- Add source-scoped `Select all approvable` / clear-selection review controls with opaque server
-  snapshots, policy revalidation, bounded idempotent chunks, durable audit, and no cross-scope or
-  stale-row approval.
-- Preserve guest, party, queue, controller, existing catalog, all eight retained exception rows,
-  volume, snapshots, claims, quota, history, and curation. Document the approved architecture and
-  validate locally, against PocketBase 0.39.7, in independent review, and on retained staging.
+- Deterministically parse newly imported or revealed YouTube playlist song titles while preserving
+  channel/uploader data strictly as provenance, never canonical artist identity.
+- Query and compare MusicBrainz recording candidates with an identifying User-Agent, no more than
+  one request per second, durable replayable cache, normalized artist/title comparison, aliases,
+  featured artists, and recording/release evidence.
+- Apply only unambiguous, high-confidence canonical corrections through the existing constrained,
+  audited application workflow. Corrected songs must remain `needs_review` and ineligible.
+- Make the runner resumable, restart-safe, bounded, idempotent, dry-run capable, and report
+  confidence, evidence, match reason, runner-up separation, and reason-coded deferrals.
+- Fail closed for malformed data, covers, medleys, live/remix/version ambiguity, competing
+  recordings, canonical conflicts, weak/near-tied candidates, and no-result cases; never call
+  YouTube for matching work or alter unrelated/pre-existing rows or retained state.
+- Evaluate durable, audited MusicBrainz recording/release provenance without making identity depend
+  on a single release; validate against the pinned PocketBase 0.39.7 runtime and independently
+  review the completed local implementation.
 
 ## Constraints and Notes
 
-- Only constrained authenticated `tablet_admin` sessions may call preview, confirmation/import, or
-  review routes. Browser code has no YouTube, PocketBase superuser, Coolify, controller, or Lounge
-  secrets and never writes privileged collections directly.
-- Accept only playlist IDs, normal YouTube playlist URLs, and legacy `channelId:playlistId` source
-  keys. Never fetch arbitrary URLs, scrape HTML, use InnerTube/yt-dlp, or follow redirects.
-- Unknown owners are permitted only after public metadata verification and explicit operator
-  confirmation. Uploader/channel metadata is provenance only; unknown-source parsing remains
-  untrusted and cannot establish canonical artist/title or broad guest eligibility.
-- Never delete/reset records, replace the external volume, change production DNS, use the backup
-  API key automatically, mutate tablet enrollment/Lounge pairing, or run the deferred Wi-Fi test.
-- Standing approval from the delegated request covers scoped local and retained-staging mutations,
-  commit/push to existing `main`, official bounded YouTube calls, and Coolify deployment. Report
-  every remote mutation without secrets.
+- Run only against eligible newly imported/revealed playlist records through authenticated,
+  constrained server routes; no browser secrets, direct database/superuser writes, auto-approval,
+  or eligibility expansion.
+- Local implementation and non-destructive validation are authorized. A separate explicit approval
+  is required before commits, pushes, remote PocketBase/Coolify mutations, deployments, deletion,
+  or any MusicBrainz live processing that persists remote records.
+- Preserve all unresolved and pre-existing rows, retained volumes, controller/tablet state, queue
+  state, and imported playlist provenance. Do not restart the stopped curator or create a watcher.
 
 ## Implementation Notes
 
-- 2026-07-24: Loaded and started from the delegated feature request. Baseline is clean and both
-  local `main` and `origin/main` resolve to `8f236ff43d8c198e0b10bc5536cb031bd79e1832`.
-- Discovery, implementation, validation, review, staging evidence, and completion history follow.
-- 2026-07-24: Implemented strict public playlist input parsing, durable admin-bound preview
-  confirmations, authoritative import revalidation, cached-preview confirmation renewal, and
-  server-only source/filter-bound bulk selection with resumable approval operations. Focused parser
-  tests (9), focused Vue tests (22), production build/type-check, hook syntax, and multiple
-  independent security reviews passed. Pinned runtime and retained-staging evidence are recorded
-  separately where available.
-- 2026-07-24: User authorized continuous conservative curation of the remaining public-playlist
-  review backlog. Each rendition must receive evidence-backed correction/approval or a retained
-  non-approval outcome; no mass approval or exception cleanup is permitted.
-- 2026-07-24: Manual curator and its 20-minute watchdog were stopped by explicit scope
-  correction. The uncommitted automated MusicBrainz pipeline scaffolding was removed; canonical
-  automation is deferred to a separate feature. Existing public-playlist import and safe bulk
-  approval delivery remains complete and staging is retained on commit 35984dd.
+- 2026-07-24: Loaded from the delegated feature request after the preceding Admin-Confirmed Public
+  Playlist Import feature completed. Exact baseline: `origin/main` / local HEAD
+  `239a1f3fdcb11f2202ee2959e9f213c705238a67`.
+- Began local-only discovery and implementation. No curator/watch was restarted and no remote
+  MusicBrainz, PocketBase, Coolify, commit, push, or deployment mutation has been performed.
+- 2026-07-24: Added a conservative deterministic MusicBrainz matcher, snapshot-bound bounded
+  tablet-admin runner, durable replay cache/rate lease/job checkpoints, and shared audited
+  correction path. It never uses uploader/channel data as identity, keeps corrections
+  `needs_review`/ineligible, and dry runs are cache-only. Focused matcher/job tests pass 9/9;
+  hook syntax and diff checks pass. Pinned PocketBase 0.39.7 route validation is blocked locally
+  because no `POCKETBASE_BIN` is installed. An existing checkpoint-health regex test is unrelated
+  to this feature and continues to fail against the unchanged baseline route.

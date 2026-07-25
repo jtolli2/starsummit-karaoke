@@ -1,4 +1,6 @@
 // Party lifecycle and fair-rotation queue API. Collection writes remain locked by schema rules.
+function correctCatalogIdentity(tx, song, options) { const q = globalThis.__partyQueue; const { title, artist, reason, actorId, at, source = 'operator', recordingId = '', provenance = {}, matchReason = '', matchConfidence = 0, runnerUp = null } = options; const key = `${q.normalized(artist, 160)}|${q.normalized(title, 240)}`; let collision = null; try { collision = tx.findFirstRecordByFilter('karaoke_songs', 'identity_key = {:key} && id != {:id}', { key, id: q.id(song) }) } catch (_) {}; if (collision) throw new Error('identity_conflict'); const history = q.jsonValue(song, 'review_history_json', []); const events = Array.isArray(history) ? history : []; const automatic = source === 'musicbrainz'; const status = automatic ? 'verified_source' : 'operator_corrected'; const from = { title: q.str(song, 'title'), artist: q.str(song, 'artist'), status: q.str(song, 'identity_status') }; const to = { title, artist, status }; const event = automatic ? { action: 'musicbrainz_automatic_match', source, from, to, recordingId, ...(runnerUp ? { runnerUp } : {}), provenance, reason, by: actorId, at } : { action: 'identity_correction', source, from, to, recordingId, provenance, reason, by: actorId, at }; events.push(event); q.setJson(song, 'review_history_json', events); q.set(song, 'title', title); q.set(song, 'artist', artist); q.set(song, 'normalized_title', q.normalized(title, 240)); q.set(song, 'normalized_artist', q.normalized(artist, 160)); q.set(song, 'identity_key', key); q.set(song, 'identity_status', status); q.set(song, 'identity_reason', automatic ? 'musicbrainz_high_confidence' : reason); q.set(song, 'review_status', 'needs_review'); q.set(song, 'eligible', false); q.set(song, 'reviewed_at', at); q.set(song, 'reviewed_by', actorId); if (automatic) { q.set(song, 'mb_recording_id', recordingId); q.set(song, 'mb_match_status', 'matched'); q.set(song, 'mb_match_reason', matchReason); q.set(song, 'mb_match_confidence', matchConfidence || 0); q.setJson(song, 'mb_runner_up_json', runnerUp || {}); q.setJson(song, 'mb_provenance_json', provenance); q.set(song, 'mb_matched_at', at) }; tx.save(song); return { id: q.id(song), title, artist, identityStatus: status, reviewState: 'needs_review', eligible: false } }
+
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/
 const PARTY_TTL = 12 * 60 * 60 * 1000
@@ -460,6 +462,7 @@ function tabletControllerView(party) {
 }
 
 globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability }
+globalThis.__partyQueue.correctCatalogIdentity = correctCatalogIdentity
 globalThis.__partyQueueRealtime = {
   authorize(e) {
     const topic = 'karaoke_party_wake'
@@ -1450,7 +1453,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/review', (c) => {
 
 routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/identity', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, now, id, str, set, setJson, jsonValue, normalized } = globalThis.__partyQueue
+  const { auth, tablet, json, body, now, id, str, correctCatalogIdentity } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const title = String(input.title || '').trim().slice(0, 240); const artist = String(input.artist || '').trim().slice(0, 160); const reason = String(input.reason || '').trim().slice(0, 240)
   if (!title || !artist || !reason) return json(c, 422, 'canonical_identity_required', 'Canonical artist, title, and correction reason are required')
@@ -1458,13 +1461,7 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/identity', (c) => {
     let result = null
     $app.runInTransaction((tx) => {
       const song = tx.findRecordById('karaoke_songs', c.request.pathValue('id')); if (!song) throw new Error('song_not_found')
-      const normalizedTitle = normalized(title, 240); const normalizedArtist = normalized(artist, 160); const identityKey = `${normalizedArtist}|${normalizedTitle}`
-      let collision = null; try { collision = tx.findFirstRecordByFilter('karaoke_songs', 'identity_key = {:identity} && id != {:id}', { identity: identityKey, id: id(song) }) } catch (_) {}
-      if (collision) throw new Error('identity_conflict')
-      const history = jsonValue(song, 'review_history_json', []); const events = Array.isArray(history) ? history : []
-      events.push({ action: 'identity_correction', from: { title: str(song, 'title'), artist: str(song, 'artist'), status: str(song, 'identity_status') }, to: { title, artist, status: 'operator_corrected' }, reason, by: id(auth(c)), at: now() })
-      setJson(song, 'review_history_json', events); set(song, 'title', title); set(song, 'artist', artist); set(song, 'normalized_title', normalizedTitle); set(song, 'normalized_artist', normalizedArtist); set(song, 'identity_key', identityKey); set(song, 'identity_status', 'operator_corrected'); set(song, 'identity_reason', reason); set(song, 'review_status', 'needs_review'); set(song, 'eligible', false); set(song, 'reviewed_at', now()); set(song, 'reviewed_by', id(auth(c))); tx.save(song)
-      result = { id: id(song), title, artist, identityStatus: 'operator_corrected', reviewState: 'needs_review', eligible: false }
+      result = correctCatalogIdentity(tx, song, { title, artist, reason, actorId: id(auth(c)), at: now() })
     })
     return c.json(200, result)
   } catch (error) { const code = ['song_not_found', 'identity_conflict'].includes(error.message) ? error.message : 'identity_correction_failed'; return json(c, code === 'song_not_found' ? 404 : code === 'identity_conflict' ? 409 : 500, code, code === 'song_not_found' ? 'Song was not found' : code === 'identity_conflict' ? 'Canonical identity already belongs to another catalog song' : 'Canonical identity correction failed') }
@@ -1502,4 +1499,60 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/{id}/replace', (c) => {
   try {
     let result = null; $app.runInTransaction((tx) => { const song = tx.findRecordById('karaoke_songs', c.request.pathValue('id')); if (!song) throw new Error('song_not_found'); const candidate = candidateId ? tx.findRecordById('karaoke_songs', candidateId) : tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }); if (!candidate || id(candidate) === id(song)) throw new Error('invalid_replacement'); if (str(candidate, 'classification') !== 'karaoke' || str(candidate, 'review_status') !== 'approved' || !(candidate.getBool ? candidate.getBool('eligible') : false)) throw new Error('replacement_unavailable'); const history = jsonValue(song, 'review_history_json', []); const events = Array.isArray(history) ? history : []; events.push({ action: 'replacement', replacementYoutubeId: str(candidate, 'youtube_id'), reason: String(input.reason || 'operator_replacement').slice(0, 240), by: id(auth(c)), at: now() }); setJson(song, 'review_history_json', events); set(song, 'replacement_youtube_id', str(candidate, 'youtube_id')); set(song, 'replacement_reason', String(input.reason || 'operator_replacement').slice(0, 240)); set(song, 'eligible', false); tx.save(song); result = { id: id(song), replacementYoutubeId: str(candidate, 'youtube_id'), eligible: false } }); return c.json(200, result)
   } catch (error) { const code = ['song_not_found', 'invalid_replacement', 'replacement_unavailable'].includes(error.message) ? error.message : 'replace_failed'; return json(c, code === 'song_not_found' ? 404 : code === 'replace_failed' ? 500 : 409, code, code === 'song_not_found' ? 'Song was not found' : code === 'invalid_replacement' ? 'Replacement candidate was not found' : code === 'replacement_unavailable' ? 'Replacement candidate must be approved eligible karaoke' : 'Catalog replacement failed') }
+})
+
+// Local-only MusicBrainz identity reconciliation. The route is deliberately
+// bounded and dry-run by default; only newly revealed playlist rows are
+// eligible, and a successful match remains needs_review/ineligible until the
+// existing constrained review workflow approves it.
+routerAdd('POST', '/api/karaoke/tablet/catalog/musicbrainz/match', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const { auth, tablet, json, body, now, id, str, num, hash, set, setJson, jsonValue, correctCatalogIdentity } = globalThis.__partyQueue
+  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  let matcher = null
+  try { matcher = require(__hooks + '/../catalog/musicbrainz-identity.cjs') } catch (_) { return json(c, 503, 'musicbrainz_unavailable', 'MusicBrainz matcher is unavailable') }
+  const input = body(c); const ids = [...new Set((Array.isArray(input.ids) ? input.ids : [c.request.pathValue('id')]).map((value) => String(value || '')).filter(Boolean))]
+  if (!ids.length || ids.length > 20) return json(c, 422, 'invalid_batch', 'Select between 1 and 20 songs')
+  const dryRun = input.dryRun !== false
+  const sourceId = String(input.sourceId || '').trim(); const snapshotFingerprint = String(input.snapshotFingerprint || '').trim()
+  if (!dryRun && (!sourceId || !/^[a-f0-9]{64}$/i.test(snapshotFingerprint))) return json(c, 422, 'snapshot_binding_required', 'Apply requires an immutable playlist snapshot binding')
+  const fetchJson = (url, headers) => { const response = $http.send({ url, method: 'GET', headers, timeout: 15 }); if (!response || Number(response.statusCode || response.status || 0) >= 400) throw new Error('musicbrainz_http_error'); return JSON.parse(String(response.body || '{}')) }
+  const results = []; let processed = 0; const jobKey = hash(JSON.stringify({ sourceId, snapshotFingerprint, ids, policy: 'mb-v1', parser: 'yt-title-v1' })); let job = null
+  try { job = $app.findFirstRecordByFilter('karaoke_musicbrainz_matches', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
+  const inputBindings = ids.map((songId) => { const row = $app.findRecordById('karaoke_songs', songId); return { id: songId, youtubeId: row ? str(row, 'youtube_id') : '', title: row ? str(row, 'video_title') : '', source: row ? str(row, 'playlist_source_id') : '', snapshot: row ? str(row, 'playlist_snapshot_fingerprint') : '' } })
+  const inputDigest = hash(JSON.stringify(inputBindings))
+  if (job && !dryRun && (str(job, 'source_id') !== sourceId || str(job, 'snapshot_fingerprint') !== snapshotFingerprint)) return json(c, 409, 'job_binding_mismatch', 'The MusicBrainz job is bound to a different playlist snapshot')
+  if (job && !dryRun && (str(job, 'input_digest') !== inputDigest || hash(JSON.stringify(jsonValue(job, 'inputs_json', []))) !== inputDigest)) return json(c, 409, 'job_input_drift', 'Playlist row metadata changed; create a new snapshot-bound job')
+  const startCursor = job ? num(job, 'cursor') : 0
+  if (job && !dryRun && str(job, 'expires_at') && Date.parse(str(job, 'expires_at')) <= Date.now()) return json(c, 409, 'job_expired', 'The MusicBrainz job has expired; start a new snapshot-bound job')
+  if (job && !dryRun) { const prior = jsonValue(job, 'report_json', []); if (Array.isArray(prior)) results.push(...prior) }
+  if (job && str(job, 'status') === 'complete' && dryRun) return c.json(200, { dryRun, bounded: ids.length, results: jsonValue(job, 'report_json', []), report: { processed: ids.length, deferred: 0, replay: true } })
+  if (!dryRun && !job) try { job = new Record($app.findCollectionByNameOrId('karaoke_musicbrainz_matches')); set(job, 'job_key', jobKey); set(job, 'source_id', sourceId); set(job, 'snapshot_fingerprint', snapshotFingerprint); set(job, 'input_digest', hash(JSON.stringify(inputBindings))); setJson(job, 'inputs_json', inputBindings); set(job, 'policy_version', 'mb-v1'); set(job, 'parser_version', 'yt-title-v1'); set(job, 'max_items', ids.length); set(job, 'status', 'running'); set(job, 'dry_run', false); set(job, 'cursor', 0); set(job, 'expires_at', new Date(Date.now() + 86400000).toISOString()); setJson(job, 'report_json', []); $app.save(job) } catch (_) {}
+  if (!dryRun && !job) return json(c, 503, 'musicbrainz_job_unavailable', 'MusicBrainz job storage is unavailable')
+  let retryable = false
+  try {
+    for (let cursor = startCursor; cursor < ids.length; cursor++) { const songId = ids[cursor]
+      const song = $app.findRecordById('karaoke_songs', songId); if (!song) { results.push({ id: songId, decision: 'deferred', reason: 'song_not_found' }); continue }
+      if (str(song, 'source') !== 'youtube_playlist' || str(song, 'identity_status') !== 'missing' || (!dryRun && (str(song, 'playlist_source_id') !== sourceId || str(song, 'playlist_snapshot_fingerprint') !== snapshotFingerprint))) { results.push({ id: songId, decision: 'deferred', reason: 'snapshot_binding_mismatch' }); continue }
+      const parsed = matcher.parseYouTubeTitle(str(song, 'video_title')); let payload = null
+      if (parsed.status === 'parsed') {
+        const query = `recording:"${parsed.title}" AND artist:"${parsed.artist}"`; const cacheKey = `mb:recording:${matcher.normalize(query)}`
+        try { const cached = $app.findFirstRecordByFilter('karaoke_musicbrainz_cache', 'cache_key = {:key}', { key: cacheKey }); if (cached && (!str(cached, 'expires_at') || Date.parse(str(cached, 'expires_at')) > Date.now())) payload = jsonValue(cached, 'payload_json', null) } catch (_) {}
+        if (!payload && dryRun) { results.push({ id: songId, decision: 'deferred', reason: 'dry_run_cache_miss' }); processed++; continue }
+        if (!payload) {
+          let leased = false
+          try { $app.runInTransaction((tx) => { let gate = null; try { gate = tx.findFirstRecordByFilter('karaoke_musicbrainz_cache', 'cache_key = {:key}', { key: '__rate__' }) } catch (_) {} const next = gate ? Date.parse(str(gate, 'updated_at')) + 1000 : 0; if (next > Date.now()) throw new Error('rate_limited'); if (!gate) { gate = new Record(tx.findCollectionByNameOrId('karaoke_musicbrainz_cache')); set(gate, 'cache_key', '__rate__') } set(gate, 'updated_at', new Date(Date.now()).toISOString()); set(gate, 'expires_at', new Date(Date.now() + 2000).toISOString()); tx.save(gate); leased = true }) } catch (error) { if (error.message === 'rate_limited') { retryable = true; break } throw error }
+          if (!leased) continue
+          payload = fetchJson(`${matcher.MB_ROOT}/recording?query=${encodeURIComponent(`recording:"${parsed.title}" AND artist:"${parsed.artist}"`)}&fmt=json&limit=10`, { Accept: 'application/json', 'User-Agent': matcher.USER_AGENT })
+          if (!dryRun) { const cache = new Record($app.findCollectionByNameOrId('karaoke_musicbrainz_cache')); set(cache, 'cache_key', cacheKey); setJson(cache, 'payload_json', payload); set(cache, 'updated_at', now()); set(cache, 'expires_at', new Date(Date.now() + 604800000).toISOString()); $app.save(cache) }
+        }
+      }
+      const match = parsed.status === 'parsed' ? matcher.evaluateCandidates(parsed, payload?.recordings || []) : { decision: 'deferred', reason: parsed.reason }
+      results.push({ id: songId, decision: match.decision, reason: match.reason, confidence: match.confidence || 0, runnerUp: match.runnerUp || null, recording: match.recording || null, provenance: match.recording ? { query: `recording:"${parsed.title}" AND artist:"${parsed.artist}"`, releases: match.recording.releases || [], source: 'musicbrainz' } : null }); processed++
+      if (!dryRun && match.decision === 'matched') try { $app.runInTransaction((tx) => { const current = tx.findRecordById('karaoke_songs', songId); if (!current || str(current, 'identity_status') !== 'missing') return; correctCatalogIdentity(tx, current, { title: match.recording.title, artist: match.recording.artist, reason: match.reason, actorId: id(auth(c)), at: now(), source: 'musicbrainz', recordingId: match.recording.id, runnerUp: match.runnerUp || null, matchReason: match.reason, matchConfidence: match.confidence || 0, provenance: { releases: match.recording.releases || [], source: 'musicbrainz' } }) }) } catch (error) { if (error.message === 'identity_conflict') { results[results.length - 1].decision = 'deferred'; results[results.length - 1].reason = 'canonical_collision' } else throw error }
+      if (!dryRun && job) { set(job, 'cursor', cursor + 1); setJson(job, 'report_json', results); $app.save(job) }
+    }
+    if (!dryRun && job && !retryable) { set(job, 'status', 'complete'); set(job, 'cursor', ids.length); setJson(job, 'report_json', results); $app.save(job) }
+    return c.json(200, { dryRun, bounded: ids.length, results, report: { processed, deferred: results.filter((row) => row.decision === 'deferred').length, cursor: retryable && job ? num(job, 'cursor') : ids.length, resumable: Boolean(job), retryable } })
+  } catch (_) { return json(c, 503, 'musicbrainz_match_failed', 'MusicBrainz matching failed') }
 })
