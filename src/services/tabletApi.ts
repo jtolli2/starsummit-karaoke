@@ -141,6 +141,22 @@ export type LegacyPlaylistJob = {
   summary?: Record<string, unknown>
 }
 
+export type MatchedApprovalResult = {
+  dryRun: boolean
+  jobId: string
+  jobKey?: string
+  totalRows?: number
+  matched: number
+  approvable?: number
+  alreadyApproved?: number
+  approved?: number
+  excluded: number
+  exclusions: Record<string, number>
+  operationId?: string
+  cursor?: number
+  complete?: boolean
+}
+
 async function request<T>(url: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('accept', 'application/json')
@@ -364,6 +380,22 @@ export function assumeLegacyPlaylist(token: string) {
 export function loadLegacyPlaylistJob(token: string, jobKey: string) {
   const params = new URLSearchParams({ jobKey })
   return request<LegacyPlaylistJob>(`/api/karaoke/tablet/catalog/legacy-playlist/assume?${params}`, {}, token)
+}
+
+export function previewMatchedApprovals(token: string, jobId: string) {
+  return request<MatchedApprovalResult>(
+    '/api/karaoke/tablet/catalog/legacy-playlist/approve-matched',
+    { method: 'POST', body: JSON.stringify({ jobId, dryRun: true }) },
+    token,
+  )
+}
+
+export function commitMatchedApprovals(token: string, jobId: string, operationId: string) {
+  return request<MatchedApprovalResult>(
+    '/api/karaoke/tablet/catalog/legacy-playlist/approve-matched',
+    { method: 'POST', body: JSON.stringify({ jobId, operationId, dryRun: false }) },
+    token,
+  )
 }
 
 export type MusicBrainzMatchResponse = {

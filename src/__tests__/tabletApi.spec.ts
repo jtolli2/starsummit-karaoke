@@ -1,5 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { authenticateTablet, correctCatalogIdentity, importTrustedPlaylist, issuePlaybackCommand, loadActiveParty, loadCatalog, loadCatalogReport, loadTabletStatus, previewTrustedPlaylist, replaceCatalogSong, reviewCatalogSong, revalidateTrustedPlaylist, transitionQueue, previewPublicPlaylist, importConfirmedPlaylist, createApprovalSelection, commitApprovalSelection, updateApprovalSelection } from '@/services/tabletApi'
+import {
+  authenticateTablet,
+  commitMatchedApprovals,
+  correctCatalogIdentity,
+  importTrustedPlaylist,
+  issuePlaybackCommand,
+  loadActiveParty,
+  loadCatalog,
+  loadCatalogReport,
+  loadTabletStatus,
+  previewMatchedApprovals,
+  previewTrustedPlaylist,
+  replaceCatalogSong,
+  reviewCatalogSong,
+  revalidateTrustedPlaylist,
+  transitionQueue,
+  previewPublicPlaylist,
+  importConfirmedPlaylist,
+  createApprovalSelection,
+  commitApprovalSelection,
+  updateApprovalSelection,
+} from '@/services/tabletApi'
 
 describe('tablet API', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -119,5 +140,56 @@ describe('tablet API', () => {
     vi.stubGlobal('fetch', fetchMock)
     await updateApprovalSelection('tablet-token', 'sel-1', ['a'])
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ digest: 'sel-1', recordIds: ['a'] })
+  })
+
+  it('previews and resumes approvals against one completed matcher job', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            dryRun: true,
+            jobId: 'sqwd85vrfrwrzym',
+            matched: 2,
+            approvable: 2,
+            excluded: 0,
+            exclusions: {},
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            dryRun: false,
+            jobId: 'sqwd85vrfrwrzym',
+            operationId: 'matcher:operation-1',
+            matched: 2,
+            approved: 2,
+            excluded: 0,
+            exclusions: {},
+            complete: true,
+          }),
+          { status: 200 },
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await previewMatchedApprovals('tablet-token', 'sqwd85vrfrwrzym')
+    await commitMatchedApprovals('tablet-token', 'sqwd85vrfrwrzym', 'matcher:operation-1')
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      '/api/karaoke/tablet/catalog/legacy-playlist/approve-matched',
+      '/api/karaoke/tablet/catalog/legacy-playlist/approve-matched',
+    ])
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      jobId: 'sqwd85vrfrwrzym',
+      dryRun: true,
+    })
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({
+      jobId: 'sqwd85vrfrwrzym',
+      operationId: 'matcher:operation-1',
+      dryRun: false,
+    })
   })
 })

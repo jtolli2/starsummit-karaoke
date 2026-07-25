@@ -16,6 +16,8 @@ import {
   loadCatalogReport,
   assumeLegacyPlaylist,
   loadLegacyPlaylistJob,
+  previewMatchedApprovals,
+  commitMatchedApprovals,
   importTrustedPlaylist,
   revalidateTrustedPlaylist,
   loadNext,
@@ -39,6 +41,7 @@ import {
   type TabletQueueItem,
   type TabletStatus,
   type LegacyPlaylistJob,
+  type MatchedApprovalResult,
   type ControllerPairingGrant,
   type ControllerPairingStatus,
 } from '@/services/tabletApi'
@@ -91,6 +94,9 @@ const approvalConfirmOpen = ref(false)
 const musicBrainzResult = ref<Awaited<ReturnType<typeof runMusicBrainzMatch>> | null>(null)
 const legacyJob = ref<LegacyPlaylistJob | null>(null)
 const legacyLoading = ref(false)
+const completedMatcherJobId = ref('sqwd85vrfrwrzym')
+const matchedApproval = ref<MatchedApprovalResult | null>(null)
+const matchedApprovalLoading = ref(false)
 let legacyPollTimer: ReturnType<typeof setTimeout> | undefined
 const musicBrainzBindingGroup = computed(() => {
   const groups = new Map<string, { sourceId: string; snapshotFingerprint: string; rows: CatalogSong[]; firstIndex: number }>()
@@ -663,6 +669,47 @@ async function startLegacyJob() {
   finally { legacyLoading.value = false }
 }
 
+async function previewCompletedMatches() {
+  const jobId = completedMatcherJobId.value.trim()
+  if (!token.value || matchedApprovalLoading.value || !jobId) return
+  matchedApprovalLoading.value = true
+  try {
+    matchedApproval.value = await previewMatchedApprovals(token.value, jobId)
+    message.value = `${matchedApproval.value.approvable || 0} completed matcher results are currently approvable; ${matchedApproval.value.alreadyApproved || 0} are already approved and ${matchedApproval.value.excluded} are excluded.`
+    error.value = false
+  } catch (cause) { message.value = explain(cause, 'Could not preview completed matcher approvals.'); error.value = true }
+  finally { matchedApprovalLoading.value = false }
+}
+
+async function approveCompletedMatches() {
+  const jobId = completedMatcherJobId.value.trim()
+  if (!token.value || matchedApprovalLoading.value || !jobId) return
+  const preview = await previewMatchedApprovals(token.value, jobId).catch((cause) => {
+    message.value = explain(cause, 'Could not preview completed matcher approvals.')
+    error.value = true
+    return null
+  })
+  if (!preview) return
+  matchedApproval.value = preview
+  if (!preview.approvable) { message.value = 'No completed matcher results are currently approvable.'; error.value = false; return }
+  if (!window.confirm(`Approve ${preview.approvable} songs bound to completed matcher job ${jobId}? Deferred, rejected, conflicting, and unrelated songs remain unchanged.`)) return
+  matchedApprovalLoading.value = true
+  const operationId = `matcher:${jobId}:${crypto.randomUUID()}`
+  try {
+    let result: MatchedApprovalResult | null = null
+    for (let attempt = 0; attempt < 100; attempt++) {
+      result = await commitMatchedApprovals(token.value, jobId, operationId)
+      matchedApproval.value = result
+      if (result.complete) break
+    }
+    if (!result?.complete) throw new Error('Approval operation did not finish within its safety bound')
+    message.value = `Approved ${result.approved || 0} completed matcher results; ${result.excluded} were safely excluded.`
+    error.value = false
+    await refreshCatalog()
+  } catch (cause) { message.value = explain(cause, 'Completed matcher approvals stopped safely and can be resumed.'); error.value = true }
+  finally { matchedApprovalLoading.value = false }
+}
+
 async function refresh() {
   if (!token.value || !partyId.value) return
   try {
@@ -1118,6 +1165,11 @@ onUnmounted(() => {
             <div v-if="legacyJob" role="status">
               <p>Status: {{ legacyJob.status }} · {{ legacyJob.cursor }}/{{ legacyJob.total || legacyJob.count || 0 }} processed · {{ legacyJob.reportCount || 0 }} reports · policy {{ legacyJob.policyVersion || 'unknown' }} · updated {{ legacyJob.updatedAt || 'unknown' }}</p>
             </div>
+            <label for="completed-matcher-job">Completed matcher job ID</label>
+            <input id="completed-matcher-job" v-model="completedMatcherJobId" autocomplete="off" spellcheck="false" />
+            <button type="button" class="quiet" @click="previewCompletedMatches" :disabled="matchedApprovalLoading || !completedMatcherJobId.trim()">Preview matched approvals</button>
+            <button type="button" @click="approveCompletedMatches" :disabled="matchedApprovalLoading || !completedMatcherJobId.trim() || matchedApproval?.approvable === 0">{{ matchedApprovalLoading ? 'Approving…' : 'Approve completed matches' }}</button>
+            <p v-if="matchedApproval" role="status">{{ matchedApproval.matched }} matched · {{ matchedApproval.approvable ?? 0 }} approvable · {{ matchedApproval.alreadyApproved ?? 0 }} already approved · {{ matchedApproval.excluded }} excluded</p>
           </div>
           <label for="public-playlist">Public YouTube playlist URL or ID</label>
           <input id="public-playlist" v-model="publicPlaylistInput" placeholder="https://youtube.com/playlist?list=…" @keyup.enter="previewPublic" />

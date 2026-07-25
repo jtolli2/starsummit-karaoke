@@ -1762,6 +1762,180 @@ routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { const job = key ? $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }) : ($app.findRecordsByFilter('karaoke_legacy_playlist_jobs', '', '-updated_at', 1, 0) || [])[0]; if (!job) throw new Error('missing'); const report = q.jsonValue(job, 'report_json', []); return c.json(200, { jobKey: q.str(job, 'job_key'), playlistId: q.str(job, 'playlist_id'), policyVersion: q.str(job, 'policy_version'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), total: q.jsonValue(job, 'rows_json', []).length, reportCount: Array.isArray(report) ? report.length : 0, updatedAt: q.str(job, 'updated_at'), summary: legacyReportSummary(report) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
 })
 
+routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/approve-matched', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue
+  const actor = q.auth(c)
+  if (!q.tablet(actor)) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const input = q.body(c)
+  const jobId = String(input.jobId || '')
+  const dryRun = input.dryRun !== false
+  const operationId = String(input.operationId || '')
+  if (!/^[a-z0-9]{15}$/.test(jobId)) return q.json(c, 422, 'invalid_job_id', 'Completed matcher job ID is invalid')
+  if (!dryRun && !/^[A-Za-z0-9:_-]{8,120}$/.test(operationId)) return q.json(c, 422, 'invalid_operation_id', 'Approval operation ID is invalid')
+
+  let job
+  try { job = $app.findRecordById('karaoke_legacy_playlist_jobs', jobId) } catch (_) {
+    return q.json(c, 404, 'job_not_found', 'Completed matcher job was not found')
+  }
+  const rows = q.jsonValue(job, 'rows_json', [])
+  const report = q.jsonValue(job, 'report_json', [])
+  const inputDigest = q.str(job, 'input_digest')
+  if (
+    q.str(job, 'status') !== 'complete' ||
+    !Array.isArray(rows) ||
+    !Array.isArray(report) ||
+    q.num(job, 'cursor') < rows.length
+  ) return q.json(c, 409, 'job_not_complete', 'Matcher job is not authoritatively complete')
+  if (
+    q.str(job, 'playlist_id') !== q.legacyPlaylistId ||
+    q.str(job, 'policy_version') !== q.legacyPolicyVersion ||
+    !/^[a-f0-9]{64}$/.test(inputDigest)
+  ) return q.json(c, 422, 'job_binding_invalid', 'Matcher job binding is invalid')
+
+  const successfulIds = new Set()
+  for (const outcome of report) {
+    if (outcome && ['matched', 'replay'].includes(String(outcome.decision || '')) && /^[a-z0-9]{15}$/.test(String(outcome.id || ''))) successfulIds.add(String(outcome.id))
+  }
+  const candidates = []
+  const seen = new Set()
+  for (const row of rows) {
+    const rowId = String(row?.id || '')
+    if (!successfulIds.has(rowId) || seen.has(rowId)) continue
+    seen.add(rowId)
+    candidates.push({ id: rowId, rowDigest: q.hash(q.serializeJson(row)) })
+  }
+  if (successfulIds.size !== candidates.length) return q.json(c, 422, 'job_report_invalid', 'Matcher report does not match its immutable input rows')
+
+  const validate = (store, candidate) => {
+    let song
+    try { song = store.findRecordById('karaoke_songs', candidate.id) } catch (_) { return { reason: 'song_not_found' } }
+    if (
+      q.str(song, 'binding_kind') !== q.legacyBindingKind ||
+      q.str(song, 'binding_playlist_id') !== q.legacyPlaylistId ||
+      q.str(song, 'binding_input_digest') !== inputDigest ||
+      q.str(song, 'binding_row_digest') !== candidate.rowDigest ||
+      q.str(song, 'mb_match_status') !== 'matched'
+    ) return { song, reason: 'matcher_binding_changed' }
+    const reason = q.catalogApprovalReason(song, store)
+    return { song, reason }
+  }
+  const summarize = (items) => {
+    const reasons = {}
+    for (const item of items) reasons[item.reason] = (reasons[item.reason] || 0) + 1
+    return reasons
+  }
+  if (dryRun) {
+    const excluded = []
+    let approvable = 0
+    let alreadyApproved = 0
+    for (const candidate of candidates) {
+      const checked = validate($app, candidate)
+      if (checked.reason === null) approvable++
+      else if (checked.reason === 'already_approved') alreadyApproved++
+      else excluded.push({ id: candidate.id, reason: checked.reason || 'not_approvable' })
+    }
+    return c.json(200, {
+      dryRun: true,
+      jobId,
+      jobKey: q.str(job, 'job_key'),
+      totalRows: rows.length,
+      matched: candidates.length,
+      approvable,
+      alreadyApproved,
+      excluded: excluded.length,
+      exclusions: summarize(excluded),
+    })
+  }
+
+  const selectionDigest = q.hash(q.serializeJson({
+    kind: 'completed_matcher_approval_v1',
+    jobId,
+    jobKey: q.str(job, 'job_key'),
+    inputDigest,
+    candidates,
+  }))
+  try {
+    let authoritative
+    $app.runInTransaction((tx) => {
+      let operation = null
+      try { operation = tx.findFirstRecordByFilter('karaoke_catalog_approval_operations', 'operation_id = {:operationId}', { operationId }) } catch (_) {}
+      if (operation && (q.str(operation, 'admin_id') !== q.id(actor) || q.str(operation, 'selection_digest') !== selectionDigest)) throw new Error('operation_binding_mismatch')
+      if (!operation) {
+        operation = new Record(tx.findCollectionByNameOrId('karaoke_catalog_approval_operations'))
+        q.set(operation, 'operation_id', operationId)
+        q.set(operation, 'selection_digest', selectionDigest)
+        q.set(operation, 'admin_id', q.id(actor))
+        q.set(operation, 'status', 'running')
+        q.set(operation, 'cursor', 0)
+        q.set(operation, 'approved_count', 0)
+        q.setJson(operation, 'excluded_json', [])
+        q.setJson(operation, 'audit_json', [{ action: 'completed_matcher_approval_started', jobId, inputDigest, by: q.id(actor), at: q.now() }])
+        tx.save(operation)
+      }
+      if (q.str(operation, 'status') === 'complete') { authoritative = operation; return }
+      let cursor = q.num(operation, 'cursor')
+      let approved = q.num(operation, 'approved_count')
+      const excluded = q.jsonValue(operation, 'excluded_json', [])
+      const safeExcluded = Array.isArray(excluded) ? excluded : []
+      const chunk = candidates.slice(cursor, cursor + 20)
+      for (const candidate of chunk) {
+        const checked = validate(tx, candidate)
+        if (checked.reason === 'already_approved') {
+          safeExcluded.push({ id: candidate.id, reason: 'already_approved' })
+          continue
+        }
+        if (checked.reason !== null) {
+          safeExcluded.push({ id: candidate.id, reason: checked.reason || 'not_approvable' })
+          continue
+        }
+        const history = q.jsonValue(checked.song, 'review_history_json', [])
+        if (!Array.isArray(history)) {
+          safeExcluded.push({ id: candidate.id, reason: 'schema_invalid' })
+          continue
+        }
+        history.push({ action: 'completed_matcher_approval', jobId, operationId, inputDigest, by: q.id(actor), at: q.now() })
+        q.setJson(checked.song, 'review_history_json', history)
+        q.set(checked.song, 'review_status', 'approved')
+        q.set(checked.song, 'eligible', true)
+        q.set(checked.song, 'reviewed_by', q.id(actor))
+        q.set(checked.song, 'reviewed_at', q.now())
+        tx.save(checked.song)
+        approved++
+      }
+      cursor += chunk.length
+      q.set(operation, 'cursor', cursor)
+      q.set(operation, 'approved_count', approved)
+      q.setJson(operation, 'excluded_json', safeExcluded)
+      if (cursor >= candidates.length) {
+        q.set(operation, 'status', 'complete')
+        const audit = q.jsonValue(operation, 'audit_json', [])
+        const events = Array.isArray(audit) ? audit : []
+        events.push({ action: 'completed_matcher_approval_finished', jobId, approved, excluded: safeExcluded.length, by: q.id(actor), at: q.now() })
+        q.setJson(operation, 'audit_json', events)
+      }
+      tx.save(operation)
+      authoritative = operation
+    })
+    const excluded = q.jsonValue(authoritative, 'excluded_json', [])
+    const safeExcluded = Array.isArray(excluded) ? excluded : []
+    return c.json(200, {
+      dryRun: false,
+      jobId,
+      operationId,
+      approved: q.num(authoritative, 'approved_count'),
+      excluded: safeExcluded.length,
+      exclusions: summarize(safeExcluded),
+      cursor: q.num(authoritative, 'cursor'),
+      matched: candidates.length,
+      complete: q.str(authoritative, 'status') === 'complete',
+    })
+  } catch (error) {
+    const code = error.message === 'operation_binding_mismatch' ? 'operation_binding_mismatch' : 'matched_approval_failed'
+    return q.json(c, code === 'operation_binding_mismatch' ? 409 : 500, code, code === 'operation_binding_mismatch' ? 'Approval operation is bound to different evidence' : 'Matched-song approval could not be completed')
+  }
+})
+
 // Cron callbacks run in a bare VM, while request callbacks retain the initial
 // hook helper object. The cron wakes this loopback-only route; no browser
 // credentials, playlist metadata, or canonical values cross the boundary.
