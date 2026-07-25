@@ -1705,4 +1705,13 @@ routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), report: q.jsonValue(job, 'report_json', []) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
 })
 
-try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => globalThis.__partyQueue.legacyRunJob()) } catch (_) {}
+// Cron callbacks run in a bare VM, while request callbacks retain the initial
+// hook helper object. The cron wakes this loopback-only route; no browser
+// credentials, playlist metadata, or canonical values cross the boundary.
+routerAdd('POST', '/api/karaoke/internal/legacy-playlist/run', (c) => {
+  const q = globalThis.__partyQueue; const remote = String(q.info(c).remoteIp || q.info(c).remoteIP || '')
+  if (!['127.0.0.1', '::1'].includes(remote)) return q.json(c, 404, 'not_found', 'Not found')
+  try { q.legacyRunJob() } catch (_) {}
+  return c.json(204, {})
+})
+try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => { try { $http.send({ url: 'http://127.0.0.1:8090/api/karaoke/internal/legacy-playlist/run', method: 'POST', timeout: 55 }) } catch (_) {} }) } catch (_) {}
