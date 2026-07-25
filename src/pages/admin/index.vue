@@ -23,6 +23,7 @@ import {
   commitApprovalSelection,
   updateApprovalSelection,
   reviewCatalogSong,
+  runMusicBrainzMatch,
   transitionQueue,
   type CatalogReport,
   type CatalogSong,
@@ -75,6 +76,16 @@ const importConfirmation = ref<PublicPlaylistPreview | null>(null)
 const publicPlaylistContinuation = ref<string | null>(null)
 const approvalSelection = ref<ApprovalSelectionSnapshot | null>(null)
 const approvalConfirmOpen = ref(false)
+const musicBrainzResult = ref<Awaited<ReturnType<typeof runMusicBrainzMatch>> | null>(null)
+const musicBrainzIds = computed(() => catalog.value.filter((song) => song.source === 'youtube_playlist' && song.identityStatus === 'missing').slice(0, 20))
+const musicBrainzBinding = computed(() => {
+  const rows = musicBrainzIds.value
+  const sourceId = rows[0]?.playlistSourceId
+  const snapshotFingerprint = rows[0]?.playlistSnapshotFingerprint
+  return sourceId && snapshotFingerprint && /^[a-f0-9]{64}$/i.test(snapshotFingerprint) && rows.every((row) => row.playlistSourceId === sourceId && row.playlistSnapshotFingerprint === snapshotFingerprint)
+    ? { sourceId, snapshotFingerprint }
+    : null
+})
 const approvalOperationId = ref('')
 const playlistContinuation = ref<{ sourceKey: string; pageToken: string } | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | undefined
@@ -299,6 +310,31 @@ async function refreshCatalog() {
   } finally {
     catalogLoading.value = false
   }
+}
+
+async function runScopedMusicBrainzDryRun() {
+  if (!token.value || catalogLoading.value) return
+  const ids = musicBrainzIds.value.map((song) => song.id)
+  if (!ids.length) { message.value = 'No unresolved playlist records are in the current review page.'; error.value = false; return }
+  catalogLoading.value = true
+  try {
+    musicBrainzResult.value = await runMusicBrainzMatch(token.value, ids, { dryRun: true })
+    message.value = `MusicBrainz dry run complete for ${musicBrainzResult.value.bounded} scoped records. No approvals were applied.`
+    error.value = false
+  } catch (cause) { message.value = explain(cause, 'MusicBrainz matching could not be started.'); error.value = true }
+  finally { catalogLoading.value = false }
+}
+
+async function applyScopedMusicBrainz() {
+  if (!token.value || catalogLoading.value || !musicBrainzBinding.value || !musicBrainzIds.value.length) return
+  catalogLoading.value = true
+  try {
+    musicBrainzResult.value = await runMusicBrainzMatch(token.value, musicBrainzIds.value.map((song) => song.id), { dryRun: false, ...musicBrainzBinding.value })
+    message.value = `MusicBrainz application complete for ${musicBrainzResult.value.bounded} scoped records. Songs remain pending review.`
+    error.value = false
+    await refreshCatalog()
+  } catch (cause) { message.value = explain(cause, 'MusicBrainz application could not be completed.'); error.value = true }
+  finally { catalogLoading.value = false }
 }
 
 async function correctIdentity(song: CatalogSong) {
@@ -932,6 +968,18 @@ onUnmounted(() => {
           <label for="catalog-youtube-id">Find YouTube ID</label>
           <input id="catalog-youtube-id" v-model="catalogYoutubeId" placeholder="Exact 11-character video ID" @keyup.enter="findCatalogYoutubeId" />
           <button type="button" class="quiet" @click="findCatalogYoutubeId" :disabled="catalogLoading">Find rendition</button>
+          <div class="musicbrainz-review" aria-labelledby="musicbrainz-heading">
+            <h3 id="musicbrainz-heading">Canonical identity matcher</h3>
+            <p>Runs only on unresolved playlist records shown here. Dry run only; results never auto-approve songs.</p>
+            <button type="button" class="quiet" @click="runScopedMusicBrainzDryRun" :disabled="catalogLoading">Run bounded dry run (max 20)</button>
+            <button type="button" class="quiet" @click="applyScopedMusicBrainz" :disabled="catalogLoading || !musicBrainzBinding">Apply bounded matches</button>
+            <p v-if="!musicBrainzBinding">Apply is disabled until all scoped rows share the same immutable playlist snapshot.</p>
+            <div v-if="musicBrainzResult" role="status">
+              <p>{{ musicBrainzResult.report.processed }} processed · {{ musicBrainzResult.report.deferred }} deferred · {{ musicBrainzResult.report.retryable ? 'retryable' : 'complete' }}<span v-if="musicBrainzResult.report.replay"> · cached replay</span></p>
+              <ul><li v-for="row in musicBrainzResult.results" :key="row.id">{{ row.decision }} · {{ row.reason }}</li></ul>
+              <p v-if="musicBrainzResult.cache">Cache: {{ musicBrainzResult.cache.hits || 0 }} hits · {{ musicBrainzResult.cache.misses || 0 }} misses · {{ musicBrainzResult.cache.requests || 0 }} requests</p>
+            </div>
+          </div>
           <div class="batch-review">
             <span>{{ selectedApprovalCount }} selected</span>
             <button type="button" class="quiet" @click="selectAllApprovable" :disabled="catalogLoading || !playlistSourceKey.trim()">Select all approvable</button>

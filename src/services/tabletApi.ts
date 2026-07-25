@@ -40,6 +40,8 @@ export type CatalogSong = {
   source?: string
   sourceId?: string
   sourceList?: string
+  playlistSourceId?: string
+  playlistSnapshotFingerprint?: string
   sourceRank?: number
   identityStatus?: 'verified_source' | 'operator_corrected' | 'missing' | 'uncertain'
   identityReason?: string
@@ -286,6 +288,21 @@ export function correctCatalogIdentity(
 
 export function loadCatalogReport(token: string) {
   return request<CatalogReport>('/api/karaoke/tablet/catalog/report', {}, token)
+}
+
+export type MusicBrainzMatchResponse = {
+  dryRun: boolean
+  bounded: number
+  results: Array<{ id: string; decision: string; reason: string; confidence?: number }>
+  report: { processed: number; deferred: number; cursor?: number; resumable?: boolean; retryable?: boolean; replay?: boolean }
+  cache?: { hits?: number; misses?: number; requests?: number }
+}
+
+export function runMusicBrainzMatch(token: string, ids: string[], options: { dryRun?: boolean; sourceId?: string; snapshotFingerprint?: string } = {}) {
+  return request<MusicBrainzMatchResponse>('/api/karaoke/tablet/catalog/musicbrainz/match', {
+    method: 'POST',
+    body: JSON.stringify({ ids, dryRun: options.dryRun !== false, ...(options.sourceId ? { sourceId: options.sourceId } : {}), ...(options.snapshotFingerprint ? { snapshotFingerprint: options.snapshotFingerprint } : {}) }),
+  }, token)
 }
 
 export function previewTrustedPlaylist(
