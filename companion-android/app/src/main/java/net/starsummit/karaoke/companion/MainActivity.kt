@@ -146,7 +146,8 @@ class MainActivity : Activity() {
       text = "Enroll PocketBase controller"
       setOnClickListener {
         val grant = enrollmentGrant.text.toString()
-        service?.enrollController(controllerUrl.text.toString(), grant)
+        val server = controllerUrl.text.toString()
+        service?.enrollController(server, grant, "Starsummit tablet", android.net.Uri.parse(server).host.orEmpty(), "controller")
         enrollmentGrant.text.clear()
         enrollmentGrant.visibility = EditText.INVISIBLE
       }
