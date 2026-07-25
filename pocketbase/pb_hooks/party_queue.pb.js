@@ -1678,10 +1678,12 @@ routerAdd('POST', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
       .map((song) => ({ id: q.id(song), youtubeId: q.str(song, 'youtube_id'), videoTitle: q.str(song, 'video_title'), playlistPosition: q.num(song, 'playlist_position'), source: q.str(song, 'source'), playlistSourceId: q.str(song, 'playlist_source_id'), reviewStatus: q.str(song, 'review_status'), identityStatus: q.str(song, 'identity_status') }))
   } catch (_) { return q.json(c, 503, 'legacy_scope_unavailable', 'Legacy playlist scope unavailable') }
   if (!rows.length) return q.json(c, 404, 'legacy_scope_empty', 'No retained legacy playlist rows require review')
-  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${q.legacyPlaylistId}:${inputDigest}`); let job = null
+  // Callback globals are recreated by PocketBase worker VMs. Keep the operator-scoped
+  // constants in this closure rather than looking them up on the helper object.
+  const inputDigest = q.hash(q.serializeJson(rows)); const jobKey = q.hash(`${LEGACY_PLAYLIST_ID}:${inputDigest}`); let job = null
   try { job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key: jobKey }) } catch (_) {}
-  if (!job) { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', q.legacyPlaylistId); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) }
-  return c.json(200, { jobKey, playlistId: q.legacyPlaylistId, bindingKind: q.legacyBindingKind, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length })
+  if (!job) try { job = new Record($app.findCollectionByNameOrId('karaoke_legacy_playlist_jobs')); q.set(job, 'job_key', jobKey); q.set(job, 'playlist_id', LEGACY_PLAYLIST_ID); q.set(job, 'input_digest', inputDigest); q.setJson(job, 'rows_json', rows); q.set(job, 'initiated_by', q.id(actor)); q.set(job, 'status', 'pending'); q.set(job, 'cursor', 0); q.setJson(job, 'report_json', []); q.set(job, 'updated_at', q.now()); $app.save(job) } catch (error) { return q.json(c, 503, 'legacy_job_unavailable', `Legacy job storage is unavailable: ${String(error.message || 'unknown').slice(0, 120)}`) }
+  return c.json(200, { jobKey, playlistId: LEGACY_PLAYLIST_ID, bindingKind: LEGACY_BINDING_KIND, inputDigest, cursor: q.num(job, 'cursor'), status: q.str(job, 'status'), count: rows.length })
 })
 
 routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
@@ -1690,8 +1692,4 @@ routerAdd('GET', '/api/karaoke/tablet/catalog/legacy-playlist/assume', (c) => {
   try { const job = $app.findFirstRecordByFilter('karaoke_legacy_playlist_jobs', 'job_key = {:key}', { key }); return c.json(200, { jobKey: key, playlistId: q.str(job, 'playlist_id'), status: q.str(job, 'status'), cursor: q.num(job, 'cursor'), inputDigest: q.str(job, 'input_digest'), initiatedBy: q.str(job, 'initiated_by'), report: q.jsonValue(job, 'report_json', []) }) } catch (_) { return q.json(c, 404, 'job_not_found', 'Legacy job was not found') }
 })
 
-globalThis.__partyQueue.legacyPlaylistId = LEGACY_PLAYLIST_ID
-globalThis.__partyQueue.legacyBindingKind = LEGACY_BINDING_KIND
-globalThis.__partyQueue.legacyRunJob = legacyRunJob
-globalThis.__partyQueue.legacyScopeRows = legacyScopeRows
-try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => { try { require(__hooks + '/party_queue.pb.js') } catch (_) {}; globalThis.__partyQueue.legacyRunJob() }) } catch (_) {}
+try { if (typeof cronAdd === 'function') cronAdd('legacy-playlist-reconcile', '* * * * *', () => legacyRunJob()) } catch (_) {}
