@@ -92,7 +92,12 @@ const musicBrainzBindingGroup = computed(() => {
     })
   return [...groups.values()].sort((a, b) => b.rows.length - a.rows.length || a.firstIndex - b.firstIndex)[0] || null
 })
-const musicBrainzIds = computed(() => musicBrainzBindingGroup.value?.rows.slice(0, 20) || [])
+const musicBrainzIds = computed(() =>
+  catalog.value
+    .filter((song) => song.source === 'youtube_playlist' && song.identityStatus === 'missing')
+    .slice(0, 20),
+)
+const musicBrainzApplyIds = computed(() => musicBrainzBindingGroup.value?.rows.slice(0, 20) || [])
 const musicBrainzBinding = computed(() => {
   const group = musicBrainzBindingGroup.value
   return group ? { sourceId: group.sourceId, snapshotFingerprint: group.snapshotFingerprint } : null
@@ -337,10 +342,10 @@ async function runScopedMusicBrainzDryRun() {
 }
 
 async function applyScopedMusicBrainz() {
-  if (!token.value || catalogLoading.value || !musicBrainzBinding.value || !musicBrainzIds.value.length) return
+  if (!token.value || catalogLoading.value || !musicBrainzBinding.value || !musicBrainzApplyIds.value.length) return
   catalogLoading.value = true
   try {
-    musicBrainzResult.value = await runMusicBrainzMatch(token.value, musicBrainzIds.value.map((song) => song.id), { dryRun: false, ...musicBrainzBinding.value })
+    musicBrainzResult.value = await runMusicBrainzMatch(token.value, musicBrainzApplyIds.value.map((song) => song.id), { dryRun: false, ...musicBrainzBinding.value })
     message.value = `MusicBrainz application complete for ${musicBrainzResult.value.bounded} scoped records. Songs remain pending review.`
     error.value = false
     await refreshCatalog()
@@ -982,8 +987,9 @@ onUnmounted(() => {
           <div class="musicbrainz-review" aria-labelledby="musicbrainz-heading">
             <h3 id="musicbrainz-heading">Canonical identity matcher</h3>
             <p>Runs only on unresolved playlist records shown here. Dry run only; results never auto-approve songs.</p>
-            <p v-if="musicBrainzBinding">Scoped batch: {{ musicBrainzIds.length }} record{{ musicBrainzIds.length === 1 ? '' : 's' }} · source {{ musicBrainzBinding.sourceId }} · snapshot {{ musicBrainzBinding.snapshotFingerprint }}</p>
-            <p v-else>Apply is disabled because no unresolved rows share a valid immutable playlist snapshot.</p>
+            <p>Dry-run scope: {{ musicBrainzIds.length }} unresolved record{{ musicBrainzIds.length === 1 ? '' : 's' }} (max 20).</p>
+            <p v-if="musicBrainzBinding">Live-apply batch: {{ musicBrainzApplyIds.length }} record{{ musicBrainzApplyIds.length === 1 ? '' : 's' }} · source {{ musicBrainzBinding.sourceId }} · snapshot {{ musicBrainzBinding.snapshotFingerprint }}</p>
+            <p v-else>Live apply is disabled because no unresolved rows share a valid immutable playlist snapshot.</p>
             <button type="button" class="quiet" @click="runScopedMusicBrainzDryRun" :disabled="catalogLoading">Run bounded dry run (max 20)</button>
             <button type="button" class="quiet" @click="applyScopedMusicBrainz" :disabled="catalogLoading || !musicBrainzBinding">Apply bounded matches</button>
             <div v-if="musicBrainzResult" role="status">
