@@ -149,7 +149,6 @@ class MainActivity : Activity() {
         val server = controllerUrl.text.toString()
         service?.enrollController(server, grant, "Starsummit tablet", android.net.Uri.parse(server).host.orEmpty(), "controller")
         enrollmentGrant.text.clear()
-        enrollmentGrant.visibility = EditText.INVISIBLE
       }
     }, match())
 
