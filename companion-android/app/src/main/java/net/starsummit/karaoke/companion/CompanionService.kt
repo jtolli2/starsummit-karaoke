@@ -86,7 +86,12 @@ class CompanionService : Service() {
     fun enrollController(baseUrl: String, grant: String, deviceName: String = "Starsummit tablet", serverHost: String = "", destination: String = "") {
       scope.launch {
         runCatching { controllerApi.enroll(baseUrl, grant, deviceName, serverHost, destination) }
-          .onSuccess { controllerStore.saveCredentials(it); startControllerLoop() }
+          .onSuccess {
+            controllerStore.saveCredentials(it)
+            controllerJob?.cancel()
+            controllerJob = null
+            startControllerLoop()
+          }
           .onFailure { diagnosticsStore.error(it, setErrorState = false) }
       }
     }

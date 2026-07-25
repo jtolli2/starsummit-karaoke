@@ -504,7 +504,7 @@ class ControllerProtocolTest {
     var subscriptions = 0
     val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
     val fakeApi = object : ControllerApi {
-      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
       override suspend fun authenticate(credentials: ControllerCredentials) = auth
       override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
       override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> { fetches++; return emptyList() }
@@ -533,7 +533,7 @@ class ControllerProtocolTest {
     val callbacks = mutableListOf<String>()
     val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
     val api = object : ControllerApi {
-      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
       override suspend fun authenticate(credentials: ControllerCredentials) = auth
       override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
       override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long) = emptyList<ControllerCommand>()
@@ -566,7 +566,7 @@ class ControllerProtocolTest {
     var fetches = 0
     val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
     val fakeApi = object : ControllerApi {
-      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
       override suspend fun authenticate(credentials: ControllerCredentials) = auth
       override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
       override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
@@ -709,7 +709,7 @@ class ControllerProtocolTest {
   fun bridgeSurfacesEndedRealtimeForBoundedReconnect() = runTest {
     val auth = ControllerAuth("auth", baseUrl = "https://karaoke.example")
     val fakeApi = object : ControllerApi {
-      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
       override suspend fun authenticate(credentials: ControllerCredentials) = auth
       override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
       override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long) = emptyList<ControllerCommand>()
@@ -735,7 +735,7 @@ class ControllerProtocolTest {
     val progress = InMemoryProgressStore(ControllerProgress("expired", 4, 7, "old-command", "old-key"))
     val freshSession = ControllerSession("fresh", 5, future)
     val fakeApi = object : ControllerApi {
-      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+      override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
       override suspend fun authenticate(credentials: ControllerCredentials) = ControllerAuth("auth", baseUrl = credentials.baseUrl)
       override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
         resumes += resumeSessionId
@@ -1292,7 +1292,7 @@ class ControllerProtocolTest {
   }
 
   private fun basicApi(onAck: () -> Unit = {}): ControllerApi = object : ControllerApi {
-    override suspend fun enroll(baseUrl: String, grant: String, deviceName: String) = ControllerCredentials(baseUrl, "key", "secret")
+    override suspend fun enroll(baseUrl: String, grant: String, deviceName: String, serverHost: String, destination: String) = ControllerCredentials(baseUrl, "key", "secret")
     override suspend fun authenticate(credentials: ControllerCredentials) = ControllerAuth("auth", baseUrl = credentials.baseUrl)
     override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?) = session
     override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long) = emptyList<ControllerCommand>()
