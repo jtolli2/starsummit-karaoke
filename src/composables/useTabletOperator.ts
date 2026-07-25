@@ -7,6 +7,7 @@ import {
   loadNext,
   loadTabletStatus,
   transitionQueue,
+  reorderTabletQueue,
   type TabletQueueItem,
   type TabletStatus,
 } from '@/services/tabletApi'
@@ -103,6 +104,8 @@ export function useTabletOperator() {
           controller_state_mismatch: 'Video mismatch: controller recovery is still needed.',
           nothing_playing: 'No active song is available to control.',
           idempotency_conflict: 'That playback action conflicts with an earlier request.',
+          stale_reorder: 'The queue changed elsewhere. The latest order is shown.',
+          queue_not_reorderable: 'Only queued songs can be moved.',
         } as Record<string, string>
       )[code || ''] || fallback
     )
@@ -364,6 +367,26 @@ export function useTabletOperator() {
     }
   }
 
+  async function moveQueueItem(item: TabletQueueItem, direction: 'up' | 'down') {
+    if (!token.value || !partyId.value || busy.value || item.status !== 'queued') return
+    const revision = status.value?.queueOrderRevision
+    const digest = status.value?.queueOrderDigest
+    if (revision === undefined || !digest) return
+    busy.value = true
+    try {
+      await reorderTabletQueue(token.value, partyId.value, item.id, direction, revision, digest)
+      await refresh()
+      message.value = 'Queue order updated.'
+      error.value = false
+    } catch (cause) {
+      await refresh()
+      message.value = explain(cause, 'Queue order changed elsewhere; the latest state is shown.')
+      error.value = true
+    } finally {
+      busy.value = false
+    }
+  }
+
   function signOut() {
     token.value = null
     partyId.value = ''
@@ -436,6 +459,7 @@ export function useTabletOperator() {
     openQueueConfirmation,
     dismissConfirmation,
     confirmQueueAction,
+    moveQueueItem,
     openAdmin,
   })
 }

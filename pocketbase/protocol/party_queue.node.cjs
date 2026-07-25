@@ -28,6 +28,28 @@ test('tablet status exposes only anonymous requester labels and a fair-rotation 
   assert.doesNotMatch(endpoint[0], /credential_hash/)
 })
 
+test('tablet reorder is constrained, atomic, and rejects stale queue snapshots', () => {
+  const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/queue\/reorder',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /tablet\(operator\)/)
+  assert.match(endpoint[0], /expectedRevision/)
+  assert.match(endpoint[0], /expectedDigest/)
+  assert.match(endpoint[0], /stale_reorder/)
+  assert.match(endpoint[0], /str\(current, 'status'\) !== 'queued'/)
+  assert.match(endpoint[0], /runInTransaction/)
+  assert.match(endpoint[0], /direction === 'up' \? -1 : 1/)
+  assert.match(hook, /queueOrderRevision: num\(party, 'queue_sequence'\)/)
+  assert.match(hook, /queueOrderDigest: queueOrderDigest\(rows\)/)
+  assert.match(endpoint[0], /'\+sequence', 500/)
+})
+
+test('manual sequence is authoritative for next-song selection', () => {
+  const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/queue\/next',[\s\S]*?\n}\)/)
+  assert.ok(endpoint)
+  assert.match(endpoint[0], /const next = pending\[0\]/)
+  assert.doesNotMatch(endpoint[0], /firstByRequester/)
+})
+
 test('party creation binds exactly one active controller without guessing between devices', () => {
   const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/parties',[\s\S]*?\n}\)/)
   assert.ok(endpoint)

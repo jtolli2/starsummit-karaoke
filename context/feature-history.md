@@ -450,3 +450,17 @@
   party `N5P6LYXA` was expired when opened, so the automated check made no live fallback search,
   catalog mutation, or queue mutation. The user then manually queued cached `careless whisper`
   successfully, proving the deployed guest path without a new YouTube lookup.
+
+## 2026-07-25 — Simple tablet queue reordering and visibility fixes
+
+- Added constrained `tablet_admin` move-up/move-down queue ordering with atomic stale-snapshot
+  rejection. The current manual queued sequence is authoritative for tablet display and next-song
+  selection; the playing item remains fixed and future guest requests append safely.
+- Added touch controls, stale-error reconciliation, focused guest/tablet dark-surface contrast
+  fixes, Vue behavior coverage, backend contracts, and an isolated PocketBase runtime scenario
+  covering concurrent guest insertion, stale rejection, recovery, successful reorder, and row
+  preservation.
+- Local validation passed 61 Vue tests, 16 backend protocol tests, production build, hook syntax,
+  diff/secret checks, and independent final review. The 3 pinned-runtime scenarios are skipped only
+  because this workspace has no configured `POCKETBASE_BIN`; no deployment, queue mutation, commit,
+  or push was performed.

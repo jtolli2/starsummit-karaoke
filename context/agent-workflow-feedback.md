@@ -4,6 +4,17 @@
 
 ## Entries
 
+### 2026-07-25 — Keep optimistic mutation snapshot bounds and runtime proof aligned
+
+- **Feedback:** Review of a stale-safe queue reorder route found the tablet snapshot returned 200
+  rows while the mutation validated 500, which would reject valid larger queues. The initial runtime
+  scenario also proved stale rejection but not recovery into a successful unique-sequence swap.
+- **Improvement:** Share one explicit queue snapshot bound between status and mutation paths. For
+  optimistic queue mutations, test the full sequence: snapshot, concurrent guest write, stale
+  rejection with the new row preserved, fresh snapshot, then successful mutation.
+- **Follow-up:** When `POCKETBASE_BIN` is available, execute this isolated scenario before any
+  deployment rather than interpreting the skipped local test as runtime evidence.
+
 ### 2026-07-25 — Use PocketBase canonical dates in fallback grant filters
 
 - **Feedback:** A real PocketBase 0.39.7 fallback request fixture initially could not read a valid

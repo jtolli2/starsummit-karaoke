@@ -1,4 +1,4 @@
-# Fallback Queue Request Persistence Repair
+# Simple Tablet Queue Reordering and Visibility Fixes
 
 > Working record for the single active feature. Keep its status, goals, and implementation notes
 > current; append completed work only to [feature-history.md](feature-history.md).
@@ -9,43 +9,39 @@ Complete
 
 ## Goals
 
-- Repair fallback queue requests so newly persisted YouTube fallback candidates satisfy every
-  currently required catalog default in real PocketBase 0.39.7, including `mb_match_status`.
-- Add a pinned-runtime regression for party-scoped claim/grant fallback request persistence, queue
-  creation, idempotent replay, and relevant rejection behavior.
-- Normalize unexpected persistence/schema failures into safe guest-facing fallback errors without
-  weakening known duplicate, rate, expiry, or candidate-specific responses.
-- Validate backend contracts, pinned runtime integration, Vue tests, build, syntax, diff/secret
-  checks, independent review, signed delivery to `main`, retained Compose staging deployment, and
-  constrained cached live verification without consuming new YouTube quota.
+- Let a signed-in `tablet_admin` move queued songs up or down on `/tablet`, while the playing song
+  remains fixed and non-movable.
+- Add one constrained atomic server reorder endpoint that rejects stale/conflicting queue input and
+  preserves membership, statuses, existing playback, controller, and guest-request contracts.
+- Make the manual queued order authoritative for the current queued set; safely preserve it when
+  new guest requests are added through the existing placement rules.
+- Improve only the visibly weak guest request/search/confirmation/error colors and related tablet
+  queue controls, without a broader accessibility or design-system rewrite.
+- Add focused stale/concurrency backend and Vue move/error/immovability/visibility tests; validate
+  the pinned PocketBase runtime where applicable, full Vue suite, production build, hook syntax,
+  diff/secret checks, and review.
 
 ## Constraints and Notes
 
-- Preserve the retained external PocketBase volume and all unrelated party, queue, controller,
-  catalog, matcher, enrollment, and review records. Do not manufacture canonical identity or
-  approve/reject fallback catalog records.
-- Standing approval covers scoped local edits, tests, signed commit/push to `main`, exact retained
-  Coolify deployment, constrained guest queue validation, and browser actions. It excludes deletion,
-  cleanup, volume replacement, production DNS/cutover, Wi-Fi/tablet/Lounge changes, matcher work,
-  raw database writes, and a new YouTube lookup when cached replay can validate.
+- Preserve the retained external PocketBase volume and all party, queue, catalog, controller,
+  enrollment, matcher, and playback state. No live queue mutation, deployment, commit, push,
+  DNS/cutover, tablet/Wi-Fi/Lounge action, catalog work, raw database write, or cleanup is in scope.
+- Use clear touch move-up/move-down controls only unless a drag interaction proves genuinely small
+  and dependable; do not add reorder audit metadata.
 
 ## Implementation Notes
 
-- 2026-07-25: Started from current `main` at `f521a17706b1234c7344c4bd738809ef711d9276`.
-  Confirmed staging symptom and local real-runtime reproduction identify omitted required
-  `mb_match_status` on the new fallback-song record as the immediate cause.
-- 2026-07-25: New fallback records now explicitly persist `mb_match_status: not_attempted`.
-  The replay lookup remains party/requester scoped and returns the existing queue row with HTTP 200;
-  expired grants use PocketBase's canonical filter date format. Known rejections remain specific,
-  while unexpected persistence errors return the safe retryable
-  `fallback_persistence_unavailable` contract without database validation text.
-- 2026-07-25: Focused fallback static contract and pinned PocketBase 0.39.7 integration passed.
-  The runtime regression seeds an isolated party guest, ready claim, and party-scoped grant, then
-  verifies persistence, `mb_match_status`, queue linkage, exact idempotent replay, and a
-  cross-party candidate rejection. Full Vue tests (58) and production build also passed.
-- 2026-07-25: Signed commit `05dd13c03c1f74cde3134ce36f506d7f87400c47` was pushed to
-  `main` and deployed to retained Compose staging as `s2bd7mbl58v2zcd9swmdhpcl`; Coolify
-  confirmed the exact imported SHA and a healthy PocketBase container without volume replacement.
-  The requested cached party `N5P6LYXA` had expired at automated live validation time, so no guest
-  fallback record or queue row was created and no new YouTube request was made. The user then
-  manually queued cached `careless whisper` successfully, closing the live-validation gap.
+- 2026-07-25: Started from synchronized `main` at `1b10127`, after the fallback repair product
+  commit `05dd13c` and its validation documentation were present. Local implementation and
+  validation are approved; all delivery or live-state mutation remains separately approval-gated.
+- 2026-07-25: Added a constrained `tablet_admin` reorder route using an authoritative active-queue
+  revision and digest. It atomically swaps only adjacent queued rows, rejects stale/conflicting
+  snapshots with `stale_reorder`, and leaves the playing row, membership, and statuses unchanged.
+  The persisted sequence is now the next-song and tablet-display order; later guest requests retain
+  their existing safe append sequence.
+- 2026-07-25: `/tablet` now has touch-sized Up/Down controls with first/last boundaries and no
+  controls for the playing row. The client refetches authoritative status after success or failure.
+  Targeted dark guest message/search and tablet-control colors improve legibility without a visual
+  redesign. Final local evidence: 61 Vue tests, 16 backend protocol tests, production build, hook
+  syntax, diff, secret-pattern review, and independent review all passed. The three integration
+  scenarios are present but skipped because `POCKETBASE_BIN` is not configured locally.

@@ -284,4 +284,46 @@ describe('simplified tablet operator', () => {
     expect(wrapper.get('.transport').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('Create new party')
   })
+
+  it('shows move controls only for queued songs and reconciles after reorder', async () => {
+    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
+    const queued = [
+      { id: 'queue-playing', sequence: 0, status: 'playing', song: { id: 'p', youtubeId: 'x'.repeat(11), title: 'Playing', artist: 'P' } },
+      { id: 'queue-a', sequence: 1, status: 'queued', fairPosition: 1, song: { id: 'a', youtubeId: 'dQw4w9WgXcQ', title: 'First', artist: 'A' } },
+      { id: 'queue-b', sequence: 2, status: 'queued', fairPosition: 2, song: { id: 'b', youtubeId: '9bZkp7q19f0', title: 'Second', artist: 'B' } },
+    ]
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({ queue: queued, queueOrderRevision: 2, queueOrderDigest: 'digest-1' })), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ moved: true, revision: 2, digest: 'digest-2' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({ queue: queued.slice().reverse(), queueOrderRevision: 2, queueOrderDigest: 'digest-2' })), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await settle()
+    expect(wrapper.findAll('.reorder-actions')).toHaveLength(2)
+    expect(wrapper.findAll('.item-actions').some((node) => node.text().includes('Complete'))).toBe(true)
+    expect(wrapper.findAll('.reorder-actions')[0]!.findAll('button')[0]!.attributes('disabled')).toBeDefined()
+    await wrapper.findAll('.reorder-actions')[0]!.findAll('button')[1]!.trigger('click')
+    await settle()
+    const body = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
+    expect(body).toMatchObject({ queueId: 'queue-a', direction: 'down', expectedRevision: 2, expectedDigest: 'digest-1' })
+  })
+
+  it('refetches and reports a stale reorder conflict', async () => {
+    sessionStorage.setItem('karaoke:tablet:session', JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }))
+    const queued = [
+      { id: 'queue-a', sequence: 1, status: 'queued', fairPosition: 1, song: { id: 'a', youtubeId: 'dQw4w9WgXcQ', title: 'First', artist: 'A' } },
+      { id: 'queue-b', sequence: 2, status: 'queued', fairPosition: 2, song: { id: 'b', youtubeId: '9bZkp7q19f0', title: 'Second', artist: 'B' } },
+    ]
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({ queue: queued, queueOrderRevision: 2, queueOrderDigest: 'digest-1' })), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'stale_reorder', message: 'Queue reorder rejected' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({ queue: queued, queueOrderRevision: 3, queueOrderDigest: 'digest-3' })), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await settle()
+    await wrapper.findAll('.reorder-actions')[0]!.findAll('button')[1]!.trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('queue changed elsewhere')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })

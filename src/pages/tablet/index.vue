@@ -174,7 +174,7 @@ const operator = useTabletOperator()
                 item.status === 'playing'
                   ? 'Playing now'
                   : item.status === 'queued'
-                    ? `Fair order · next ${item.fairPosition || '?'}`
+                    ? `Queue position · ${item.fairPosition || '?'}`
                     : item.status
               }}</small>
             </div>
@@ -192,6 +192,26 @@ const operator = useTabletOperator()
                 @click="operator.openQueueConfirmation(item, 'failed', $event)"
               >
                 Skip
+              </button>
+            </div>
+            <div v-else-if="item.status === 'queued'" class="item-actions reorder-actions">
+              <button
+                type="button"
+                class="quiet"
+                :disabled="operator.busy || (item.fairPosition || 1) <= 1"
+                :aria-label="`Move ${item.song?.title || 'song'} up`"
+                @click="operator.moveQueueItem(item, 'up')"
+              >
+                ↑ Up
+              </button>
+              <button
+                type="button"
+                class="quiet"
+                :disabled="operator.busy || (item.fairPosition || 1) >= operator.queued.length"
+                :aria-label="`Move ${item.song?.title || 'song'} down`"
+                @click="operator.moveQueueItem(item, 'down')"
+              >
+                ↓ Down
               </button>
             </div>
           </li>

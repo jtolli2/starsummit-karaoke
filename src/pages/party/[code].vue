@@ -244,11 +244,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.party-page { max-width: 42rem; margin: 0 auto; padding: 1.25rem; font-family: system-ui, sans-serif; }
+.party-page { min-height: 100dvh; max-width: 42rem; margin: 0 auto; padding: 1.25rem; box-sizing: border-box; font-family: system-ui, sans-serif; background: #171320; color: #fff; }
 header { margin-bottom: 1.5rem; } .eyebrow { color: #6750a4; font-weight: 700; }
 h1 { margin: 0; font-size: 2rem; } h2 { margin-top: 1.75rem; }
 label { display: block; margin-bottom: .35rem; } input { width: 100%; box-sizing: border-box; padding: .75rem; font-size: 1rem; }
 ul { list-style: none; padding: 0; } li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 0; border-bottom: 1px solid #ddd; }
-small { display: block; color: #666; } button { padding: .55rem .8rem; } .message[data-error='true'] { color: #a00; }
-.search-status { padding: .65rem; background: #f3effa; border-radius: .4rem; }
+small { display: block; color: #cfc5dc; } button { padding: .55rem .8rem; border: 0; border-radius: .45rem; background: #b176ff; color: #170d21; font-weight: 700; } button:disabled { opacity: .5; }
+.message { padding: .8rem; border-radius: .5rem; background: #30263e; } .message[data-error='true'] { color: #ffd7df; background: #652b3c; }
+.search-status { padding: .65rem; background: #30263e; border-radius: .4rem; }
 </style>

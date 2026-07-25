@@ -430,23 +430,14 @@ function tabletQueueView(rows) {
   })
   const playing = rows.filter((row) => str(row, 'status') === 'playing').map((row) => decorate(row))
   const remaining = rows.filter((row) => str(row, 'status') === 'queued')
-  const served = Object.create(null)
-  for (const row of remaining) {
-    const guest = find('karaoke_guest_identities', 'id = {:id}', { id: str(row, 'requester') })
-    served[str(row, 'requester')] = guest && str(guest, 'last_served_at') ? new Date(str(guest, 'last_served_at')).getTime() : 0
-  }
-  let nextServedAt = Math.max(Date.now(), ...Object.values(served).map(Number)) + 1
-  const fair = []
-  while (remaining.length) {
-    const first = Object.create(null)
-    for (const row of remaining.slice().sort((a, b) => num(a, 'sequence') - num(b, 'sequence'))) {
-      const requester = str(row, 'requester'); if (!first[requester]) first[requester] = row
-    }
-    const choice = Object.values(first).sort((a, b) => served[str(a, 'requester')] - served[str(b, 'requester')] || num(a, 'sequence') - num(b, 'sequence') || String(str(a, 'requester')).localeCompare(String(str(b, 'requester'))))[0]
-    fair.push(choice); served[str(choice, 'requester')] = nextServedAt++
-    remaining.splice(remaining.findIndex((row) => id(row) === id(choice)), 1)
-  }
-  return [...playing, ...fair.map((row, index) => decorate(row, index + 1))]
+    .sort((a, b) => num(a, 'sequence') - num(b, 'sequence') || String(id(a)).localeCompare(String(id(b))))
+  return [...playing, ...remaining.map((row, index) => decorate(row, index + 1))]
+}
+
+function queueOrderDigest(rows) {
+  const ordered = rows.slice().sort((a, b) => num(a, 'sequence') - num(b, 'sequence') || String(id(a)).localeCompare(String(id(b))))
+    .map((row) => ({ id: id(row), status: str(row, 'status'), sequence: num(row, 'sequence') }))
+  return digest(ordered)
 }
 
 // Tablet-facing state is deliberately assembled here instead of exposing the
@@ -488,7 +479,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, catalogApprovalReason, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, catalogApprovalReason, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, queueOrderDigest, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
 globalThis.__partyQueue.correctCatalogIdentity = correctCatalogIdentity
 globalThis.__partyQueueRealtime = {
   authorize(e) {
@@ -769,17 +760,10 @@ routerAdd('GET', '/api/karaoke/queue/next', (c) => {
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const partyId = info(c).query?.partyId; if (!partyId) return json(c, 400, 'invalid_party', 'partyId is required')
   const pending = records('karaoke_queue', 'party = {:party} && status = "queued"', '+sequence', 500, { party: partyId })
-  const byRequester = {}
-  for (const q of pending) { const key = str(q, 'requester'); if (!byRequester[key]) byRequester[key] = q }
-  const candidates = Object.values(byRequester)
-  candidates.sort((a, b) => {
-    const ga = find('karaoke_guest_identities', 'id = {:id}', { id: str(a, 'requester') }); const gb = find('karaoke_guest_identities', 'id = {:id}', { id: str(b, 'requester') })
-    const ta = ga && str(ga, 'last_served_at') ? new Date(str(ga, 'last_served_at')).getTime() : 0; const tb = gb && str(gb, 'last_served_at') ? new Date(str(gb, 'last_served_at')).getTime() : 0
-    return ta - tb || num(a, 'sequence') - num(b, 'sequence') || String(str(a, 'requester')).localeCompare(String(str(b, 'requester')))
-  })
-  if (!candidates[0]) return c.json(200, { queue: null })
-  const song = $app.findRecordById('karaoke_songs', str(candidates[0], 'song'))
-  return c.json(200, { queue: songView(candidates[0], song) })
+  const next = pending[0]
+  if (!next) return c.json(200, { queue: null })
+  const song = $app.findRecordById('karaoke_songs', str(next, 'song'))
+  return c.json(200, { queue: songView(next, song) })
 })
 
 // Authoritative, sanitized snapshot for the tablet operator UI.  This is the
@@ -787,17 +771,19 @@ routerAdd('GET', '/api/karaoke/queue/next', (c) => {
 // rules remain locked and no controller credentials or Lounge data are sent.
 routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, info, find, records, id, str, tabletQueueView, tabletControllerView } = globalThis.__partyQueue
+  const { auth, tablet, json, info, find, records, id, str, num, queueOrderDigest, tabletQueueView, tabletControllerView } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const partyId = info(c).query?.partyId
   if (Array.isArray(partyId) ? !partyId[0] : !partyId) return json(c, 400, 'invalid_party', 'partyId is required')
   const party = find('karaoke_parties', 'id = {:id}', { id: Array.isArray(partyId) ? partyId[0] : partyId })
   if (!party) return json(c, 404, 'party_not_found', 'Party was not found')
-  const rows = records('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 200, { party: id(party) })
+  const rows = records('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 500, { party: id(party) })
   const queue = tabletQueueView(rows)
   return c.json(200, {
     party: { id: id(party), status: str(party, 'status'), expiresAt: str(party, 'expires_at'), codeHint: str(party, 'code_hint'), joinCount: Number(party.join_count || 0) || (party.getInt ? party.getInt('join_count') : 0) },
     queue,
+    queueOrderRevision: num(party, 'queue_sequence'),
+    queueOrderDigest: queueOrderDigest(rows),
     controller: tabletControllerView(party),
   })
 })
@@ -935,6 +921,39 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
   }
 })
 
+routerAdd('POST', '/api/karaoke/tablet/queue/reorder', (c) => {
+  try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
+  const q = globalThis.__partyQueue; const operator = q.auth(c)
+  if (!q.tablet(operator)) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const input = q.body(c); const partyId = String(input.partyId || ''); const queueId = String(input.queueId || '')
+  const direction = String(input.direction || ''); const expectedRevision = Number(input.expectedRevision)
+  const expectedDigest = String(input.expectedDigest || '')
+  if (!partyId || !queueId || !['up', 'down'].includes(direction) || !Number.isInteger(expectedRevision) || !expectedDigest) return q.json(c, 422, 'invalid_reorder', 'Queue reorder request is invalid')
+  try {
+    let result
+    $app.runInTransaction((tx) => {
+      const party = tx.findRecordById('karaoke_parties', partyId)
+      if (!party || q.str(party, 'created_by') !== q.id(operator)) throw new Error('party_not_found')
+      if (!q.activeParty(party)) throw new Error('party_expired')
+      const rows = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 500, 0, { party: partyId })
+      if (q.num(party, 'queue_sequence') !== expectedRevision || q.queueOrderDigest(rows) !== expectedDigest) throw new Error('stale_reorder')
+      const current = rows.find((row) => q.id(row) === queueId)
+      if (!current || q.str(current, 'status') !== 'queued') throw new Error('queue_not_reorderable')
+      const queued = rows.filter((row) => q.str(row, 'status') === 'queued').sort((a, b) => q.num(a, 'sequence') - q.num(b, 'sequence'))
+      const index = queued.findIndex((row) => q.id(row) === queueId); const targetIndex = index + (direction === 'up' ? -1 : 1)
+      if (targetIndex < 0 || targetIndex >= queued.length) { result = { moved: false, revision: expectedRevision, digest: expectedDigest }; return }
+      const other = queued[targetIndex]; const temporary = q.num(party, 'queue_sequence') + 1; const currentSequence = q.num(current, 'sequence'); const otherSequence = q.num(other, 'sequence')
+      q.set(current, 'sequence', temporary); tx.save(current); q.set(other, 'sequence', currentSequence); tx.save(other); q.set(current, 'sequence', otherSequence); tx.save(current)
+      const updated = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 500, 0, { party: partyId })
+      result = { moved: true, revision: expectedRevision, digest: q.queueOrderDigest(updated) }
+    })
+    return c.json(200, result)
+  } catch (error) {
+    const reason = String(error.message || 'reorder_failed'); const known = ['party_not_found', 'party_expired', 'stale_reorder', 'queue_not_reorderable']
+    return q.json(c, reason === 'party_not_found' ? 404 : reason === 'party_expired' ? 410 : 409, known.includes(reason) ? reason : 'reorder_failed', 'Queue reorder rejected')
+  }
+})
+
 routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { auth, tablet, json, body, str, id, set, now, num, future, activeParty, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
@@ -969,14 +988,7 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
         try { alreadyPlaying = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && status = "playing" && id != {:id}', { party: str(queue, 'party'), id: id(queue) }) } catch (_) {}
         if (alreadyPlaying) throw new Error('party_already_playing')
         const pending = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && status = "queued"', '+sequence', 500, 0, { party: str(queue, 'party') })
-        const firstByRequester = Object.create(null)
-        for (const item of pending) { const requester = str(item, 'requester'); if (!firstByRequester[requester]) firstByRequester[requester] = item }
-        const candidate = Object.values(firstByRequester).sort((a, b) => {
-          const ga = tx.findRecordById('karaoke_guest_identities', str(a, 'requester')); const gb = tx.findRecordById('karaoke_guest_identities', str(b, 'requester'))
-          const ta = ga && str(ga, 'last_served_at') ? new Date(str(ga, 'last_served_at')).getTime() : 0; const tb = gb && str(gb, 'last_served_at') ? new Date(str(gb, 'last_served_at')).getTime() : 0
-          return ta - tb || num(a, 'sequence') - num(b, 'sequence') || String(str(a, 'requester')).localeCompare(String(str(b, 'requester')))
-        })[0]
-        if (!candidate || id(candidate) !== id(queue)) throw new Error('not_next')
+        if (!pending[0] || id(pending[0]) !== id(queue)) throw new Error('not_next')
       }
       set(queue, 'status', input.to)
       if (input.to === 'playing') set(queue, 'started_at', now())

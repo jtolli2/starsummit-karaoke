@@ -46,6 +46,17 @@ describe('party page', () => {
     expect(expired.text()).toContain('party has ended')
   })
 
+  it('uses dark-surface classes for guest feedback and errors', async () => {
+    api.requestSong.mockRejectedValue({ code: 'rate_limited' })
+    const wrapper = mount(PartyPage)
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    const message = wrapper.get('.message')
+    expect(message.classes()).toContain('message')
+    expect(message.attributes('data-error')).toBe('true')
+  })
+
   it('does not spend fallback quota during debounce, but does on explicit action', async () => {
     vi.useFakeTimers()
     api.fallbackSearchSongs.mockResolvedValue({ songs: [] })

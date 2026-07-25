@@ -19,12 +19,29 @@ export type TabletStatus = {
     joinCount?: number
   }
   queue: TabletQueueItem[]
+  queueOrderRevision?: number
+  queueOrderDigest?: string
   controller?: {
     connected: boolean
     connectionState: string
     device?: { id: string; name: string; lastSeenAt?: string | null } | null
     state?: { playerState?: string; videoId?: string | null; observedAt?: string | null } | null
   } | null
+}
+
+export function reorderTabletQueue(
+  token: string,
+  partyId: string,
+  queueId: string,
+  direction: 'up' | 'down',
+  expectedRevision: number,
+  expectedDigest: string,
+) {
+  return request<{ moved: boolean; revision: number; digest: string }>(
+    '/api/karaoke/tablet/queue/reorder',
+    { method: 'POST', body: JSON.stringify({ partyId, queueId, direction, expectedRevision, expectedDigest }) },
+    token,
+  )
 }
 
 export type CatalogSong = {
