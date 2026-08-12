@@ -2,7 +2,20 @@
 
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { ProtocolStore, sanitizeCommandPayload, sanitizeState } = require('./controller_protocol.cjs')
+const fs = require('node:fs')
+const path = require('node:path')
+const hook = fs.readFileSync(path.join(__dirname, '..', 'pb_hooks', 'controller_protocol.pb.js'), 'utf8')
+const {
+  CONTROLLER_STATE_TTL,
+  ProtocolStore,
+  canonicalHost,
+  freshObservedAt,
+  hostMatches,
+  normalizeShortCode,
+  sanitizeCommandPayload,
+  sanitizeState,
+  validHost,
+} = require('./controller_protocol.cjs')
 
 test('only approved actions and sanitized payloads are accepted', () => {
   assert.deepEqual(sanitizeCommandPayload('open_video', { videoId: 'dQw4w9WgXcQ', ignored: 'x' }), { videoId: 'dQw4w9WgXcQ' })
@@ -18,21 +31,98 @@ test('enrollment grants are single-use and device secrets are not grant data', (
   const enrolled = store.enroll({ token: grant.token, deviceName: 'tablet' })
   assert.ok(enrolled.deviceSecret)
   assert.equal(store.grants.get(grant.id).tokenHash.includes(grant.token), false)
-  assert.throws(() => store.enroll({ token: grant.token, deviceName: 'replay' }), /enrollment_grant_invalid/)
+  assert.throws(() => store.enroll({ token: grant.token, deviceName: 'replay' }), /enrollment_grant_replayed/)
   clock += 1000
   const expired = store.createEnrollmentGrant({ ttlMs: 10 })
   clock += 11
-  assert.throws(() => store.enroll({ token: expired.token, deviceName: 'expired' }), /enrollment_grant_invalid/)
+  assert.throws(() => store.enroll({ token: expired.token, deviceName: 'expired' }), /enrollment_grant_expired/)
 })
 
 test('short code is one-time bearer equivalent and only its hash is retained', () => {
   const store = new ProtocolStore(() => 1000)
   const grant = store.createEnrollmentGrant()
   assert.match(grant.shortCode, /^[A-Z2-9]{16}$/)
-  const enrolled = store.enroll({ shortCode: grant.shortCode, deviceName: 'short-code tablet' })
+  // Manual entry is normalized at the protocol boundary, so a human can use
+  // lowercase text, grouping separators, and surrounding whitespace for the
+  // same one-time grant.
+  const grouped = grant.shortCode.match(/.{4}/g).join('-').toLowerCase()
+  assert.equal(normalizeShortCode(` ${grouped} `), grant.shortCode)
+  const enrolled = store.enroll({ shortCode: `  ${grouped}  `, deviceName: 'short-code tablet' })
   assert.equal(enrolled.device.deviceName, 'short-code tablet')
   assert.equal(store.grants.get(grant.id).shortCodeHash.includes(grant.shortCode), false)
-  assert.throws(() => store.enroll({ shortCode: grant.shortCode, deviceName: 'replay' }), /enrollment_grant_invalid/)
+  assert.throws(() => store.enroll({ shortCode: grant.shortCode, deviceName: 'replay' }), /enrollment_grant_replayed/)
+})
+
+test('host canonicalization accepts equivalent case and ports but rejects request-host spoofing', () => {
+  assert.equal(validHost(' [2001:db8::1]:443 '), true)
+  assert.equal(canonicalHost(' KARAOKE.TEST. '), 'karaoke.test')
+  assert.equal(hostMatches('karaoke.test:443', 'KARAOKE.TEST'), true)
+  assert.equal(hostMatches('evil.test', 'karaoke.test'), false)
+  const at = 1_000_000
+  assert.equal(freshObservedAt(new Date(at - CONTROLLER_STATE_TTL).toISOString(), at), true)
+  assert.equal(freshObservedAt(new Date(at - CONTROLLER_STATE_TTL - 1).toISOString(), at), false)
+
+  const store = new ProtocolStore(() => 1000)
+  const grant = store.createEnrollmentGrant({ expectedServerHost: 'karaoke.test', destination: 'controller' })
+  assert.throws(
+    () => store.enroll({ token: grant.token, deviceName: 'spoofed', requestHost: 'evil.test', serverHost: 'karaoke.test', destination: 'controller' }),
+    /enrollment_grant_wrong_server/,
+  )
+  const enrolled = store.enroll({ token: grant.token, deviceName: 'trusted', requestHost: ' KARAOKE.TEST:443 ', serverHost: 'karaoke.test', destination: 'controller' })
+  assert.equal(enrolled.device.deviceName, 'trusted')
+})
+
+test('public host forwarding is accepted only from the fixed private PocketBase upstream', () => {
+  assert.match(hook, /X-Starsummit-Public-Host/)
+  assert.match(hook, /upstream === 'starsummit-pocketbase-internal:8090'/)
+  assert.doesNotMatch(hook, /X-Forwarded-Host/)
+})
+
+test('grant status stays pending until a current connected state heartbeat', () => {
+  let clock = 1000
+  const store = new ProtocolStore(() => clock)
+  const grant = store.createEnrollmentGrant({ createdBy: 'tablet-1' })
+  const enrolled = store.enroll({ token: grant.token, deviceName: 'tablet' })
+
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'pending')
+  const session = store.startSession(enrolled.device.id)
+  const sessionOnly = store.enrollmentGrantStatus(grant.id, 'tablet-1')
+  assert.equal(sessionOnly.state, 'pending')
+  assert.equal(sessionOnly.sessionActive, true)
+  assert.equal(Object.hasOwn(sessionOnly, 'session'), false)
+
+  store.reportState({ deviceId: enrolled.device.id, sessionId: session.id, generation: session.generation, connectionState: 'connected' })
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'connected')
+
+  // Exactly 90 seconds is still within the advertised freshness window.
+  clock += 90_000
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'connected')
+  clock += 1
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'pending')
+  clock += 15 * 60 * 1000
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'pending', 'expired session must not imply connected')
+})
+
+test('grant status reports actionable pending or revoked states for invalid liveness', () => {
+  let clock = 1000
+  const store = new ProtocolStore(() => clock)
+  const grant = store.createEnrollmentGrant({ createdBy: 'tablet-1' })
+  const enrolled = store.enroll({ token: grant.token, deviceName: 'tablet' })
+  const session = store.startSession(enrolled.device.id)
+
+  store.reportState({ deviceId: enrolled.device.id, sessionId: session.id, generation: session.generation, connectionState: 'connecting' })
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'pending')
+  store.reportState({ deviceId: enrolled.device.id, sessionId: session.id, generation: session.generation, connectionState: 'connected' })
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'connected')
+
+  const newer = store.startSession(enrolled.device.id)
+  assert.equal(newer.generation, session.generation + 1)
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'pending', 'old-generation state must not imply connected')
+
+  enrolled.device.revoked = true
+  store.devices.get(enrolled.device.id).revoked = true
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').state, 'revoked')
+  assert.throws(() => store.enrollmentGrantStatus(grant.id, 'other-operator'), /enrollment_grant_not_found/)
 })
 
 test('enrollment grants are host-bound, operator-scoped, revocable, and only one is active', () => {
@@ -40,10 +130,15 @@ test('enrollment grants are host-bound, operator-scoped, revocable, and only one
   const grant = store.createEnrollmentGrant({ createdBy: 'tablet-1', expectedServerHost: 'karaoke.test', destination: 'tablet-1' })
   assert.throws(() => store.createEnrollmentGrant({ createdBy: 'tablet-1', expectedServerHost: 'karaoke.test', destination: 'tablet-1' }), /enrollment_grant_active/)
   assert.throws(() => store.enroll({ token: grant.token, deviceName: 'wrong', serverHost: 'evil.test', destination: 'tablet-1' }), /enrollment_grant_wrong_server/)
-  assert.equal(store.enrollmentGrantStatus(grant.id).status, 'active')
+  const enrolled = store.enroll({ token: grant.token, deviceName: 'normalized', serverHost: ' KARAOKE.TEST ', destination: ' TABLET-1 ' })
+  assert.equal(enrolled.device.deviceName, 'normalized')
+  assert.equal(store.enrollmentGrantStatus(grant.id).status, 'pending')
   store.revokeEnrollmentGrant(grant.id, 'tablet-1')
-  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').status, 'revoked')
-  assert.throws(() => store.enroll({ token: grant.token, deviceName: 'revoked', serverHost: 'karaoke.test', destination: 'tablet-1' }), /enrollment_grant_invalid/)
+  assert.equal(store.enrollmentGrantStatus(grant.id, 'tablet-1').status, 'pending')
+  const revocable = store.createEnrollmentGrant({ createdBy: 'tablet-1', expectedServerHost: 'karaoke.test', destination: 'tablet-1' })
+  store.revokeEnrollmentGrant(revocable.id, 'tablet-1')
+  assert.equal(store.enrollmentGrantStatus(revocable.id, 'tablet-1').status, 'revoked')
+  assert.throws(() => store.enroll({ token: revocable.token, deviceName: 'revoked', serverHost: 'karaoke.test', destination: 'tablet-1' }), /enrollment_grant_revoked/)
   assert.throws(() => store.revokeEnrollmentGrant(grant.id, 'other'), /enrollment_grant_not_found/)
 })
 
@@ -53,7 +148,7 @@ test('revoke versus redemption has one terminal outcome and never rewrites used_
   const enrolled = store.enroll({ token: grant.token, deviceName: 'tablet', serverHost: 'karaoke.test', destination: 'tablet-1' })
   const usedAt = store.grants.get(grant.id).usedAt
   const status = store.revokeEnrollmentGrant(grant.id, 'tablet-1')
-  assert.equal(status.status, 'used')
+  assert.equal(status.status, 'pending')
   assert.equal(store.grants.get(grant.id).usedAt, usedAt)
   assert.equal(store.grants.get(grant.id).redeemedDeviceId, enrolled.device.id)
 })

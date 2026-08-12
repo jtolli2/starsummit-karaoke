@@ -20,6 +20,8 @@ import {
   createApprovalSelection,
   commitApprovalSelection,
   updateApprovalSelection,
+  bindAvailableController,
+  loadControllerPairingStatus,
 } from '@/services/tabletApi'
 
 describe('tablet API', () => {
@@ -56,6 +58,40 @@ describe('tablet API', () => {
   it('exposes backend error codes for recovery messaging', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'stale_transition', message: 'changed' }), { status: 409 })))
     await expect(transitionQueue('tablet-token', 'queue-1', 'playing', 'completed')).rejects.toMatchObject({ code: 'stale_transition', status: 409 })
+  })
+
+  it('binds an exact redeemed controller device without accepting an implicit replacement', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ partyId: 'party-1', bound: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await bindAvailableController('tablet-token', 'party-1', 'device-exact')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/karaoke/tablet/controller/bind')
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ partyId: 'party-1', deviceId: 'device-exact' })
+    await bindAvailableController('tablet-token', 'party-1')
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ partyId: 'party-1' })
+  })
+
+  it.each([
+    [{ state: 'active', expiresAt: '2099-01-01T00:00:00Z' }, 'issued'],
+    [{ state: 'pending', expiresAt: '2099-01-01T00:00:00Z', device: { id: 'device-1' } }, 'redeemed'],
+    [{ state: 'pending', sessionActive: true, expiresAt: '2099-01-01T00:00:00Z', device: { id: 'device-1' } }, 'connecting'],
+    [{ state: 'used', expiresAt: '2099-01-01T00:00:00Z' }, 'redeemed'],
+    [{ state: 'expired', expiresAt: '2099-01-01T00:00:00Z' }, 'expired'],
+    [{ state: 'revoked', expiresAt: '2099-01-01T00:00:00Z' }, 'revoked'],
+    [{ state: 'unexpected', expiresAt: '2099-01-01T00:00:00Z' }, 'unexpected'],
+  ] as const)('normalizes enrollment status %j to %s without requiring client secrets', async (payload, expected) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })))
+    const result = await loadControllerPairingStatus('tablet-token', 'grant-1')
+    expect(result.state).toBe(expected)
+    expect(result).not.toHaveProperty('token')
+    expect(result).not.toHaveProperty('shortCode')
+    expect(result).not.toHaveProperty('deepLink')
+  })
+
+  it('does not call the server when no grant id remains after terminal cleanup', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(loadControllerPairingStatus('tablet-token')).resolves.toEqual({ state: 'none' })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('uses the tablet-scoped active-party recovery route', async () => {

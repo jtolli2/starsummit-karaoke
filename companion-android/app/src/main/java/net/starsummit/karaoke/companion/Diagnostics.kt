@@ -21,12 +21,19 @@ data class DiagnosticsSnapshot(
   val controllerEndpointHost: String? = null,
   val controllerPhase: String? = null,
   val controllerEstablishCount: Int = 0,
+  val controllerStateReportCount: Int = 0,
   val controllerInitialRefetchCount: Int? = null,
   val controllerRealtimeEventRedacted: String? = null,
   val controllerRefetchCount: Int? = null,
   val controllerRefetchErrorRedacted: String? = null,
   val controllerSubscriptionAccepted: Boolean = false,
   val controllerRealtimeFallbackErrorRedacted: String? = null,
+  /** Safe enrollment lifecycle value for the tablet UI; never contains grant or credentials. */
+  val controllerEnrollmentState: String? = null,
+  val controllerEnrollmentErrorRedacted: String? = null,
+  val controllerEnrollmentRequiresNewGrant: Boolean = false,
+  val controllerRePairRequired: Boolean = false,
+  val controllerEnrollmentStorageBlocked: Boolean = false,
 )
 
 /** Receives only redacted controller lifecycle facts; it never receives auth or event payloads. */
@@ -61,6 +68,7 @@ class DiagnosticsStore {
     mutable.value = mutable.value.copy(
       controllerAttemptCount = mutable.value.controllerAttemptCount + 1,
       controllerPhase = "authenticate",
+      controllerStateReportCount = 0,
       controllerInitialRefetchCount = null,
       controllerRealtimeEventRedacted = null,
       controllerRefetchCount = null,
@@ -80,6 +88,10 @@ class DiagnosticsStore {
 
   fun controllerEstablished() {
     mutable.value = mutable.value.copy(controllerEstablishCount = mutable.value.controllerEstablishCount + 1)
+  }
+
+  fun controllerStateReported() {
+    mutable.value = mutable.value.copy(controllerStateReportCount = mutable.value.controllerStateReportCount + 1)
   }
 
   fun controllerInitialRefetch(commandCount: Int) {
@@ -110,6 +122,70 @@ class DiagnosticsStore {
   }
   fun controllerRealtimeFallback(errorCode: String) {
     mutable.value = mutable.value.copy(controllerRealtimeFallbackErrorRedacted = errorCode.take(80))
+  }
+
+  fun controllerEnrollmentStarted() {
+    mutable.value = mutable.value.copy(
+      controllerEnrollmentState = "enrolling",
+      controllerEnrollmentErrorRedacted = null,
+      controllerEnrollmentRequiresNewGrant = false,
+      controllerRePairRequired = false,
+      controllerEnrollmentStorageBlocked = false,
+    )
+  }
+
+  fun controllerEnrollmentSucceeded() {
+    mutable.value = mutable.value.copy(
+      controllerEnrollmentState = "enrolled",
+      controllerEnrollmentErrorRedacted = null,
+      controllerEnrollmentRequiresNewGrant = false,
+      controllerRePairRequired = false,
+      controllerEnrollmentStorageBlocked = false,
+    )
+  }
+
+  /** Enrollment failures are deliberately retryable and only expose a redacted class/status. */
+  fun controllerEnrollmentRetryable(failure: Throwable) {
+    mutable.value = mutable.value.copy(
+      controllerEnrollmentState = "retryable_error",
+      controllerEnrollmentErrorRedacted = redactDiagnosticError(failure),
+      // A one-time grant may have been consumed even when the response was ambiguous.
+      controllerEnrollmentRequiresNewGrant = true,
+      controllerRePairRequired = false,
+      controllerEnrollmentStorageBlocked = false,
+    )
+  }
+
+  /** Definitively rejected credentials stop automatic retry and require a fresh enrollment. */
+  fun controllerRePairRequired(failure: Throwable) {
+    mutable.value = mutable.value.copy(
+      controllerEnrollmentState = "re_pair_required",
+      controllerEnrollmentErrorRedacted = redactDiagnosticError(failure),
+      controllerEnrollmentRequiresNewGrant = true,
+      controllerRePairRequired = true,
+      controllerEnrollmentStorageBlocked = false,
+    )
+  }
+
+  /** A failed rollback leaves persistence indeterminate; automatic restart is unsafe. */
+  fun controllerEnrollmentStorageBlocked(failure: Throwable) {
+    mutable.value = mutable.value.copy(
+      controllerEnrollmentState = "storage_blocked",
+      controllerEnrollmentErrorRedacted = redactDiagnosticError(failure),
+      controllerEnrollmentRequiresNewGrant = true,
+      controllerRePairRequired = true,
+      controllerEnrollmentStorageBlocked = true,
+    )
+  }
+
+  fun controllerReset() {
+    mutable.value = mutable.value.copy(
+      controllerEnrollmentState = "reset",
+      controllerEnrollmentErrorRedacted = null,
+      controllerEnrollmentRequiresNewGrant = false,
+      controllerRePairRequired = false,
+      controllerEnrollmentStorageBlocked = false,
+    )
   }
   fun error(value: Throwable, setErrorState: Boolean = true) {
     mutable.value = mutable.value.copy(
@@ -150,6 +226,9 @@ internal fun sanitizeControllerEndpointHost(value: String): String = runCatching
 }.getOrNull() ?: "unknown"
 
 internal fun redactDiagnosticError(value: Throwable): String = when (value) {
-  is ControllerHttpException -> "ControllerHttp${value.statusCode}"
+  is ControllerAuthenticationRejectedException -> "ControllerHttp${value.statusCode}"
+  is ControllerRePairRequiredException -> "ControllerHttp${value.statusCode}"
+  is ControllerHttpException -> "ControllerHttp${value.statusCode}" +
+    value.serverCode?.let { ":$it" }.orEmpty()
   else -> value::class.simpleName ?: "DiagnosticError"
 }.take(80)

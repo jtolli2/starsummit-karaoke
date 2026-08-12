@@ -53,19 +53,34 @@ test('manual sequence is authoritative for next-song selection', () => {
 test('party creation binds exactly one active controller without guessing between devices', () => {
   const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/parties',[\s\S]*?\n}\)/)
   assert.ok(endpoint)
-  assert.match(endpoint[0], /revoked = false && last_seen_at > \{:\s*cutoff\}/)
-  assert.match(endpoint[0], /cutoff: filterDate\(Date\.now\(\) - CONTROLLER_STATE_TTL\)/)
-  assert.match(endpoint[0], /if \(controllers\.length === 1\) set\(party, 'controller_device', id\(controllers\[0\]\)\)/)
+  assert.match(endpoint[0], /availableControllers\(tx, id\(auth\(c\)\)\)/)
+  assert.match(hook, /function ownedControllerIds\(store, operatorId\)/)
+  assert.match(hook, /function controllerLiveness\(store, deviceId\)/)
+  assert.match(hook, /freshObservedAt\(str\(state, 'observed_at'\)\)/)
+  assert.match(endpoint[0], /if \(controllers\.length === 1\) set\(party, 'controller_device', id\(controllers\[0\]\.device\)\)/)
 })
 
 test('tablet can bind an unassigned party only to its single available controller', () => {
   const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/tablet\/controller\/bind',[\s\S]*?\n}\)/)
   assert.ok(endpoint)
   assert.match(endpoint[0], /created_by'\) !== id\(operator\)/)
-  assert.match(endpoint[0], /controllers\.length !== 1/)
-  assert.match(endpoint[0], /last_seen_at > \{:\s*cutoff\}/)
-  assert.match(endpoint[0], /cutoff: filterDate\(Date\.now\(\) - CONTROLLER_STATE_TTL\)/)
+  assert.match(endpoint[0], /str\(party, 'status'\) !== 'active'/)
+  assert.match(endpoint[0], /str\(party, 'expires_at'\)\)\.getTime\(\) <= Date\.now\(\)/)
+  assert.match(endpoint[0], /requestedDeviceId/)
+  assert.match(endpoint[0], /hasDeviceId/)
+  assert.match(endpoint[0], /invalid_device_id/)
+  assert.match(endpoint[0], /controller_target_not_found/)
+  assert.match(endpoint[0], /controller_target_not_owned/)
+  assert.match(endpoint[0], /controller_target_revoked/)
+  assert.match(endpoint[0], /controller_target_unavailable/)
+  assert.match(endpoint[0], /operatorOwnsController\(tx, id\(operator\), requestedDeviceId\)/)
+  assert.match(endpoint[0], /controllerLiveness\(tx, requestedDeviceId\)/)
+  assert.match(endpoint[0], /availableControllers\(tx, id\(operator\)\)/)
   assert.match(endpoint[0], /set\(party, 'controller_device', deviceId\)/)
+  assert.match(endpoint[0], /if \(deviceId\) return/)
+  const targetCheck = endpoint[0].indexOf('controllerLiveness(tx, requestedDeviceId)')
+  const replacement = endpoint[0].indexOf("set(party, 'controller_device', requestedDeviceId)")
+  assert.ok(targetCheck >= 0 && replacement > targetCheck, 'party replacement must follow authoritative target liveness checks')
 })
 
 test('tablet playback controls are party-scoped, current, monotonic, and idempotent', () => {
@@ -74,7 +89,7 @@ test('tablet playback controls are party-scoped, current, monotonic, and idempot
   assert.match(endpoint[0], /tablet\(operator\)/)
   assert.match(endpoint[0], /created_by'\) !== id\(operator\)/)
   assert.match(endpoint[0], /status = "playing"/)
-  assert.match(endpoint[0], /CONTROLLER_STATE_TTL/)
+  assert.match(endpoint[0], /controllerLiveness\(tx, deviceId\)/)
   assert.match(endpoint[0], /video_id'\) !== str\(song, 'youtube_id'\)/)
   assert.match(endpoint[0], /idempotency_key = \{:key\}/)
   assert.match(endpoint[0], /expectedKeyPrefix = `tablet:\$\{partyId\}:\$\{id\(playing\)\}:\$\{action\}:`/)
@@ -83,7 +98,7 @@ test('tablet playback controls are party-scoped, current, monotonic, and idempot
   assert.match(endpoint[0], /idempotency_key'\)\.startsWith\(expectedKeyPrefix\)/)
   assert.ok(
     endpoint[0].indexOf('idempotency_key = {:key}') <
-      endpoint[0].indexOf("const stateFresh = controllerState"),
+      endpoint[0].indexOf('const live = controllerLiveness'),
     'durable replay must resolve before volatile controller state checks',
   )
   assert.match(endpoint[0], /playback_state_conflict/)

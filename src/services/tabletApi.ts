@@ -216,12 +216,12 @@ export function loadTabletStatus(token: string, partyId: string) {
   return request<TabletStatus>(`/api/karaoke/tablet/status?${params}`, {}, token)
 }
 
-export function bindAvailableController(token: string, partyId: string) {
+export function bindAvailableController(token: string, partyId: string, deviceId?: string) {
   return request<{ partyId: string; bound: boolean }>(
     '/api/karaoke/tablet/controller/bind',
     {
       method: 'POST',
-      body: JSON.stringify({ partyId }),
+      body: JSON.stringify({ partyId, ...(deviceId ? { deviceId } : {}) }),
     },
     token,
   )
@@ -267,11 +267,22 @@ export type ControllerPairingGrant = {
 }
 
 export type ControllerPairingStatus = {
-  state: 'none' | 'issued' | 'pending' | 'connected' | 'expired' | 'revoked' | 'replayed' | 'unavailable'
+  state:
+    | 'none'
+    | 'issued'
+    | 'pending'
+    | 'redeemed'
+    | 'connecting'
+    | 'connected'
+    | 'expired'
+    | 'revoked'
+    | 'replayed'
+    | 'unavailable'
   expiresAt?: string
   device?: { id?: string; name?: string; lastSeenAt?: string | null } | null
   connectionState?: string
   retryable?: boolean
+  sessionActive?: boolean
 }
 
 /** Issue an operator-scoped, one-time controller grant. Raw material is never persisted. */
@@ -284,10 +295,17 @@ export function createControllerPairingGrant(token: string, ttlMinutes = 5) {
 
 export function loadControllerPairingStatus(token: string, grantId?: string) {
   if (!grantId) return Promise.resolve<ControllerPairingStatus>({ state: 'none' })
-  return request<ControllerPairingStatus & { status?: string }>(`/api/karaoke/controllers/enrollment-grants/${encodeURIComponent(grantId)}`, {}, token).then((result) => ({
-    ...result,
-    state: result.state || (result.status === 'active' ? 'pending' : result.status === 'used' ? 'pending' : result.status === 'expired' ? 'expired' : result.status === 'revoked' ? 'revoked' : 'unavailable'),
-  }))
+  type RawPairingStatus = Omit<ControllerPairingStatus, 'state'> & { state?: string; status?: string }
+  return request<RawPairingStatus>(`/api/karaoke/controllers/enrollment-grants/${encodeURIComponent(grantId)}`, {}, token).then((result) => {
+    const state = result.state || result.status
+    const normalized: ControllerPairingStatus['state'] = state === 'pending'
+      ? result.sessionActive ? 'connecting' : result.device?.id ? 'redeemed' : 'pending'
+      : state === 'active' ? 'issued'
+        : state === 'used' ? 'redeemed'
+          : state === 'expired' ? 'expired'
+            : state === 'revoked' ? 'revoked' : state as ControllerPairingStatus['state']
+    return { ...result, state: normalized || 'unavailable' }
+  })
 }
 
 export function clearControllerPairingGrant(token: string, grantId?: string) {

@@ -44,6 +44,69 @@ function future(ms) { return new Date(Date.now() + ms).toISOString() }
 function str(r, f) { return r && r.getString ? r.getString(f) : r?.[f] }
 function num(r, f) { return r && r.getFloat ? r.getFloat(f) : r && r.getInt ? r.getInt(f) : Number(r?.[f] || 0) }
 function set(r, f, v) { r.set(f, v); return r }
+function freshObservedAt(value, at = Date.now()) {
+  const observedAt = new Date(value).getTime()
+  return Number.isFinite(observedAt) && at - observedAt <= CONTROLLER_STATE_TTL
+}
+function controllerLiveness(store, deviceId) {
+  if (!store || !deviceId) return null
+  let device = null
+  try { device = store.findRecordById('controller_devices', deviceId) } catch (_) {}
+  if (!device || (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))) return null
+  const generation = num(device, 'session_generation')
+  if (!Number.isInteger(generation) || generation < 1) return null
+  let session = null
+  let state = null
+  try {
+    const sessions = store.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: deviceId, generation })
+    session = sessions.find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
+    state = store.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: deviceId })
+  } catch (_) {}
+  if (!session || !state || num(state, 'session_generation') !== generation || !freshObservedAt(str(state, 'observed_at')) || str(state, 'connection_state') !== 'connected') return null
+  return { device, generation, session, state }
+}
+function ownedControllerIds(store, operatorId) {
+  if (!store || !operatorId) return []
+  try {
+    // Keep the operator binding as an exact text comparison. PocketBase 0.39.7
+    // transactions can return an empty result for this text filter while the
+    // same persisted rows are visible through the HTTP collection API. Read
+    // the bounded grant set and compare the stored operator id explicitly.
+    let grants = []
+    try { grants = store.findRecordsByFilter('controller_enrollment_grants', 'redeemed_device != ""', '-created', 10000, 0) || [] } catch (_) {}
+    // A 0.39.7 transaction wrapper can fail to enumerate this additive
+    // collection even though the committed app store can. Fall back only for
+    // that read; ownership remains an exact operator-id comparison below and
+    // all party/device writes stay in the caller's transaction.
+    if (!grants.length && globalThis.$app && globalThis.$app !== store) {
+      try { grants = globalThis.$app.findRecordsByFilter('controller_enrollment_grants', 'redeemed_device != ""', '-created', 10000, 0) || [] } catch (_) {}
+    }
+    const fieldValue = (record, field) => {
+      const raw = record && typeof record.get === 'function' ? record.get(field) : record?.[field]
+      return raw === undefined || raw === null ? '' : String(raw)
+    }
+    const relationId = (grant) => {
+      const raw = grant && typeof grant.get === 'function' ? grant.get('redeemed_device') : grant?.redeemed_device
+      if (Array.isArray(raw)) return raw.map((value) => String(value || '')).filter(Boolean)
+      const value = String(raw || str(grant, 'redeemed_device') || '')
+      return value ? [value] : []
+    }
+    return [...new Set(grants.filter((grant) => (fieldValue(grant, 'operator_id') || String(str(grant, 'operator_id') || '')) === String(operatorId)).flatMap(relationId))]
+  } catch (_) { return [] }
+}
+function availableControllers(store, operatorId) {
+  return ownedControllerIds(store, operatorId).map((deviceId) => controllerLiveness(store, deviceId)).filter(Boolean)
+}
+function operatorOwnsController(store, operatorId, deviceId) {
+  if (!store || !operatorId || !deviceId) return false
+  const filter = 'operator_id = {:operatorId} && redeemed_device = {:deviceId}'
+  const params = { operatorId, deviceId }
+  try { if (store.findFirstRecordByFilter('controller_enrollment_grants', filter, params)) return true } catch (_) {}
+  // PocketBase 0.39.7 can fail this exact relation lookup on a transaction
+  // wrapper. Fall back to the bounded, exact operator-id enumeration used for
+  // availability; authorization remains tied to the requested device id.
+  return ownedControllerIds(store, operatorId).includes(deviceId)
+}
 function normalizeJsonValue(value, seen) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
   if (typeof value === 'number') { if (!Number.isFinite(value)) throw new Error('json_value_invalid_number'); return value }
@@ -458,22 +521,16 @@ function queueOrderDigest(rows) {
 function tabletControllerView(party) {
   const deviceId = str(party, 'controller_device')
   if (!deviceId) return { connected: false, connectionState: 'disconnected', device: null, state: null }
-  const device = find('controller_devices', 'id = {:id}', { id: deviceId })
+  let device = null
+  try { device = $app.findRecordById('controller_devices', deviceId) } catch (_) {}
   if (!device || (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))) {
     return { connected: false, connectionState: 'disconnected', device: null, state: null }
   }
-  const generation = num(device, 'session_generation')
-  let session = null
-  try {
-    session = records('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, { device: deviceId, generation })
-      .find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
-  } catch (_) {}
-  let state = null
-  try { state = find('controller_state', 'device = {:device}', { device: deviceId }) } catch (_) {}
-  const stateGeneration = state && num(state, 'session_generation') === generation
-  const stateFresh = state && str(state, 'observed_at') && new Date(str(state, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
-  const connectionState = session ? (state && stateGeneration && stateFresh ? str(state, 'connection_state') || 'connecting' : 'disconnected') : 'disconnected'
-  const safeState = state && stateGeneration && stateFresh ? {
+  const live = controllerLiveness($app, deviceId)
+  const state = live?.state || null
+  const session = live?.session || null
+  const connectionState = live ? str(state, 'connection_state') || 'connecting' : 'disconnected'
+  const safeState = live ? {
     connectionState,
     videoId: str(state, 'video_id') || null,
     playerState: str(state, 'player_state') || 'unknown',
@@ -491,7 +548,7 @@ function tabletControllerView(party) {
   }
 }
 
-globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, CATALOG_VIDEO_TITLE_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, catalogApprovalReason, catalogVideoTitleQuery, escapeCatalogLikeLiteral, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, queueOrderDigest, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
+globalThis.__partyQueue = { CODE_ALPHABET, YOUTUBE_ID, PARTY_TTL, REQUEST_GAP, JOIN_WINDOW, JOIN_LIMIT, PARTY_REQUEST_LIMIT, FALLBACK_QUERY_MAX, CATALOG_VIDEO_TITLE_QUERY_MAX, FALLBACK_CANDIDATE_MAX, FALLBACK_GUEST_LIMIT, FALLBACK_PARTY_LIMIT, FALLBACK_POLICY_VERSION, CONTROLLER_STATE_TTL, TRUSTED_PLAYLIST_ELIGIBILITY_POLICY, joinAttempts, fallbackAttempts, info, body, auth, bearer, query, requireGuest, activeParty, tablet, hash, digest, parsePlaylistInput, issueConfirmation, verifyConfirmation, isApprovable, catalogApprovalReason, catalogVideoTitleQuery, escapeCatalogLikeLiteral, normalizeJsonValue, serializeJson, canonicalize, catalogFinalDigest, normalized, fallbackQuery, catalogSafeSong, classifyCatalogItem, recordYoutubeOperation, env, youtubeRequest, fetchYoutubeCandidates, random, code, now, filterDate, future, dayKey, freshObservedAt, controllerLiveness, ownedControllerIds, operatorOwnsController, availableControllers, str, num, set, setJson, jsonValue, requiredJsonValue, claimTransitionAllowed, validateClaimReplay, sameInstant, catalogBatchMismatch, id, json, songView, tabletQueueView, queueOrderDigest, tabletControllerView, find, records, chooseNext, catalogImportFailureStage, logCatalogImportFailure, catalogCheckpointHealth, catalogFieldType, findPlaylistSnapshot, classifyTrustedVideoAvailability, legacyPlaylistId: 'PL8D4Iby0Bmm94U_rwuJuocyC1xFoPTd5R', legacyBindingKind: 'operator_assumed_legacy_playlist', legacyPolicyVersion: 'mb-majority-v2', legacyBatchSize: 20, legacyLeaseMs: 6 * 60 * 1000, legacyCacheMs: 7 * 24 * 60 * 60 * 1000, legacyRunJob }
 globalThis.__partyQueue.correctCatalogIdentity = correctCatalogIdentity
 globalThis.__partyQueueRealtime = {
   authorize(e) {
@@ -537,7 +594,7 @@ onRecordAfterUpdateSuccess((e) => {
 
 routerAdd('POST', '/api/karaoke/parties', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { PARTY_TTL, CONTROLLER_STATE_TTL, auth, tablet, json, find, code, hash, set, future, filterDate, id, str } = globalThis.__partyQueue
+  const { PARTY_TTL, auth, tablet, json, find, code, hash, set, future, id, str, availableControllers } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   let result
   try {
@@ -545,11 +602,12 @@ routerAdd('POST', '/api/karaoke/parties', (c) => {
       let plain; let party
       for (let i = 0; i < 8; i++) { plain = code(); if (!find('karaoke_parties', 'code_hash = {:hash}', { hash: hash(plain) })) break }
       party = new Record(tx.findCollectionByNameOrId('karaoke_parties'))
-      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: filterDate(Date.now() - CONTROLLER_STATE_TTL) })
       set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0)
       // Never guess between multiple enrolled devices. A single retained,
-      // non-revoked controller can safely become the party controller.
-      if (controllers.length === 1) set(party, 'controller_device', id(controllers[0]))
+      // operator-owned controller with a current connected state can safely
+      // become the party controller.
+      const controllers = availableControllers(tx, id(auth(c)))
+      if (controllers.length === 1) set(party, 'controller_device', id(controllers[0].device))
       tx.save(party)
       result = { id: id(party), code: plain, expiresAt: str(party, 'expires_at') }
     })
@@ -804,27 +862,68 @@ routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
 // without exposing controller records or guessing between multiple devices.
 routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, id, str, set, filterDate, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
+  const { auth, tablet, json, body, id, str, set, availableControllers, operatorOwnsController, controllerLiveness } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
-  const partyId = String(body(c).partyId || '')
+  const input = body(c)
+  const partyId = String(input.partyId || '')
+  const hasDeviceId = Object.prototype.hasOwnProperty.call(input, 'deviceId')
+  if (hasDeviceId && (typeof input.deviceId !== 'string' || !/^[A-Za-z0-9_-]{5,64}$/.test(input.deviceId.trim()))) return json(c, 422, 'invalid_device_id', 'deviceId is invalid')
+  const requestedDeviceId = hasDeviceId ? input.deviceId.trim() : ''
   if (!partyId) return json(c, 422, 'party_required', 'An active party is required')
   try {
     let deviceId = ''
     $app.runInTransaction((tx) => {
-      const party = tx.findRecordById('karaoke_parties', partyId)
+      let party = null
+      try { party = tx.findRecordById('karaoke_parties', partyId) } catch (_) {}
       if (!party || str(party, 'created_by') !== id(operator)) throw new Error('party_not_found')
+      if (str(party, 'status') !== 'active' || new Date(str(party, 'expires_at')).getTime() <= Date.now()) throw new Error('party_expired')
       deviceId = str(party, 'controller_device')
+      if (requestedDeviceId) {
+        // Explicit pairing is safe only when the exact target is currently
+        // authenticated, has a live session for its current generation, and
+        // has reported a fresh connected state for that same generation.
+        let target = null
+        try { target = tx.findRecordById('controller_devices', requestedDeviceId) } catch (_) {}
+        if (!target) throw new Error('controller_target_not_found')
+        const owned = operatorOwnsController(tx, id(operator), requestedDeviceId)
+        if (!owned) throw new Error('controller_target_not_owned')
+        const revoked = target.getBool ? target.getBool('revoked') : Boolean(target.revoked)
+        if (revoked) throw new Error('controller_target_revoked')
+        if (!controllerLiveness(tx, requestedDeviceId)) throw new Error('controller_target_unavailable')
+        deviceId = requestedDeviceId
+        if (str(party, 'controller_device') !== requestedDeviceId) {
+          set(party, 'controller_device', requestedDeviceId)
+          tx.save(party)
+        }
+        return
+      }
       if (deviceId) return
-      const controllers = tx.findRecordsByFilter('controller_devices', 'revoked = false && last_seen_at > {:cutoff}', '-last_seen_at', 2, 0, { cutoff: filterDate(Date.now() - CONTROLLER_STATE_TTL) })
+      const controllers = availableControllers(tx, id(operator))
       if (controllers.length !== 1) throw new Error(controllers.length ? 'controller_ambiguous' : 'controller_unavailable')
-      deviceId = id(controllers[0]); set(party, 'controller_device', deviceId); tx.save(party)
+      deviceId = id(controllers[0].device); set(party, 'controller_device', deviceId); tx.save(party)
     })
     return c.json(200, { partyId, bound: Boolean(deviceId) })
   } catch (error) {
-    const code = String(error.message || 'controller_bind_failed')
-    const message = code === 'controller_ambiguous' ? 'More than one current controller is available' : code === 'controller_unavailable' ? 'No current controller is available' : 'Controller binding is unavailable'
-    return json(c, code === 'party_not_found' ? 404 : 409, code, message)
+    const rawCode = String(error.message || 'controller_bind_failed')
+    const knownCodes = ['controller_ambiguous', 'controller_unavailable', 'controller_target_not_found', 'controller_target_not_owned', 'controller_target_revoked', 'controller_target_unavailable', 'party_expired', 'party_not_found']
+    const code = knownCodes.includes(rawCode) ? rawCode : 'controller_bind_failed'
+    const message = code === 'controller_ambiguous'
+      ? 'More than one current controller is available'
+      : code === 'controller_unavailable'
+        ? 'No current controller is available'
+        : code === 'controller_target_not_found'
+          ? 'The requested controller is not enrolled'
+          : code === 'controller_target_not_owned'
+            ? 'The requested controller belongs to a different operator'
+            : code === 'controller_target_revoked'
+              ? 'The requested controller has been revoked'
+              : code === 'controller_target_unavailable'
+                ? 'The requested controller is not currently connected'
+                : code === 'party_expired'
+                  ? 'The party is expired or unavailable'
+                  : 'Controller binding is unavailable'
+    return json(c, ['party_not_found', 'controller_target_not_found'].includes(code) ? 404 : code === 'party_expired' ? 410 : 409, code, message)
   }
 })
 
@@ -845,7 +944,7 @@ routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
 // by its active party through the bound, fresh controller session.
 routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, str, id, set, setJson, num, future, activeParty, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
+  const { auth, tablet, json, body, str, id, set, setJson, num, future, activeParty, controllerLiveness } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c)
@@ -869,17 +968,6 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       if (!idempotencyKey.startsWith(expectedKeyPrefix)) throw new Error('invalid_idempotency_scope')
       let device = null
       try { device = deviceId ? tx.findRecordById('controller_devices', deviceId) : null } catch (_) {}
-      const revoked = device && (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))
-      const generation = device ? num(device, 'session_generation') : 0
-      let session = null
-      let controllerState = null
-      if (device && !revoked && generation > 0) {
-        try {
-          const sessions = tx.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: deviceId, generation })
-          session = sessions.find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
-          controllerState = tx.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: deviceId })
-        } catch (_) {}
-      }
 
       // Resolve an exact durable replay before consulting volatile playback
       // state. This prevents an ambiguous client retry from creating a second
@@ -892,8 +980,10 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
         return
       }
 
-      const stateFresh = controllerState && str(controllerState, 'observed_at') && new Date(str(controllerState, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
-      if (!session || !controllerState || !stateFresh || num(controllerState, 'session_generation') !== generation || str(controllerState, 'connection_state') !== 'connected') throw new Error('controller_unavailable')
+      const live = controllerLiveness(tx, deviceId)
+      const controllerState = live?.state || null
+      const generation = live?.generation || 0
+      if (!live) throw new Error('controller_unavailable')
       const song = tx.findRecordById('karaoke_songs', str(playing, 'song'))
       if (!song || str(controllerState, 'video_id') !== str(song, 'youtube_id')) throw new Error('controller_state_mismatch')
       const playerState = str(controllerState, 'player_state')
@@ -968,7 +1058,7 @@ routerAdd('POST', '/api/karaoke/tablet/queue/reorder', (c) => {
 
 routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, str, id, set, now, num, future, activeParty, CONTROLLER_STATE_TTL } = globalThis.__partyQueue
+  const { auth, tablet, json, body, str, id, set, now, num, future, activeParty, controllerLiveness } = globalThis.__partyQueue
   if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c); const allowed = { queued: ['playing', 'failed'], playing: ['completed', 'failed'] }
   if (!input.queueId || !allowed[input.from]?.includes(input.to)) return json(c, 422, 'invalid_transition', 'Queue transition is invalid')
@@ -982,20 +1072,8 @@ routerAdd('POST', '/api/karaoke/queue/transition', (c) => {
       if (current !== input.from) throw new Error('stale_transition')
       if (input.to === 'playing') {
         const deviceId = str(party, 'controller_device')
-        let device = null
-        try { device = deviceId ? tx.findRecordById('controller_devices', deviceId) : null } catch (_) {}
-        const revoked = device && (device.getBool ? device.getBool('revoked') : Boolean(device.revoked))
-        const generation = device ? num(device, 'session_generation') : 0
-        let session = null; let controllerState = null
-        if (device && !revoked && generation > 0) {
-          try {
-            const sessions = tx.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: deviceId, generation })
-            session = sessions.find((candidate) => new Date(str(candidate, 'expires_at')).getTime() > Date.now()) || null
-            controllerState = tx.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: deviceId })
-          } catch (_) {}
-        }
-        const stateFresh = controllerState && str(controllerState, 'observed_at') && new Date(str(controllerState, 'observed_at')).getTime() > Date.now() - CONTROLLER_STATE_TTL
-        if (!session || !controllerState || !stateFresh || num(controllerState, 'session_generation') !== generation || str(controllerState, 'connection_state') !== 'connected') throw new Error('controller_unavailable')
+        const live = controllerLiveness(tx, deviceId)
+        if (!live) throw new Error('controller_unavailable')
         let alreadyPlaying = null
         try { alreadyPlaying = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && status = "playing" && id != {:id}', { party: str(queue, 'party'), id: id(queue) }) } catch (_) {}
         if (alreadyPlaying) throw new Error('party_already_playing')

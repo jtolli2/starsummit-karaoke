@@ -48,7 +48,9 @@ import {
 
 const storageKey = 'karaoke:tablet:session'
 const playbackStorageKey = 'karaoke:tablet:pending-playback'
+const pairingStorageKey = 'karaoke:tablet:pairing'
 type StoredSession = { token: string; partyId?: string; partyCode?: string }
+type StoredPairing = { id: string; expiresAt: string; state: ControllerPairingStatus['state'] }
 type PendingPlayback = {
   partyId: string
   queueId: string
@@ -65,7 +67,9 @@ const loading = ref(false)
 const busy = ref(false)
 const pairingGrant = ref<ControllerPairingGrant | null>(null)
 const pairingStatus = ref<ControllerPairingStatus>({ state: 'none' })
+const pairingMetadata = ref<StoredPairing | null>(null)
 const pairingLoading = ref(false)
+let pairingRefreshing = false
 let pairingTimer: ReturnType<typeof setInterval> | undefined
 const message = ref('')
 const error = ref(false)
@@ -193,6 +197,15 @@ const canPlay = computed(
 const canPause = computed(
   () => controllerReady.value && controllerMatchesPlaying.value && playerState.value === 'playing',
 )
+const pairingGrantId = computed(
+  () => pairingGrant.value?.id || pairingGrant.value?.grantId || pairingMetadata.value?.id || '',
+)
+const pairingLink = computed(() => {
+  const grant = pairingGrant.value
+  if (!grant?.token) return ''
+  const server = grant.apiBaseUrl || window.location.origin
+  return grant.deepLink || `starsummit-controller://enroll?server=${encodeURIComponent(server)}&grant=${encodeURIComponent(grant.token)}&device=${encodeURIComponent('Starsummit tablet')}`
+})
 
 function youtubeWatchUrl(youtubeId: string) {
   return /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
@@ -229,7 +242,66 @@ function clearSession() {
   try {
     sessionStorage.removeItem(storageKey)
     sessionStorage.removeItem(playbackStorageKey)
+    sessionStorage.removeItem(pairingStorageKey)
   } catch {}
+}
+
+function savePairingMetadata() {
+  if (!pairingMetadata.value) return
+  try { sessionStorage.setItem(pairingStorageKey, JSON.stringify(pairingMetadata.value)) } catch {}
+}
+
+function clearPairingMetadata() {
+  pairingMetadata.value = null
+  try { sessionStorage.removeItem(pairingStorageKey) } catch {}
+}
+
+function loadPairingMetadata() {
+  try {
+    const raw = sessionStorage.getItem(pairingStorageKey)
+    if (!raw) return
+    const saved = JSON.parse(raw) as StoredPairing
+    const validStates: ControllerPairingStatus['state'][] = [
+      'none', 'issued', 'pending', 'redeemed', 'connecting', 'connected',
+      'expired', 'revoked', 'replayed', 'unavailable',
+    ]
+    if (!saved || typeof saved.id !== 'string' || !saved.id || typeof saved.expiresAt !== 'string') return
+    if (new Date(saved.expiresAt).getTime() <= Date.now()) {
+      clearPairingMetadata()
+      pairingStatus.value = { state: 'expired', expiresAt: saved.expiresAt }
+      return
+    }
+    pairingMetadata.value = {
+      id: saved.id,
+      expiresAt: saved.expiresAt,
+      state: validStates.includes(saved.state) ? saved.state : 'issued',
+    }
+    pairingStatus.value = { state: pairingMetadata.value.state, expiresAt: saved.expiresAt }
+  } catch {}
+}
+
+function persistPairingStatus(value: ControllerPairingStatus) {
+  pairingStatus.value = value
+  if (!pairingMetadata.value) return
+  pairingMetadata.value = {
+    ...pairingMetadata.value,
+    state: value.state,
+    expiresAt: value.expiresAt || pairingMetadata.value.expiresAt,
+  }
+  if (['expired', 'revoked', 'replayed'].includes(value.state)) {
+    clearPairingMetadata()
+    pairingGrant.value = null
+  } else savePairingMetadata()
+}
+
+function clearPairingSecrets() {
+  if (!pairingGrant.value) return
+  pairingGrant.value = {
+    ...pairingGrant.value,
+    token: undefined,
+    shortCode: undefined,
+    deepLink: undefined,
+  }
 }
 
 function loadPendingPlayback() {
@@ -860,6 +932,10 @@ async function issuePairingGrant() {
   pairingLoading.value = true
   try {
     pairingGrant.value = await createControllerPairingGrant(token.value)
+    const id = pairingGrant.value.id || pairingGrant.value.grantId
+    if (!id) throw new Error('Pairing grant did not include an id')
+    pairingMetadata.value = { id, expiresAt: pairingGrant.value.expiresAt, state: 'issued' }
+    savePairingMetadata()
     pairingStatus.value = { state: 'issued', expiresAt: pairingGrant.value.expiresAt }
     message.value = 'One-time controller link ready. It expires in five minutes.'
     error.value = false
@@ -871,24 +947,82 @@ async function issuePairingGrant() {
 }
 
 async function refreshPairingStatus() {
-  if (!token.value || !pairingGrant.value) return
+  if (!token.value || !pairingGrantId.value || pairingRefreshing) return
+  pairingRefreshing = true
   try {
-    pairingStatus.value = await loadControllerPairingStatus(token.value, pairingGrant.value?.id || pairingGrant.value?.grantId)
-    if (['connected', 'expired', 'revoked', 'replayed'].includes(pairingStatus.value.state)) {
+    const observed = await loadControllerPairingStatus(token.value, pairingGrantId.value)
+    if (observed.device?.id) clearPairingSecrets()
+    if (observed.state === 'connected' && (!observed.device?.id || !partyId.value)) {
+      persistPairingStatus({
+        ...observed,
+        state: observed.device?.id ? 'connecting' : 'unavailable',
+        retryable: true,
+      })
+      return
+    }
+    if (observed.state === 'connected' && observed.device?.id && partyId.value) {
+      persistPairingStatus({ ...observed, state: 'connecting', retryable: true })
+      try {
+        await bindAvailableController(token.value, partyId.value, observed.device.id)
+        await refresh()
+        const bound = status.value?.controller?.device?.id === observed.device.id && controllerReady.value
+        if (!bound) {
+          persistPairingStatus({ ...observed, state: 'unavailable', retryable: true })
+          message.value = 'The companion is connected, but the tablet has not confirmed the bound controller. Retry.'
+          error.value = true
+          return
+        }
+        persistPairingStatus(observed)
+        clearPairingMetadata()
+        pairingGrant.value = null
+        message.value = `Controller connected${observed.device.name ? ` · ${observed.device.name}` : ''}.`
+        error.value = false
+        return
+      } catch (cause) {
+        persistPairingStatus({ ...observed, state: 'unavailable', retryable: true })
+        message.value = explain(cause, 'The companion connected, but binding was not confirmed. Retry.')
+        error.value = true
+        return
+      }
+    }
+    persistPairingStatus(observed)
+    if (['expired', 'revoked', 'replayed'].includes(observed.state)) {
       pairingGrant.value = null
     }
   } catch (cause) {
     const statusCode = (cause as { status?: number }).status
-    if (statusCode !== 401 && statusCode !== 403) pairingStatus.value = { state: 'unavailable', retryable: true }
-  }
+    if (statusCode !== 401 && statusCode !== 403) persistPairingStatus({ state: 'unavailable', retryable: true })
+  } finally { pairingRefreshing = false }
 }
 
 async function clearPairing() {
   if (!token.value) return
-  const grantId = pairingGrant.value?.id || pairingGrant.value?.grantId
-  pairingGrant.value = null
-  await clearControllerPairingGrant(token.value, grantId).catch(() => undefined)
-  pairingStatus.value = { state: 'revoked' }
+  const grantId = pairingGrantId.value
+  try {
+    await clearControllerPairingGrant(token.value, grantId)
+    pairingGrant.value = null
+    clearPairingMetadata()
+    pairingStatus.value = { state: 'revoked' }
+  } catch (cause) {
+    persistPairingStatus({ state: 'unavailable', retryable: true })
+    message.value = explain(cause, 'Could not revoke the pairing grant. Retry or let it expire.')
+    error.value = true
+  }
+}
+
+function pairingStateLabel(state: ControllerPairingStatus['state']) {
+  return {
+    none: 'not started',
+    issued: 'ready — scan or enter the code',
+    pending: 'waiting for companion',
+    redeemed: 'code accepted — starting companion',
+    connecting: 'companion connected — confirming tablet binding',
+    connected: 'connected',
+    expired: 'expired — create a new grant',
+    revoked: 'revoked — create a new grant',
+    replayed: 'already used — create a new grant',
+    unavailable: 'temporarily unavailable — retry',
+  }[state]
 }
 
 async function copyPairingGrant() {
@@ -904,8 +1038,8 @@ function launchPairing() {
   const server = grant.apiBaseUrl || window.location.origin
   const intent = grant.deepLink || `intent://enroll?server=${encodeURIComponent(server)}&grant=${encodeURIComponent(grant.token)}&device=${encodeURIComponent('Starsummit tablet')}#Intent;scheme=starsummit-controller;package=net.starsummit.karaoke.companion;end`
   window.location.assign(intent)
-  // Erase only the raw one-time material locally; retain the id for status polling.
-  pairingGrant.value = { ...grant, token: undefined, deepLink: undefined }
+  // Keep the same grant's QR/manual fallback visible until the server proves
+  // redemption; Fire OS may fail to deliver the navigation attempt.
 }
 
 function playbackIdempotencyKey(action: 'play' | 'pause') {
@@ -989,6 +1123,7 @@ onMounted(async () => {
   const saved = storedSession()
   if (saved) {
     token.value = saved.token
+    loadPairingMetadata()
     partyId.value = saved.partyId || ''
     if (partyId.value) {
       loadPendingPlayback()
@@ -999,7 +1134,7 @@ onMounted(async () => {
       }
       await refresh()
     } else await restoreActiveParty()
-  }
+  } else clearPairingMetadata()
   refreshTimer = setInterval(refresh, 15000)
   pairingTimer = setInterval(refreshPairingStatus, 5000)
   if (token.value) await refreshPairingStatus()
@@ -1104,27 +1239,41 @@ onUnmounted(() => {
       </section>
       <section class="card pairing" aria-labelledby="pairing-heading">
         <h2 id="pairing-heading">Pair controller</h2>
-        <p>Connect the Starsummit companion on the tablet. The one-time link is never saved.</p>
+        <p>On the tablet, scan this code or use Open. If scanning is unavailable, enter the same short code in the companion.</p>
         <button type="button" @click="issuePairingGrant" :disabled="pairingLoading">
           {{ pairingLoading ? 'Preparing…' : 'Create one-tap pairing link' }}
         </button>
         <div v-if="pairingGrant" class="pairing-grant" role="status">
-          <p><strong>Open on the tablet:</strong></p>
+          <p><strong>Open on the tablet:</strong> One grant, three options:</p>
           <button v-if="pairingGrant.token" type="button" @click="launchPairing">Open Starsummit companion</button>
           <p v-if="pairingGrant.shortCode"><strong>Manual fallback code:</strong> <code>{{ pairingGrant.shortCode }}</code></p>
           <button v-if="pairingGrant.shortCode" type="button" class="quiet" @click="copyPairingGrant">Copy short code</button>
-          <p class="quiet-text">This material expires {{ pairingGrant.expiresAt ? new Date(pairingGrant.expiresAt).toLocaleTimeString() : 'soon' }} and is cleared after use.</p>
+          <p class="quiet-text">This grant expires {{ pairingGrant.expiresAt ? new Date(pairingGrant.expiresAt).toLocaleTimeString() : 'soon' }}. Secret material is cleared after use.</p>
           <button type="button" class="quiet" @click="clearPairing">Clear pairing grant</button>
         </div>
         <p :data-state="pairingStatus.state" role="status">
-          Pairing status: {{ pairingStatus.state === 'pending' ? 'waiting for companion' : pairingStatus.state }}
+          Pairing status: {{ pairingStateLabel(pairingStatus.state) }}
           <span v-if="pairingStatus.device?.name"> · {{ pairingStatus.device.name }}</span>
         </p>
+        <button
+          v-if="pairingStatus.state === 'unavailable'"
+          type="button"
+          class="quiet"
+          @click="refreshPairingStatus"
+          :disabled="pairingLoading"
+        >
+          Retry pairing confirmation
+        </button>
         <details>
           <summary>Optional SmartTube Lounge pairing</summary>
           <p>After the controller is enrolled, pair SmartTube separately with its TV code in the companion. Lounge credentials stay on the tablet.</p>
         </details>
       </section>
+      <Teleport to="body">
+        <div v-if="pairingLink" class="pairing-qr" role="dialog" aria-label="Controller pairing QR code">
+          <QrcodeVue :value="pairingLink" :size="180" level="M" aria-label="Controller pairing QR code" />
+        </div>
+      </Teleport>
       <section v-if="status && !partyExpired" class="card queue" aria-labelledby="queue-heading">
         <div class="queue-head">
           <h2 id="queue-heading">Queue</h2>
@@ -1485,6 +1634,21 @@ button:disabled {
 button.quiet {
   background: #eeeaf2;
   color: #3e3748;
+}
+.pairing-grant {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+}
+.pairing-qr {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 2;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow: 0 4px 20px #16102033;
 }
 .message {
   padding: 0.8rem;

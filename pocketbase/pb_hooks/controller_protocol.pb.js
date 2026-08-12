@@ -4,6 +4,8 @@
 const ACTIONS = ['open_video', 'play', 'pause', 'seek', 'get_now_playing']
 const TERMINAL = ['succeeded', 'failed']
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+const CONTROLLER_PROTOCOL_STATE_TTL = 90 * 1000
+const SHORT_CODE = /^[A-Z2-9]{16}$/
 
 function requestInfo(c) {
   try {
@@ -21,15 +23,63 @@ function requestData(c) {
 
 function authRecord(c) { return requestInfo(c).auth || null }
 function query(c, key) { const value = requestInfo(c).query?.[key]; return Array.isArray(value) ? value[0] : value }
-function header(c, key) { const h = requestInfo(c).headers || {}; return h[key] || h[key.toLowerCase()] || '' }
-function validHost(value) { return typeof value === 'string' && value.length >= 1 && value.length <= 255 && /^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(value) }
+function header(c, key) { const h = requestInfo(c).headers || {}; const lower = key.toLowerCase(); return h[key] || h[lower] || h[lower.replace(/-/g, '_')] || '' }
+function validHost(value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 255) return false
+  const raw = value.trim().toLowerCase()
+  const bracketed = raw.match(/^\[([0-9a-f:.]+)\](?::([0-9]{1,5}))?$/)
+  if (bracketed) return !bracketed[2] || Number(bracketed[2]) <= 65535
+  const match = raw.match(/^([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::([0-9]{1,5}))?$/)
+  return Boolean(match && (!match[2] || Number(match[2]) <= 65535) && !match[1].includes('..'))
+}
+function canonicalHost(value) {
+  if (typeof value !== 'string') return ''
+  const raw = value.trim().toLowerCase().replace(/\.$/, '')
+  if (!validHost(raw)) return ''
+  return raw
+}
+function requestHost(c) {
+  // In PocketBase 0.39.x the Go request wrapper promotes Host to
+  // c.request.host; requestInfo().headers intentionally omits it. Treat that
+  // value as authoritative. The frontend replaces Host with one exact private
+  // upstream and injects X-Starsummit-Public-Host itself; accept that dedicated
+  // value only behind the private upstream, never on direct requests.
+  if (c && c.request && typeof c.request === 'object') {
+    const upstream = canonicalHost(c.request.host)
+    const publicHost = canonicalHost(header(c, 'X-Starsummit-Public-Host'))
+    if (upstream === 'starsummit-pocketbase-internal:8090' && publicHost) return publicHost
+    return upstream
+  }
+  return canonicalHost(header(c, 'Host'))
+}
+function hostMatches(actual, expected) {
+  const left = canonicalHost(actual); const right = canonicalHost(expected)
+  if (!left || !right) return false
+  if (left === right) return true
+  const split = (value) => value.startsWith('[') ? value.match(/^(\[[^\]]+\])(?::(\d+))?$/) : value.match(/^([^:]+)(?::(\d+))?$/)
+  const a = split(left); const b = split(right)
+  // An omitted port means the deployment's default/forwarded port. Preserve
+  // explicit ports when both sides provide one.
+  return Boolean(a && b && a[1] === b[1] && (!a[2] || !b[2]))
+}
 
 function jsonError(c, status, code, message) {
   return c.json(status, { error: code, message })
 }
 
 function now() { return new Date().toISOString() }
+function filterDate(value = new Date()) { return new Date(value).toISOString().replace('T', ' ') }
 function future(ms) { return new Date(Date.now() + ms).toISOString() }
+function freshObservedAt(value, at = Date.now()) {
+  const observedAt = new Date(value).getTime()
+  return Number.isFinite(observedAt) && at - observedAt <= CONTROLLER_PROTOCOL_STATE_TTL
+}
+function normalizeShortCode(value) {
+  if (typeof value !== 'string') throw new Error('enrollment_grant_invalid')
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, '')
+  if (!SHORT_CODE.test(normalized)) throw new Error('enrollment_grant_invalid')
+  return normalized
+}
 function string(record, field) { return record && typeof record.getString === 'function' ? record.getString(field) : record?.[field] }
 function number(record, field) { return record && typeof record.getInt === 'function' ? record.getInt(field) : Number(record?.[field] || 0) }
 function bool(record, field) { return record && typeof record.getBool === 'function' ? record.getBool(field) : Boolean(record?.[field]) }
@@ -146,27 +196,31 @@ function commandView(command) {
 }
 
 globalThis.__controllerProtocol = {
-  ACTIONS, TERMINAL, requestInfo, requestData, authRecord, query, header, validHost, jsonError, now, future, string, number, bool, set,
+  ACTIONS, TERMINAL, CONTROLLER_PROTOCOL_STATE_TTL, requestInfo, requestData, authRecord, query, header, validHost, canonicalHost, requestHost, hostMatches, jsonError, now, filterDate, future, freshObservedAt, normalizeShortCode, string, number, bool, set,
   randomSecret, randomShortCode, hashSecret, sanitizePayload, sanitizeState, collection, find, first, save, newRecord, recordId,
   recordName, isTabletAdmin, isDevice, requireDevice, requireTablet, sessionFor, jsonField, commandView,
 }
 
 routerAdd('POST', '/api/karaoke/controllers/enroll', (c) => {
   try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
-  const { requestData, jsonError, hashSecret, string, now, randomSecret, randomShortCode, set, recordId, header, validHost } = globalThis.__controllerProtocol
+  const { requestData, jsonError, hashSecret, normalizeShortCode, string, now, randomSecret, randomShortCode, set, recordId, requestHost, canonicalHost, hostMatches } = globalThis.__controllerProtocol
   const body = requestData(c)
   if ((typeof body.token !== 'string' && typeof body.shortCode !== 'string') || typeof body.deviceName !== 'string' || !body.deviceName.trim()) return jsonError(c, 400, 'invalid_request', 'token or shortCode and deviceName are required')
   let result
   try {
     $app.runInTransaction((txApp) => {
-      const credential = String(body.token || body.shortCode || '')
+      const credential = typeof body.token === 'string' && body.token.length > 0 ? body.token : normalizeShortCode(body.shortCode)
       const grant = txApp.findFirstRecordByFilter('controller_enrollment_grants', '(grant_hash = {:hash} || short_code_hash = {:hash})', { hash: hashSecret(credential) })
-      if (!grant || string(grant, 'used_at') || string(grant, 'revoked_at') || new Date(string(grant, 'expires_at')).getTime() <= Date.now()) throw new Error('enrollment_grant_invalid')
-      const expectedHost = (string(grant, 'expected_server_host') || header(c, 'Host').split(':')[0]).toLowerCase()
-      const destination = string(grant, 'destination') || expectedHost
-      const actualHost = String(body.serverHost || header(c, 'Host').split(':')[0]).toLowerCase()
-      const actualDestination = String(body.destination || actualHost)
-      if (!validHost(actualHost) || !validHost(actualDestination) || actualHost !== expectedHost || actualDestination !== destination) throw new Error('enrollment_grant_wrong_server')
+      if (!grant) throw new Error('enrollment_grant_invalid')
+      const expectedHost = canonicalHost(string(grant, 'expected_server_host') || requestHost(c))
+      const actualHost = requestHost(c)
+      const suppliedHost = body.serverHost === undefined ? actualHost : canonicalHost(body.serverHost)
+      const destination = canonicalHost(string(grant, 'destination') || expectedHost)
+      const actualDestination = canonicalHost(body.destination === undefined ? actualHost : body.destination)
+      if (!actualHost || !expectedHost || !suppliedHost || !actualDestination || !hostMatches(actualHost, suppliedHost) || !hostMatches(actualHost, expectedHost) || !hostMatches(actualDestination, destination)) throw new Error('enrollment_grant_wrong_server')
+      if (string(grant, 'revoked_at')) throw new Error('enrollment_grant_revoked')
+      if (string(grant, 'used_at')) throw new Error('enrollment_grant_replayed')
+      if (new Date(string(grant, 'expires_at')).getTime() <= Date.now()) throw new Error('enrollment_grant_expired')
       const deviceKey = `device_${randomSecret(20)}`
       const deviceSecret = randomSecret(48)
       const device = new Record(txApp.findCollectionByNameOrId('controller_devices'))
@@ -177,7 +231,19 @@ routerAdd('POST', '/api/karaoke/controllers/enroll', (c) => {
       result = { deviceId: recordId(device), deviceKey: `${deviceKey}@controller.invalid`, deviceSecret }
     })
   } catch (error) {
-    return jsonError(c, error.message === 'enrollment_grant_invalid' || error.message === 'enrollment_grant_wrong_server' ? 410 : 500, error.message, 'Enrollment failed')
+    const code = String(error?.message || '')
+    const known = ['enrollment_grant_invalid', 'enrollment_grant_wrong_server', 'enrollment_grant_expired', 'enrollment_grant_replayed', 'enrollment_grant_revoked']
+    if (known.includes(code)) {
+      const message = {
+        enrollment_grant_invalid: 'Enrollment grant is invalid',
+        enrollment_grant_wrong_server: 'Enrollment grant is bound to a different server',
+        enrollment_grant_expired: 'Enrollment grant has expired',
+        enrollment_grant_replayed: 'Enrollment grant has already been redeemed',
+        enrollment_grant_revoked: 'Enrollment grant has been revoked',
+      }[code]
+      return jsonError(c, 410, code, message)
+    }
+    return jsonError(c, 500, 'enrollment_failed', 'Enrollment failed')
   }
   return c.json(201, result)
 })
@@ -358,19 +424,19 @@ routerAdd('PUT', '/api/karaoke/controllers/state', (c) => {
 // Operator-scoped enrollment grant. Plaintext token is returned once and never persisted.
 routerAdd('POST', '/api/karaoke/controllers/enrollment-grants', (c) => {
   try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
-  const { authRecord, requestData, jsonError, randomSecret, randomShortCode, recordId, set, future, hashSecret, string, isTabletAdmin, header, now, validHost } = globalThis.__controllerProtocol
+  const { authRecord, requestData, jsonError, randomSecret, randomShortCode, recordId, set, future, hashSecret, string, isTabletAdmin, requestHost, canonicalHost, hostMatches, filterDate } = globalThis.__controllerProtocol
   const auth = authRecord(c)
   if (!isTabletAdmin(auth)) return jsonError(c, 403, 'forbidden', 'tablet_admin authentication required')
   const body = requestData(c)
-  const expectedServerHost = String(body.expectedServerHost || header(c, 'Host').split(':')[0]).trim().toLowerCase()
-  const destination = String(body.destination || expectedServerHost).trim()
-  if (!validHost(expectedServerHost) || !validHost(destination)) return jsonError(c, 400, 'invalid_destination', 'expectedServerHost and destination are invalid')
+  const expectedServerHost = canonicalHost(body.expectedServerHost === undefined ? requestHost(c) : body.expectedServerHost)
+  const destination = canonicalHost(body.destination === undefined ? expectedServerHost : body.destination)
+  if (!expectedServerHost || !destination || !hostMatches(requestHost(c), expectedServerHost)) return jsonError(c, 400, 'invalid_destination', 'expectedServerHost and destination are invalid')
   const token = randomSecret(32)
   const shortCode = randomShortCode(16)
   let grant
   try {
     $app.runInTransaction((txApp) => {
-      const active = txApp.findRecordsByFilter('controller_enrollment_grants', 'operator_id = {:operator} && used_at = "" && revoked_at = "" && expires_at > {:now}', '', 2, 0, { operator: recordId(auth), now: now() })
+      const active = txApp.findRecordsByFilter('controller_enrollment_grants', 'operator_id = {:operator} && used_at = "" && revoked_at = "" && expires_at > {:now}', '', 2, 0, { operator: recordId(auth), now: filterDate() })
       if (active.length) throw new Error('enrollment_grant_active')
       grant = new Record(txApp.findCollectionByNameOrId('controller_enrollment_grants'))
       set(grant, 'grant_hash', hashSecret(token)); set(grant, 'short_code_hash', hashSecret(shortCode)); set(grant, 'expires_at', future(5 * 60 * 1000)); set(grant, 'created_by', recordId(auth)); set(grant, 'operator_id', recordId(auth)); set(grant, 'expected_server_host', expectedServerHost); set(grant, 'destination', destination); txApp.save(grant)
@@ -381,15 +447,53 @@ routerAdd('POST', '/api/karaoke/controllers/enrollment-grants', (c) => {
 
 routerAdd('GET', '/api/karaoke/controllers/enrollment-grants/{id}', (c) => {
   try { require(__hooks + '/controller_protocol.pb.js') } catch (_) {}
-  const { authRecord, jsonError, isTabletAdmin, find, recordId, string, bool, number } = globalThis.__controllerProtocol
+  const { authRecord, jsonError, isTabletAdmin, find, recordId, string, bool, number, freshObservedAt } = globalThis.__controllerProtocol
   const auth = authRecord(c); if (!isTabletAdmin(auth)) return jsonError(c, 403, 'forbidden', 'tablet_admin authentication required')
   const grant = find(c.request.pathValue('id'), 'controller_enrollment_grants')
   if (!grant || string(grant, 'operator_id') !== recordId(auth)) return jsonError(c, 404, 'not_found', 'Enrollment grant not found')
   const redeemed = string(grant, 'redeemed_device')
   const device = redeemed ? find(redeemed, 'controller_devices') : null
   const stateRecord = device ? (() => { try { return $app.findFirstRecordByFilter('controller_state', 'device = {:device}', { device: redeemed }) } catch (_) { return null } })() : null
-  const state = string(grant, 'revoked_at') ? 'revoked' : string(grant, 'used_at') ? (device && !bool(device, 'revoked') ? (string(device, 'last_seen_at') && Date.now() - new Date(string(device, 'last_seen_at')).getTime() < 90000 ? 'connected' : 'unavailable') : 'used') : new Date(string(grant, 'expires_at')).getTime() <= Date.now() ? 'expired' : 'active'
-  return c.json(200, { id: recordId(grant), state, status: state, expiresAt: string(grant, 'expires_at'), usedAt: string(grant, 'used_at') || null, revokedAt: string(grant, 'revoked_at') || null, expectedServerHost: string(grant, 'expected_server_host'), destination: string(grant, 'destination'), device: device ? { id: recordId(device), name: string(device, 'device_name'), revoked: bool(device, 'revoked'), lastSeenAt: string(device, 'last_seen_at') || null, sessionGeneration: number(device, 'session_generation') } : null, connectionState: stateRecord ? string(stateRecord, 'connection_state') : null })
+  const generation = device ? number(device, 'session_generation') : 0
+  let session = null
+  if (device && !bool(device, 'revoked') && generation > 0) {
+    try {
+      session = $app.findRecordsByFilter('controller_sessions', 'device = {:device} && generation = {:generation}', '-expires_at', 5, 0, { device: redeemed, generation })
+        .find((candidate) => new Date(string(candidate, 'expires_at')).getTime() > Date.now()) || null
+    } catch (_) {}
+  }
+  const stateGeneration = Boolean(stateRecord && number(stateRecord, 'session_generation') === generation)
+  const stateFresh = Boolean(stateRecord && freshObservedAt(string(stateRecord, 'observed_at')))
+  const connected = Boolean(!string(grant, 'revoked_at') && string(grant, 'used_at') && device && !bool(device, 'revoked') && session && stateRecord && stateGeneration && stateFresh && string(stateRecord, 'connection_state') === 'connected')
+  const state = string(grant, 'revoked_at') || (device && bool(device, 'revoked'))
+    ? 'revoked'
+    : string(grant, 'used_at')
+      ? (connected ? 'connected' : 'pending')
+      : new Date(string(grant, 'expires_at')).getTime() <= Date.now()
+        ? 'expired'
+        : 'active'
+  return c.json(200, {
+    id: recordId(grant),
+    state,
+    status: state,
+    expiresAt: string(grant, 'expires_at'),
+    usedAt: string(grant, 'used_at') || null,
+    revokedAt: string(grant, 'revoked_at') || null,
+    expectedServerHost: string(grant, 'expected_server_host'),
+    destination: string(grant, 'destination'),
+    device: device ? {
+      id: recordId(device),
+      name: string(device, 'device_name'),
+      revoked: bool(device, 'revoked'),
+      status: bool(device, 'revoked') ? 'revoked' : 'active',
+      lastSeenAt: string(device, 'last_seen_at') || null,
+      sessionGeneration: generation,
+    } : null,
+    sessionActive: Boolean(session),
+    connectionState: stateRecord ? string(stateRecord, 'connection_state') : null,
+    stateGeneration: stateRecord ? number(stateRecord, 'session_generation') : null,
+    observedAt: stateRecord ? string(stateRecord, 'observed_at') || null : null,
+  })
 })
 
 routerAdd('POST', '/api/karaoke/controllers/enrollment-grants/{id}/revoke', (c) => {
@@ -411,7 +515,7 @@ routerAdd('POST', '/api/karaoke/controllers/enrollment-grants/{id}/revoke', (c) 
 // PocketBase serializes route callbacks and executes them in a worker VM. Expose the helper
 // contract so callbacks can re-load this hook module in that VM without relying on closures.
 globalThis.__controllerProtocol = {
-  ACTIONS, TERMINAL, requestInfo, requestData, authRecord, query, header, validHost, jsonError, now, future, string, number, bool, set,
+  ACTIONS, TERMINAL, CONTROLLER_PROTOCOL_STATE_TTL, requestInfo, requestData, authRecord, query, header, validHost, canonicalHost, requestHost, hostMatches, jsonError, now, filterDate, future, freshObservedAt, normalizeShortCode, string, number, bool, set,
   randomSecret, randomShortCode, hashSecret, sanitizePayload, sanitizeState, collection, find, first, save, newRecord, recordId,
   recordName, isTabletAdmin, isDevice, requireDevice, requireTablet, sessionFor, jsonField, commandView,
 }

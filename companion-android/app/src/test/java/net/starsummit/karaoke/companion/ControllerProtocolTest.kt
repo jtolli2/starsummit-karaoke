@@ -121,6 +121,7 @@ class ControllerProtocolTest {
     val diagnostics = DiagnosticsStore()
     diagnostics.controllerAttemptStarted()
     diagnostics.controllerEstablished()
+    diagnostics.controllerStateReported()
     diagnostics.controllerSubscriptionAccepted()
     diagnostics.controllerInitialRefetch(2)
     diagnostics.controllerRealtimeEvent("create")
@@ -135,7 +136,218 @@ class ControllerProtocolTest {
     assertEquals(null, snapshot.controllerRealtimeEventRedacted)
     assertEquals(null, snapshot.controllerRefetchCount)
     assertEquals(null, snapshot.controllerRefetchErrorRedacted)
+    assertEquals(0, snapshot.controllerStateReportCount)
     assertEquals(false, snapshot.controllerSubscriptionAccepted)
+  }
+
+  @Test
+  fun enrollmentRetryDiagnosticsRequireFreshGrantWithoutExposingEnrollmentMaterial() {
+    val diagnostics = DiagnosticsStore()
+    diagnostics.controllerEnrollmentStarted()
+    diagnostics.controllerEnrollmentRetryable(IOException("grant=one-time-grant deviceSecret=private"))
+
+    val snapshot = diagnostics.snapshot.value
+    assertEquals("retryable_error", snapshot.controllerEnrollmentState)
+    assertEquals("IOException", snapshot.controllerEnrollmentErrorRedacted)
+    assertTrue(snapshot.controllerEnrollmentRequiresNewGrant)
+    assertFalse(snapshot.controllerRePairRequired)
+    val text = snapshot.toString()
+    assertFalse(text.contains("one-time-grant"))
+    assertFalse(text.contains("private"))
+  }
+
+  @Test
+  fun definitiveRePairDiagnosticsAreRedactedAndClearAfterSuccess() {
+    val diagnostics = DiagnosticsStore()
+    diagnostics.controllerRePairRequired(ControllerAuthenticationRejectedException(401))
+
+    var snapshot = diagnostics.snapshot.value
+    assertEquals("re_pair_required", snapshot.controllerEnrollmentState)
+    assertEquals("ControllerHttp401", snapshot.controllerEnrollmentErrorRedacted)
+    assertTrue(snapshot.controllerEnrollmentRequiresNewGrant)
+    assertTrue(snapshot.controllerRePairRequired)
+
+    diagnostics.controllerEnrollmentSucceeded()
+    snapshot = diagnostics.snapshot.value
+    assertEquals("enrolled", snapshot.controllerEnrollmentState)
+    assertEquals(null, snapshot.controllerEnrollmentErrorRedacted)
+    assertFalse(snapshot.controllerEnrollmentRequiresNewGrant)
+    assertFalse(snapshot.controllerRePairRequired)
+  }
+
+  @Test
+  fun failedPreferenceCommitRestoresExactSnapshotBeforeReportingPersistenceFailure() {
+    val preferences = FakeControllerPreferences(
+      values = linkedMapOf("credentials.ciphertext" to "old", "session.iv" to "old-iv"),
+      commitResults = mutableListOf(false, true),
+    )
+
+    try {
+      commitControllerPreferences(
+        keys = listOf("credentials.ciphertext", "credentials.iv", "session.iv"),
+        read = { key -> ControllerPreferenceValue(preferences.values.containsKey(key), preferences.values[key]) },
+        edit = preferences::editor,
+      ) { editor ->
+        editor.putString("credentials.ciphertext", "new").remove("session.iv")
+      }
+      throw AssertionError("expected persistence failure")
+    } catch (failure: ControllerStatePersistenceException) {
+      assertFalse(failure.rollbackFailed)
+    }
+
+    assertEquals(linkedMapOf("credentials.ciphertext" to "old", "session.iv" to "old-iv"), preferences.values)
+  }
+
+  @Test
+  fun thrownPreferenceCommitRestoresExactSnapshotBeforeReportingPersistenceFailure() {
+    val preferences = linkedMapOf(
+      "credentials.ciphertext" to "old-credential",
+      "credentials.iv" to "old-credential-iv",
+      "session.ciphertext" to "old-session",
+      "session.iv" to "old-session-iv",
+      "progress.ciphertext" to "old-progress",
+      "progress.iv" to "old-progress-iv",
+    )
+    var commits = 0
+    fun editor(): ControllerPreferenceEditor = object : ControllerPreferenceEditor {
+      private val changes = linkedMapOf<String, String?>()
+      private val removals = mutableSetOf<String>()
+
+      override fun putString(key: String, value: String?): ControllerPreferenceEditor {
+        changes[key] = value
+        removals.remove(key)
+        return this
+      }
+
+      override fun remove(key: String): ControllerPreferenceEditor {
+        changes.remove(key)
+        removals += key
+        return this
+      }
+
+      override fun commit(): Boolean {
+        changes.forEach { (key, value) -> if (value == null) preferences.remove(key) else preferences[key] = value }
+        removals.forEach(preferences::remove)
+        commits++
+        if (commits == 1) throw IOException("disk write interrupted")
+        return true
+      }
+    }
+    val before = preferences.toMap()
+
+    try {
+      commitControllerPreferences(
+        keys = listOf(
+          "credentials.ciphertext", "credentials.iv",
+          "session.ciphertext", "session.iv",
+          "progress.ciphertext", "progress.iv",
+        ),
+        read = { key -> ControllerPreferenceValue(preferences.containsKey(key), preferences[key]) },
+        edit = ::editor,
+      ) { editor ->
+        editor
+          .putString("credentials.ciphertext", "new-credential")
+          .putString("credentials.iv", "new-credential-iv")
+          .remove("session.ciphertext")
+          .remove("session.iv")
+          .remove("progress.ciphertext")
+          .remove("progress.iv")
+      }
+      throw AssertionError("expected persistence failure")
+    } catch (failure: ControllerStatePersistenceException) {
+      assertFalse(failure.rollbackFailed)
+    }
+
+    assertEquals(before, preferences)
+    assertEquals(2, commits)
+  }
+
+  @Test
+  fun failedPreferenceRollbackIsStorageBlockedAndNeverPretendsOldStateWasRestored() {
+    val preferences = FakeControllerPreferences(
+      values = linkedMapOf("credentials.ciphertext" to "old"),
+      commitResults = mutableListOf(false, false),
+    )
+
+    try {
+      commitControllerPreferences(
+        keys = listOf("credentials.ciphertext"),
+        read = { key -> ControllerPreferenceValue(preferences.values.containsKey(key), preferences.values[key]) },
+        edit = preferences::editor,
+      ) { editor -> editor.putString("credentials.ciphertext", "new") }
+      throw AssertionError("expected blocked persistence failure")
+    } catch (failure: ControllerStatePersistenceException) {
+      assertTrue(failure.rollbackFailed)
+    }
+
+    // A false rollback commit leaves persistence indeterminate; callers must not restart
+    // from either the old or replacement credential until storage is repaired.
+  }
+
+  @Test
+  fun thrownPreferenceCommitWithThrownRollbackIsStorageBlocked() {
+    val values = linkedMapOf("credentials.ciphertext" to "old")
+    var commits = 0
+    fun editor(): ControllerPreferenceEditor = object : ControllerPreferenceEditor {
+      private var replacement: String? = null
+
+      override fun putString(key: String, value: String?): ControllerPreferenceEditor {
+        if (key == "credentials.ciphertext") replacement = value
+        return this
+      }
+
+      override fun remove(key: String): ControllerPreferenceEditor = this
+
+      override fun commit(): Boolean {
+        commits++
+        if (commits == 1) replacement?.let { values["credentials.ciphertext"] = it }
+        throw IOException("storage unavailable")
+      }
+    }
+
+    try {
+      commitControllerPreferences(
+        keys = listOf("credentials.ciphertext"),
+        read = { key -> ControllerPreferenceValue(values.containsKey(key), values[key]) },
+        edit = ::editor,
+        mutate = { it.putString("credentials.ciphertext", "new") },
+      )
+      throw AssertionError("expected blocked persistence failure")
+    } catch (failure: ControllerStatePersistenceException) {
+      assertTrue(failure.rollbackFailed)
+    }
+
+    assertEquals("new", values["credentials.ciphertext"])
+    assertEquals(2, commits)
+  }
+
+  @Test
+  fun storageBlockedDiagnosticsAreDistinctAndSanitized() {
+    val diagnostics = DiagnosticsStore()
+    diagnostics.controllerEnrollmentStorageBlocked(ControllerStatePersistenceException(rollbackFailed = true))
+
+    val snapshot = diagnostics.snapshot.value
+    assertEquals("storage_blocked", snapshot.controllerEnrollmentState)
+    assertEquals("ControllerStatePersistenceException", snapshot.controllerEnrollmentErrorRedacted)
+    assertTrue(snapshot.controllerEnrollmentStorageBlocked)
+    assertTrue(snapshot.controllerRePairRequired)
+  }
+
+  @Test
+  fun persistedStorageMarkerFailsClosedAcrossProcessRestartUntilOperatorTransactionSucceeds() {
+    val persisted = linkedMapOf(
+      "credentials.ciphertext" to "partial-new-credential",
+      CONTROLLER_STORAGE_BLOCKED_KEY to CONTROLLER_STORAGE_BLOCKED_VALUE,
+    )
+
+    assertTrue(controllerStorageBlocked(persisted))
+    assertFalse(controllerLoopMayStart(hasCredentials = true, storageBlocked = controllerStorageBlocked(persisted)))
+
+    // A successful replacement/reset clears the controller-only marker; Lounge state is
+    // intentionally not represented in this map and is never part of this transaction.
+    persisted.remove(CONTROLLER_STORAGE_BLOCKED_KEY)
+    assertFalse(controllerStorageBlocked(persisted))
+    assertTrue(controllerLoopMayStart(hasCredentials = true, storageBlocked = controllerStorageBlocked(persisted)))
   }
 
   @Test
@@ -553,6 +765,465 @@ class ControllerProtocolTest {
     bridge.close()
 
     assertEquals(1, closes)
+  }
+
+  @Test
+  fun bridgeCloseIsIdempotentAndCannotRetainRealtimeState() = runTest {
+    var closes = 0
+    val api = basicApi()
+    val realtime = object : ControllerRealtimeTransport {
+      override suspend fun connect(auth: ControllerAuth) = object : ControllerRealtimeConnection {
+        override val events: Flow<PocketBaseRealtimeEvent> = flowOf(
+          PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"client\"}"),
+        )
+        override suspend fun subscribe(clientId: String, collection: String) = Unit
+        override fun close() { closes++ }
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      realtime,
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    )
+
+    bridge.establish()
+    bridge.close()
+    bridge.close()
+
+    assertEquals(1, closes)
+    assertFalse(bridge.isRealtimeAvailable)
+  }
+
+  @Test
+  fun fixedAuthenticationRejectionsAreDefinitiveForEverySupportedStatus() = runTest {
+    for (status in listOf(400, 401, 403)) {
+      var authenticateCalls = 0
+      var sessionCalls = 0
+      var realtimeCalls = 0
+      val api = object : ControllerApi by basicApi() {
+        override suspend fun authenticate(credentials: ControllerCredentials): ControllerAuth {
+          authenticateCalls++
+          throw ControllerHttpException(status)
+        }
+
+        override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+          sessionCalls++
+          return session
+        }
+      }
+      val realtime = object : ControllerRealtimeTransport {
+        override suspend fun connect(auth: ControllerAuth): ControllerRealtimeConnection {
+          realtimeCalls++
+          return connectingRealtime().connect(auth)
+        }
+      }
+      val progress = InMemoryProgressStore(ControllerProgress("old", 16, 99, "pending", "pending-key"))
+      val bridge = PocketBaseControllerBridge(
+        api,
+        realtime,
+        progress,
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        now = { future - 1 },
+      )
+
+      try {
+        bridge.establish()
+        throw AssertionError("expected authentication rejection for HTTP $status")
+      } catch (failure: ControllerAuthenticationRejectedException) {
+        assertEquals(status, failure.statusCode)
+      }
+
+      assertEquals(1, authenticateCalls)
+      assertEquals(0, sessionCalls)
+      assertEquals(0, realtimeCalls)
+      assertEquals(ControllerProgress("old", 16, 99, "pending", "pending-key"), progress.load())
+    }
+  }
+
+  @Test
+  fun networkAndServerAuthenticationFailuresRemainRetryableWithoutClearingProgress() = runTest {
+    val failures = listOf<Throwable>(ControllerHttpException(500), IOException("offline"))
+    for (failure in failures) {
+      var authenticateCalls = 0
+      val api = object : ControllerApi by basicApi() {
+        override suspend fun authenticate(credentials: ControllerCredentials): ControllerAuth {
+          authenticateCalls++
+          throw failure
+        }
+      }
+      val progress = InMemoryProgressStore(ControllerProgress("old", 16, 99, "pending", "pending-key"))
+      val bridge = PocketBaseControllerBridge(
+        api,
+        connectingRealtime(),
+        progress,
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        now = { future - 1 },
+      )
+
+      repeat(2) {
+        try {
+          bridge.establish()
+          throw AssertionError("expected retryable authentication failure")
+        } catch (observed: Throwable) {
+          assertEquals(failure::class, observed::class)
+        }
+      }
+
+      assertEquals(2, authenticateCalls)
+      assertEquals(ControllerProgress("old", 16, 99, "pending", "pending-key"), progress.load())
+    }
+  }
+
+  @Test
+  fun sessionForbiddenIsRePairRequiredButStaleConflictStillResumesFreshSession() = runTest {
+    val forbiddenApi = object : ControllerApi by basicApi() {
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+        throw ControllerHttpException(403)
+      }
+    }
+    try {
+      PocketBaseControllerBridge(
+        forbiddenApi,
+        connectingRealtime(),
+        InMemoryProgressStore(ControllerProgress("old", 16)),
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        now = { future - 1 },
+      ).establish()
+      throw AssertionError("expected session re-pair rejection")
+    } catch (failure: ControllerRePairRequiredException) {
+      assertEquals(403, failure.statusCode)
+      assertEquals("session", failure.operation)
+    }
+
+    val resumes = mutableListOf<String?>()
+    val conflictApi = object : ControllerApi by basicApi() {
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+        resumes += resumeSessionId
+        if (resumeSessionId != null) throw ControllerHttpException(409)
+        return ControllerSession("fresh", 17, future)
+      }
+    }
+    PocketBaseControllerBridge(
+      conflictApi,
+      connectingRealtime(),
+      InMemoryProgressStore(ControllerProgress("old", 16)),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    ).establish()
+    assertEquals(listOf("old", null), resumes)
+  }
+
+  @Test
+  fun commandsAndStateForbiddenBecomeRePairRequired() = runTest {
+    val commandApi = object : ControllerApi by basicApi() {
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
+        throw ControllerHttpException(403)
+      }
+    }
+    try {
+      PocketBaseControllerBridge(
+        commandApi,
+        connectingRealtime(),
+        InMemoryProgressStore(),
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        now = { future - 1 },
+      ).establish()
+      throw AssertionError("expected command re-pair rejection")
+    } catch (failure: ControllerRePairRequiredException) {
+      assertEquals("commands", failure.operation)
+    }
+
+    val stateApi = object : ControllerApi by basicApi() {
+      override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) {
+        throw ControllerHttpException(403)
+      }
+    }
+    val stateBridge = PocketBaseControllerBridge(
+      stateApi,
+      connectingRealtime(),
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    )
+    stateBridge.establish()
+    try {
+      stateBridge.reportState(SanitizedControllerState("connected"))
+      throw AssertionError("expected state re-pair rejection")
+    } catch (failure: ControllerRePairRequiredException) {
+      assertEquals("state", failure.operation)
+    }
+  }
+
+  @Test
+  fun acknowledgementForbiddenBecomesRePairRequiredAndRestoresInFlightProgress() = runTest {
+    val progress = InMemoryProgressStore()
+    val api = object : ControllerApi by basicApi() {
+      override suspend fun acknowledge(
+        auth: ControllerAuth,
+        session: ControllerSession,
+        command: ControllerCommand,
+        success: Boolean,
+        errorCode: String?,
+      ) {
+        throw ControllerHttpException(403)
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      now = { future - 1 },
+    )
+    bridge.establish()
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) = Unit
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+    }
+    val command = ControllerCommand("forbidden-ack", 1, "forbidden-ack-key", ControllerAction.PLAY, expiresAtEpochMs = future)
+
+    try {
+      bridge.processCommand(ControllerCommandProcessor(executor, progress, { future - 1 }), command, PlaybackSnapshot())
+      throw AssertionError("expected acknowledgement re-pair rejection")
+    } catch (failure: ControllerRePairRequiredException) {
+      assertEquals(403, failure.statusCode)
+      assertEquals("acknowledgement", failure.operation)
+    }
+
+    assertEquals("forbidden-ack", progress.load().inFlightId)
+    assertEquals("forbidden-ack-key", progress.load().inFlightIdempotencyKey)
+  }
+
+  @Test
+  fun commandAndStateNonForbiddenFailuresRemainRetryable() = runTest {
+    for (status in listOf(409, 500)) {
+      val commandApi = object : ControllerApi by basicApi() {
+        override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession =
+          ControllerSession("new", 17, future)
+
+        override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
+          throw ControllerHttpException(status)
+        }
+      }
+      val progress = InMemoryProgressStore(ControllerProgress("old", 16, 9, "pending", "pending-key"))
+      val bridge = PocketBaseControllerBridge(
+        commandApi,
+        connectingRealtime(),
+        progress,
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        now = { future - 1 },
+      )
+
+      repeat(2) {
+        try {
+          bridge.establish()
+          throw AssertionError("expected command fetch failure")
+        } catch (failure: ControllerHttpException) {
+          assertEquals(status, failure.statusCode)
+        }
+      }
+      assertEquals(ControllerProgress("new", 17, 9, "pending", "pending-key"), progress.load())
+
+      val stateApi = object : ControllerApi by basicApi() {
+        override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) {
+          throw ControllerHttpException(status)
+        }
+      }
+      val stateBridge = PocketBaseControllerBridge(
+        stateApi,
+        connectingRealtime(),
+        InMemoryProgressStore(),
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        now = { future - 1 },
+      )
+      stateBridge.establish()
+      try {
+        stateBridge.reportState(SanitizedControllerState("connected"))
+        throw AssertionError("expected state report failure")
+      } catch (failure: ControllerHttpException) {
+        assertEquals(status, failure.statusCode)
+      }
+    }
+  }
+
+  @Test
+  fun cleanReplacementAllowsGenerationOneAfterPreviousGenerationSixteen() = runTest {
+    val progress = InMemoryProgressStore(ControllerProgress("old", 16, Long.MAX_VALUE, "old-command", "old-key"))
+    // ControllerStore.replaceCredentials() atomically removes these protocol markers before
+    // the replacement bridge is started. Model that synchronous boundary with the existing JVM
+    // fake so a fresh device generation is not mistaken for a rollback on the old device.
+    progress.save(ControllerProgress())
+    var afterSequence = Long.MIN_VALUE
+    val freshSession = ControllerSession("new", 1, future)
+    val api = object : ControllerApi by basicApi() {
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+        assertEquals(null, resumeSessionId)
+        return freshSession
+      }
+
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, after: Long): List<ControllerCommand> {
+        afterSequence = after
+        return emptyList()
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      progress,
+      ControllerCredentials("https://karaoke.example", "new-key", "new-secret"),
+      now = { future - 1 },
+    )
+
+    bridge.establish()
+
+    assertEquals(0, afterSequence)
+    assertEquals(ControllerProgress("new", 1, 0, null, null), progress.load())
+  }
+
+  @Test
+  fun lowerGenerationOnSameDeviceIsRejectedWithoutPersistingOrConnecting() = runTest {
+    val previous = ControllerProgress("old", 16, 7, "in-flight", "in-flight-key")
+    val progress = InMemoryProgressStore(previous)
+    var realtimeConnections = 0
+    var savedSessions = 0
+    val api = object : ControllerApi by basicApi() {
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+        assertEquals("old", resumeSessionId)
+        return ControllerSession("new", 15, future)
+      }
+    }
+    val sessionStore = object : SessionStore {
+      override fun load(): ControllerSession? = ControllerSession("old", 16, future)
+      override fun save(session: ControllerSession) { savedSessions++ }
+    }
+    val realtime = object : ControllerRealtimeTransport {
+      override suspend fun connect(auth: ControllerAuth): ControllerRealtimeConnection {
+        realtimeConnections++
+        return connectingRealtime().connect(auth)
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      realtime,
+      progress,
+      ControllerCredentials("https://karaoke.example", "same-device-key", "same-device-secret"),
+      sessionStore = sessionStore,
+      now = { future - 1 },
+    )
+
+    try {
+      bridge.establish()
+      throw AssertionError("expected same-device generation rollback")
+    } catch (failure: IOException) {
+      assertEquals("stale controller session generation", failure.message)
+    }
+
+    assertEquals(0, realtimeConnections)
+    assertEquals(0, savedSessions)
+    assertEquals(previous, progress.load())
+    assertEquals(BridgeState.STALE, bridge.stateMachine.state)
+  }
+
+  @Test
+  fun persistedSessionGenerationGuardsWhenProgressWasNotCommittedYet() = runTest {
+    listOf(ControllerProgress(), ControllerProgress("old", 15)).forEach { progressValue ->
+      var realtimeConnections = 0
+      var savedSessions = 0
+      val api = object : ControllerApi by basicApi() {
+        override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+          assertEquals("old", resumeSessionId)
+          return ControllerSession("rolled-back", 15, future)
+        }
+      }
+      val bridge = PocketBaseControllerBridge(
+        api,
+        object : ControllerRealtimeTransport {
+          override suspend fun connect(auth: ControllerAuth): ControllerRealtimeConnection {
+            realtimeConnections++
+            return connectingRealtime().connect(auth)
+          }
+        },
+        InMemoryProgressStore(progressValue),
+        ControllerCredentials("https://karaoke.example", "key", "secret"),
+        sessionStore = object : SessionStore {
+          override fun load(): ControllerSession? = ControllerSession("old", 16, future)
+          override fun save(session: ControllerSession) { savedSessions++ }
+        },
+        now = { future - 1 },
+      )
+
+      try {
+        bridge.establish()
+        throw AssertionError("expected persisted-session generation rollback")
+      } catch (failure: IOException) {
+        assertEquals("stale controller session generation", failure.message)
+      }
+      assertEquals(0, realtimeConnections)
+      assertEquals(0, savedSessions)
+    }
+
+    var savedSessions = 0
+    val allowedApi = object : ControllerApi by basicApi() {
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+        assertEquals("old", resumeSessionId)
+        return ControllerSession("same", 16, future)
+      }
+    }
+    PocketBaseControllerBridge(
+      allowedApi,
+      connectingRealtime(),
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "key", "secret"),
+      sessionStore = object : SessionStore {
+        override fun load(): ControllerSession? = ControllerSession("old", 16, future)
+        override fun save(session: ControllerSession) { savedSessions++ }
+      },
+      now = { future - 1 },
+    ).establish()
+    assertEquals(1, savedSessions)
+  }
+
+  @Test
+  fun freshProcessEstablishesRefetchesAndReportsAfterCleanReplacement() = runTest {
+    val calls = mutableListOf<String>()
+    val freshSession = ControllerSession("new", 1, future)
+    val api = object : ControllerApi by basicApi() {
+      override suspend fun authenticate(credentials: ControllerCredentials): ControllerAuth {
+        calls += "authenticate"
+        return ControllerAuth("auth", baseUrl = credentials.baseUrl)
+      }
+
+      override suspend fun startOrResumeSession(auth: ControllerAuth, resumeSessionId: String?): ControllerSession {
+        calls += "session:${resumeSessionId ?: "none"}"
+        return freshSession
+      }
+
+      override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long): List<ControllerCommand> {
+        calls += "fetch:$afterSequence"
+        return emptyList()
+      }
+
+      override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) {
+        calls += "report:${state.connectionState}:${state.lastCommandSequence}"
+      }
+    }
+    val bridge = PocketBaseControllerBridge(
+      api,
+      connectingRealtime(),
+      InMemoryProgressStore(),
+      ControllerCredentials("https://karaoke.example", "fresh-key", "fresh-secret"),
+      now = { future - 1 },
+    )
+
+    bridge.establish()
+    bridge.reportState(SanitizedControllerState("connected"))
+
+    assertEquals(listOf("authenticate", "session:none", "fetch:0", "report:connected:0"), calls)
   }
 
   @Test
@@ -1310,6 +1981,104 @@ class ControllerProtocolTest {
     assertEquals(1, diagnostics.snapshot.value.playbackRevision)
   }
 
+  @Test
+  fun pairingLinksAcceptOnlyTrustedProductionAndStagingOrigins() {
+    val production = ControllerPairingPolicy.parseEnrollmentLink(
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net%2F&grant=ABCDEFGHIJKLMNOP&device=Starsummit%20tablet",
+    )
+    val staging = ControllerPairingPolicy.parseEnrollmentLink(
+      "starsummit-controller://enroll?server=https%3A%2F%2FKARAOKE-TEST.APP.STARSUMMIT.NET&grant=ABCDEFGHIJKLMNOP&device=Fire%20tablet",
+    )
+
+    assertTrue(production is ControllerPairingPolicy.LinkResult.Accepted)
+    assertTrue(staging is ControllerPairingPolicy.LinkResult.Accepted)
+    assertEquals(
+      ControllerPairingPolicy.PRODUCTION_ORIGIN,
+      (production as ControllerPairingPolicy.LinkResult.Accepted).request.baseUrl,
+    )
+    assertEquals(
+      ControllerPairingPolicy.STAGING_ORIGIN,
+      (staging as ControllerPairingPolicy.LinkResult.Accepted).request.baseUrl,
+    )
+    assertEquals("controller", production.request.destination)
+    assertEquals("karaoke-test.app.starsummit.net", staging.request.serverHost)
+  }
+
+  @Test
+  fun pairingLinksRejectWrongSchemeOriginPortPathAndMissingOrOversizedFields() {
+    val validQuery = "server=https%3A%2F%2Fkaraoke.app.starsummit.net&grant=ABCDEFGHIJKLMNOP&device=tablet"
+    val rejected = listOf(
+      "https://enroll?$validQuery" to ControllerPairingPolicy.LinkError.UNSUPPORTED_SCHEME,
+      "starsummit-controller://wrong?$validQuery" to ControllerPairingPolicy.LinkError.UNSUPPORTED_SCHEME,
+      "starsummit-controller://enroll?server=http%3A%2F%2Fkaraoke.app.starsummit.net&grant=ABCDEFGHIJKLMNOP&device=tablet" to ControllerPairingPolicy.LinkError.UNTRUSTED_ORIGIN,
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net%3A444&grant=ABCDEFGHIJKLMNOP&device=tablet" to ControllerPairingPolicy.LinkError.UNTRUSTED_ORIGIN,
+      "starsummit-controller://enroll/path?$validQuery" to ControllerPairingPolicy.LinkError.UNSUPPORTED_SCHEME,
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net&device=tablet" to ControllerPairingPolicy.LinkError.MISSING_GRANT,
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net&grant=ABCDEFGHIJKLMNOP" to ControllerPairingPolicy.LinkError.MISSING_DEVICE,
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net&grant=short&device=tablet" to ControllerPairingPolicy.LinkError.INVALID_GRANT,
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net&grant=ABCDEFGHIJKLMNOP&device=" to ControllerPairingPolicy.LinkError.INVALID_DEVICE,
+      "starsummit-controller://enroll?server=https%3A%2F%2Fkaraoke.app.starsummit.net&grant=ABCDEFGHIJKLMNOP&device=tablet&grant=QRSTUVWXYZ123456" to ControllerPairingPolicy.LinkError.UNTRUSTED_ORIGIN,
+      ("starsummit-controller://enroll?" + validQuery + "x".repeat(4096)) to ControllerPairingPolicy.LinkError.TOO_LONG,
+    )
+
+    rejected.forEach { (raw, expected) ->
+      val result = ControllerPairingPolicy.parseEnrollmentLink(raw)
+      assertTrue("expected rejection for $expected", result is ControllerPairingPolicy.LinkResult.Rejected)
+      assertEquals(expected, (result as ControllerPairingPolicy.LinkResult.Rejected).error)
+    }
+  }
+
+  @Test
+  fun manualCodesNormalizeCaseGroupingWhitespaceAndRejectBoundaryInputs() {
+    assertEquals("ABCDEFGHIJKLMNOP", ControllerPairingPolicy.normalizeManualCode(" abcd-efgh ijkl-mnop "))
+    assertEquals("ABCD-EFGH-IJKL-MNOP", ControllerPairingPolicy.formatManualCode("abcdefghijklmnop"))
+    assertTrue(ControllerPairingPolicy.isManualCode("ABCD EFGH IJKL MNOP"))
+    listOf("", "ABC", "ABCDEFGHIJKLMNOPQ", "ABCDEFGHIJKLMNOP!", "ABCD_ EFGHIJKLMNOP").forEach {
+      assertEquals(null, ControllerPairingPolicy.normalizeManualCode(it))
+    }
+  }
+
+  @Test
+  fun manualOriginUsesOnlyAllowedCurrentOriginAndExplicitStagingChoice() {
+    assertEquals(
+      ControllerPairingPolicy.PRODUCTION_ORIGIN,
+      ControllerPairingPolicy.manualOrigin("https://karaoke.app.starsummit.net/", staging = false),
+    )
+    assertEquals(
+      ControllerPairingPolicy.STAGING_ORIGIN,
+      ControllerPairingPolicy.manualOrigin("https://karaoke.app.starsummit.net", staging = true),
+    )
+    assertEquals(
+      ControllerPairingPolicy.STAGING_ORIGIN,
+      ControllerPairingPolicy.manualOrigin("https://karaoke-test.app.starsummit.net", staging = false),
+    )
+    assertEquals(
+      ControllerPairingPolicy.PRODUCTION_ORIGIN,
+      ControllerPairingPolicy.manualOrigin("https://evil.example/", staging = false),
+    )
+  }
+
+  @Test
+  fun pairingHttpErrorsMapToSafePhaseSpecificRecoveryWithoutResponseMaterial() {
+    val mappings = mapOf(
+      "ControllerHttp400" to "code was rejected",
+      "ControllerHttp404" to "code was rejected",
+      "ControllerHttp410" to "code was rejected",
+      "ControllerHttp401" to "no longer authorized",
+      "ControllerHttp403" to "no longer authorized",
+      "ControllerHttp409" to "replace this enrollment safely",
+      "ControllerHttp503" to "server is unavailable",
+      "IOException" to "could not be reached",
+      "ControllerStatePersistenceException" to "could not save controller state",
+    )
+    mappings.forEach { (error, expected) ->
+      val message = controllerEnrollmentRecoveryMessage(error)
+      assertTrue("missing safe wording for $error", message.contains(expected))
+      assertFalse(message.contains("grant".repeat(2)))
+      assertFalse(message.contains("secret"))
+    }
+  }
+
   private fun connectingRealtime(): ControllerRealtimeTransport = object : ControllerRealtimeTransport {
     override suspend fun connect(auth: ControllerAuth) = object : ControllerRealtimeConnection {
       override val events: Flow<PocketBaseRealtimeEvent> = flowOf(PocketBaseRealtimeEvent("PB_CONNECT", "{\"clientId\":\"client\"}"))
@@ -1325,5 +2094,33 @@ class ControllerProtocolTest {
     override suspend fun fetchCommands(auth: ControllerAuth, session: ControllerSession, afterSequence: Long) = emptyList<ControllerCommand>()
     override suspend fun acknowledge(auth: ControllerAuth, session: ControllerSession, command: ControllerCommand, success: Boolean, errorCode: String?) { onAck() }
     override suspend fun reportState(auth: ControllerAuth, session: ControllerSession, state: SanitizedControllerState) = Unit
+  }
+
+  private class FakeControllerPreferences(
+    val values: MutableMap<String, String?>,
+    private val commitResults: MutableList<Boolean>,
+  ) {
+    fun editor(): ControllerPreferenceEditor = object : ControllerPreferenceEditor {
+      private val changes = linkedMapOf<String, String?>()
+      private val removals = mutableSetOf<String>()
+
+      override fun putString(key: String, value: String?): ControllerPreferenceEditor {
+        removals.remove(key)
+        changes[key] = value
+        return this
+      }
+
+      override fun remove(key: String): ControllerPreferenceEditor {
+        changes.remove(key)
+        removals += key
+        return this
+      }
+
+      override fun commit(): Boolean {
+        changes.forEach { (key, value) -> if (value == null) values.remove(key) else values[key] = value }
+        removals.forEach(values::remove)
+        return commitResults.removeAt(0)
+      }
+    }
   }
 }

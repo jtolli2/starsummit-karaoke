@@ -6,6 +6,8 @@ const COMMAND_ACTIONS = Object.freeze(['open_video', 'play', 'pause', 'seek', 'g
 const TERMINAL_STATUSES = Object.freeze(['succeeded', 'failed'])
 const MAX_PAYLOAD_BYTES = 4096
 const MAX_STATE_BYTES = 4096
+const CONTROLLER_STATE_TTL = 90 * 1000
+const SHORT_CODE = /^[A-Z2-9]{16}$/
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -115,6 +117,42 @@ function hashSecret(secret) {
   return crypto.createHash('sha256').update(String(secret)).digest('hex')
 }
 
+function normalizeShortCode(value) {
+  if (typeof value !== 'string') throw new Error('enrollment_grant_invalid')
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, '')
+  if (!SHORT_CODE.test(normalized)) throw new Error('enrollment_grant_invalid')
+  return normalized
+}
+
+function validHost(value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 255) return false
+  const raw = value.trim().toLowerCase()
+  const bracketed = raw.match(/^\[([0-9a-f:.]+)\](?::([0-9]{1,5}))?$/)
+  if (bracketed) return !bracketed[2] || Number(bracketed[2]) <= 65535
+  const match = raw.match(/^([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::([0-9]{1,5}))?$/)
+  return Boolean(match && (!match[2] || Number(match[2]) <= 65535) && !match[1].includes('..'))
+}
+
+function canonicalHost(value) {
+  if (typeof value !== 'string') return ''
+  const raw = value.trim().toLowerCase().replace(/\.$/, '')
+  return validHost(raw) ? raw : ''
+}
+
+function hostMatches(actual, expected) {
+  const left = canonicalHost(actual); const right = canonicalHost(expected)
+  if (!left || !right) return false
+  if (left === right) return true
+  const split = (value) => value.startsWith('[') ? value.match(/^(\[[^\]]+\])(?::(\d+))?$/) : value.match(/^([^:]+)(?::(\d+))?$/)
+  const a = split(left); const b = split(right)
+  return Boolean(a && b && a[1] === b[1] && (!a[2] || !b[2]))
+}
+
+function freshObservedAt(value, at = Date.now()) {
+  const observedAt = new Date(value).getTime()
+  return Number.isFinite(observedAt) && at - observedAt <= CONTROLLER_STATE_TTL
+}
+
 function randomSecret(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url')
 }
@@ -135,25 +173,34 @@ class ProtocolStore {
   }
 
   createEnrollmentGrant({ ttlMs = 5 * 60 * 1000, createdBy = 'operator', expectedServerHost = 'localhost', destination = expectedServerHost } = {}) {
-    if (typeof expectedServerHost !== 'string' || !expectedServerHost.trim() || typeof destination !== 'string' || !destination.trim()) throw new Error('invalid_grant_destination')
+    const canonicalExpectedHost = canonicalHost(expectedServerHost)
+    const canonicalDestination = canonicalHost(destination)
+    if (!canonicalExpectedHost || !canonicalDestination) throw new Error('invalid_grant_destination')
     ttlMs = Math.min(5 * 60 * 1000, Math.max(1, Number(ttlMs) || 0))
     const active = [...this.grants.values()].find((grant) => grant.createdBy === createdBy && !grant.usedAt && !grant.revokedAt && grant.expiresAt > this.now())
     if (active) throw new Error('enrollment_grant_active')
     const token = randomSecret(24)
     const shortCode = randomShortCode()
     const id = randomSecret(12)
-    this.grants.set(id, { id, tokenHash: hashSecret(token), shortCodeHash: hashSecret(shortCode), expiresAt: this.now() + ttlMs, usedAt: null, revokedAt: null, redeemedDeviceId: null, createdBy, expectedServerHost: expectedServerHost.trim().toLowerCase(), destination: destination.trim() })
+    this.grants.set(id, { id, tokenHash: hashSecret(token), shortCodeHash: hashSecret(shortCode), expiresAt: this.now() + ttlMs, usedAt: null, revokedAt: null, redeemedDeviceId: null, createdBy, expectedServerHost: canonicalExpectedHost, destination: canonicalDestination })
     return { id, token, shortCode, expiresAt: this.grants.get(id).expiresAt }
   }
 
-  enroll({ token, shortCode, deviceName, serverHost = 'localhost', destination = serverHost }) {
+  enroll({ token, shortCode, deviceName, serverHost = 'localhost', requestHost = serverHost, destination = serverHost }) {
     if ((!token && !shortCode) || typeof deviceName !== 'string' || !deviceName.trim()) {
       throw new Error('invalid enrollment request')
     }
-    const credentialHash = hashSecret(token || shortCode)
+    const credential = typeof token === 'string' && token.length > 0 ? token : normalizeShortCode(shortCode)
+    const credentialHash = hashSecret(credential)
     const grant = [...this.grants.values()].find((candidate) => candidate.tokenHash === credentialHash || candidate.shortCodeHash === credentialHash)
-    if (!grant || grant.usedAt || grant.revokedAt || grant.expiresAt <= this.now()) throw new Error('enrollment_grant_invalid')
-    if (String(serverHost).trim().toLowerCase() !== grant.expectedServerHost || String(destination).trim() !== grant.destination) throw new Error('enrollment_grant_wrong_server')
+    if (!grant) throw new Error('enrollment_grant_invalid')
+    const actualHost = canonicalHost(requestHost)
+    const suppliedHost = canonicalHost(serverHost)
+    const actualDestination = canonicalHost(destination)
+    if (!actualHost || !suppliedHost || !actualDestination || !hostMatches(actualHost, suppliedHost) || !hostMatches(actualHost, grant.expectedServerHost) || !hostMatches(actualDestination, grant.destination)) throw new Error('enrollment_grant_wrong_server')
+    if (grant.revokedAt) throw new Error('enrollment_grant_revoked')
+    if (grant.usedAt) throw new Error('enrollment_grant_replayed')
+    if (grant.expiresAt <= this.now()) throw new Error('enrollment_grant_expired')
     const deviceKey = `device_${randomSecret(18)}`
     const deviceSecret = randomSecret(32)
     const device = { id: randomSecret(12), deviceKey, secretHash: hashSecret(deviceSecret), deviceName, revoked: false, lastSeenAt: null }
@@ -174,8 +221,55 @@ class ProtocolStore {
     const grant = this.grants.get(id)
     if (!grant || (createdBy !== null && grant.createdBy !== createdBy)) throw new Error('enrollment_grant_not_found')
     const device = grant.redeemedDeviceId ? this.devices.get(grant.redeemedDeviceId) : null
-    const state = grant.revokedAt ? 'revoked' : grant.usedAt ? (device && !device.revoked && device.lastSeenAt ? (this.now() - device.lastSeenAt < 90000 ? 'connected' : 'unavailable') : 'used') : grant.expiresAt <= this.now() ? 'expired' : 'active'
-    return { id: grant.id, expiresAt: grant.expiresAt, usedAt: grant.usedAt, revokedAt: grant.revokedAt, state, status: state, redeemedDeviceId: grant.redeemedDeviceId, expectedServerHost: grant.expectedServerHost, destination: grant.destination }
+    const generation = device ? (this.sequence.get(`generation:${device.id}`) || 0) : 0
+    const session = device && generation > 0
+      ? [...this.sessions.values()].find((candidate) => candidate.deviceId === device.id && candidate.generation === generation && candidate.expiresAt > this.now()) || null
+      : null
+    const reported = device ? this.states.get(device.id) || null : null
+    const stateGeneration = reported && reported.generation === generation
+    const stateFresh = reported && freshObservedAt(reported.observedAt, this.now())
+    const connected = Boolean(
+      grant.usedAt &&
+      !grant.revokedAt &&
+      device &&
+      !device.revoked &&
+      session &&
+      reported &&
+      stateGeneration &&
+      stateFresh &&
+      reported.connectionState === 'connected',
+    )
+    const state = grant.revokedAt
+      ? 'revoked'
+      : device?.revoked
+        ? 'revoked'
+        : grant.usedAt
+          ? (connected ? 'connected' : 'pending')
+          : grant.expiresAt <= this.now()
+            ? 'expired'
+            : 'active'
+    return {
+      id: grant.id,
+      expiresAt: grant.expiresAt,
+      usedAt: grant.usedAt,
+      revokedAt: grant.revokedAt,
+      state,
+      status: state,
+      redeemedDeviceId: grant.redeemedDeviceId,
+      expectedServerHost: grant.expectedServerHost,
+      destination: grant.destination,
+      device: device ? {
+        id: device.id,
+        name: device.deviceName,
+        revoked: device.revoked,
+        status: device.revoked ? 'revoked' : 'active',
+        lastSeenAt: device.lastSeenAt,
+        sessionGeneration: generation,
+      } : null,
+      sessionActive: Boolean(session),
+      connectionState: reported?.connectionState || null,
+      observedAt: reported?.observedAt || null,
+    }
   }
 
   startSession(deviceId, resumeSessionId) {
@@ -211,10 +305,18 @@ class ProtocolStore {
     return session
   }
 
-  reportState({ deviceId, sessionId, generation }) {
+  reportState({ deviceId, sessionId, generation, ...input }) {
     this.assertSession(deviceId, sessionId, generation)
     const device = this.devices.get(deviceId)
     device.lastSeenAt = this.now()
+    if (input.connectionState !== undefined) {
+      const state = sanitizeState(input)
+      this.states.set(deviceId, {
+        ...state,
+        generation,
+        observedAt: this.now(),
+      })
+    }
     return clone(device)
   }
 
@@ -260,9 +362,15 @@ module.exports = {
   TERMINAL_STATUSES,
   MAX_PAYLOAD_BYTES,
   MAX_STATE_BYTES,
+  CONTROLLER_STATE_TTL,
   sanitizeCommandPayload,
   sanitizeState,
   hashSecret,
+  normalizeShortCode,
+  freshObservedAt,
+  validHost,
+  canonicalHost,
+  hostMatches,
   randomSecret,
   randomShortCode,
   ProtocolStore,

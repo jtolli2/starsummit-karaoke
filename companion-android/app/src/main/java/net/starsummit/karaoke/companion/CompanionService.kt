@@ -48,6 +48,7 @@ class CompanionService : Service() {
   private var reducer = LoungeEventReducer()
   private val commandCorrelation = CommandCorrelation()
   private val controllerLifecycleLogger = ControllerLifecycleLogger()
+  private val controllerLifecycleMutex = Mutex()
 
   override fun onCreate() {
     super.onCreate()
@@ -59,7 +60,12 @@ class CompanionService : Service() {
     createNotificationChannel()
     startForeground(NOTIFICATION_ID, notification())
     if (pairingStore.load() != null) startConnectionLoop()
-    if (controllerStore.loadCredentials() != null) startControllerLoop()
+    val controllerCredentialsPresent = controllerStore.loadCredentials() != null
+    if (controllerStore.isStorageBlocked()) {
+      diagnosticsStore.controllerEnrollmentStorageBlocked(ControllerStatePersistenceException(rollbackFailed = true))
+    } else if (controllerLoopMayStart(controllerCredentialsPresent, storageBlocked = false)) {
+      startControllerLoop()
+    }
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -83,20 +89,89 @@ class CompanionService : Service() {
     fun pause() { command { pause() } }
     fun seekTo(seconds: Double) { command { seekTo(seconds) } }
     fun getNowPlaying() { command { getNowPlaying() } }
+    /** Clears only controller enrollment/protocol state; Lounge pairing remains untouched. */
+    fun resetController() {
+      scope.launch { controllerLifecycleMutex.withLock { resetControllerInternal() } }
+    }
     /** Native enrollment entry point; grant and returned secret never enter UI state or logs. */
     fun enrollController(baseUrl: String, grant: String, deviceName: String = "Starsummit tablet", serverHost: String = "", destination: String = "") {
-      scope.launch {
-        val credentials = runCatching { controllerApi.enroll(baseUrl, grant, deviceName, serverHost, destination) }
-          .getOrElse { failure -> diagnosticsStore.error(failure, setErrorState = false); return@launch }
-        controllerStore.saveCredentials(credentials)
-        controllerBridge?.close()
-        controllerBridge = null
-        val previousControllerJob = controllerJob
-        controllerJob = null
-        previousControllerJob?.cancelAndJoin()
-        startControllerLoop()
-      }
+      scope.launch { controllerLifecycleMutex.withLock { enrollControllerInternal(baseUrl, grant, deviceName, serverHost, destination) } }
     }
+  }
+
+  private suspend fun enrollControllerInternal(
+    baseUrl: String,
+    grant: String,
+    deviceName: String,
+    serverHost: String,
+    destination: String,
+  ) {
+    diagnosticsStore.controllerEnrollmentStarted()
+    val credentials = try {
+      controllerApi.enroll(baseUrl, grant, deviceName, serverHost, destination)
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (failure: Throwable) {
+      // A grant can be consumed even when its response is ambiguous; keep the current
+      // enrollment working and require a new grant for an explicit retry.
+      diagnosticsStore.controllerEnrollmentRetryable(failure)
+      diagnosticsStore.error(failure, setErrorState = false)
+      return
+    }
+
+    // Stop all writers before the atomic replacement so an old command cannot restore
+    // its session/progress after the clean state has been committed.
+    stopControllerLoop()
+    try {
+      controllerStore.replaceCredentials(credentials)
+    } catch (failure: ControllerStatePersistenceException) {
+      diagnosticsStore.error(failure, setErrorState = false)
+      if (failure.rollbackFailed) {
+        // The failed commit may have left SharedPreferences in a new/partial state;
+        // never restart a loop until an operator resolves the storage problem.
+        diagnosticsStore.controllerEnrollmentStorageBlocked(failure)
+        return
+      }
+      diagnosticsStore.controllerEnrollmentRetryable(failure)
+      startControllerLoop()
+      return
+    } catch (failure: Throwable) {
+      // replaceCredentials commits credentials + protocol reset as one operation. A failed
+      // commit leaves the previous credential available, so restart that loop for recovery.
+      diagnosticsStore.controllerEnrollmentRetryable(failure)
+      diagnosticsStore.error(failure, setErrorState = false)
+      startControllerLoop()
+      return
+    }
+    diagnosticsStore.controllerEnrollmentSucceeded()
+    startControllerLoop()
+  }
+
+  private suspend fun resetControllerInternal() {
+    stopControllerLoop()
+    try {
+      controllerStore.clearControllerState()
+      diagnosticsStore.controllerReset()
+    } catch (failure: ControllerStatePersistenceException) {
+      diagnosticsStore.error(failure, setErrorState = false)
+      if (failure.rollbackFailed) {
+        diagnosticsStore.controllerEnrollmentStorageBlocked(failure)
+        return
+      }
+      startControllerLoop()
+    } catch (failure: Throwable) {
+      diagnosticsStore.error(failure, setErrorState = false)
+      startControllerLoop()
+    }
+  }
+
+  private suspend fun stopControllerLoop() {
+    val oldBridge = controllerBridge
+    controllerBridge = null
+    oldBridge?.close()
+    val oldJob = controllerJob
+    controllerJob = null
+    oldJob?.cancelAndJoin()
   }
 
   private fun startControllerLoop() {
@@ -162,7 +237,10 @@ class CompanionService : Service() {
             reportControllerState(bridge)
             lastStateReportAt = SystemClock.elapsedRealtime()
           }
-            .onFailure { diagnosticsStore.error(it, setErrorState = false) }
+            .onFailure {
+              diagnosticsStore.error(it, setErrorState = false)
+              if (it is ControllerRePairRequiredException) throw it
+            }
           processControllerCommands(bridge, processor, initialCommands)
           attempt = 0
           if (bridge.isRealtimeAvailable) {
@@ -174,7 +252,10 @@ class CompanionService : Service() {
                   runCatching {
                     reportControllerState(bridge)
                     lastStateReportAt = SystemClock.elapsedRealtime()
-                  }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
+                  }.onFailure {
+                    diagnosticsStore.error(it, setErrorState = false)
+                    if (it is ControllerRePairRequiredException) throw it
+                  }
                 }
               }
               try {
@@ -195,19 +276,53 @@ class CompanionService : Service() {
                 runCatching {
                   reportControllerState(bridge)
                   lastStateReportAt = SystemClock.elapsedRealtime()
-                }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
+                }.onFailure {
+                  diagnosticsStore.error(it, setErrorState = false)
+                  if (it is ControllerRePairRequiredException) throw it
+                }
               }
             }
           }
           throw IOException("PocketBase realtime stream ended")
         } catch (cancelled: CancellationException) {
           throw cancelled
+        } catch (failure: ControllerStatePersistenceException) {
+          if (failure.rollbackFailed) {
+            if (controllerBridge === bridge) controllerBridge = null
+            bridge.close()
+            diagnosticsStore.error(failure, setErrorState = false)
+            diagnosticsStore.controllerEnrollmentStorageBlocked(failure)
+            return@launch
+          }
+          // A successful rollback restored the exact prior state; retain the normal
+          // bounded retry path for this non-blocking disk failure.
+          bridge.close()
+          if (controllerBridge === bridge) controllerBridge = null
+          diagnosticsStore.error(failure, setErrorState = false)
+          delay(ControllerReconnectPolicy.delayMillis(attempt))
+          attempt = (attempt + 1).coerceAtMost(ControllerReconnectPolicy.MAX_ATTEMPTS)
+        } catch (failure: ControllerRePairRequiredException) {
+          // Auth/session/command/state rejection is definitive for this credential/device.
+          // Realtime subscription 403 is consumed inside bridge.establish() as polling
+          // fallback and never reaches this branch.
+          if (controllerBridge === bridge) controllerBridge = null
+          bridge.close()
+          val clearFailure = runCatching { controllerStore.clearControllerState() }.exceptionOrNull()
+          if (clearFailure is ControllerStatePersistenceException && clearFailure.rollbackFailed) {
+            diagnosticsStore.error(clearFailure, setErrorState = false)
+            diagnosticsStore.controllerEnrollmentStorageBlocked(clearFailure)
+            return@launch
+          }
+          if (clearFailure != null) diagnosticsStore.error(clearFailure, setErrorState = false)
+          diagnosticsStore.error(failure, setErrorState = false)
+          diagnosticsStore.controllerRePairRequired(failure)
+          return@launch
         } catch (failure: Throwable) {
           if (failure is AmbiguousCommandException) {
             session?.let { forceReconnect(it, sessionGeneration) }
           }
           bridge.close()
-          controllerBridge = null
+          if (controllerBridge === bridge) controllerBridge = null
           diagnosticsStore.error(failure, setErrorState = false)
           delay(ControllerReconnectPolicy.delayMillis(attempt))
           attempt = (attempt + 1).coerceAtMost(ControllerReconnectPolicy.MAX_ATTEMPTS)
@@ -229,7 +344,10 @@ class CompanionService : Service() {
       if (result is CommandResult.Failed) diagnosticsStore.error(IllegalStateException(result.errorCode), setErrorState = false)
       runCatching {
         reportControllerState(bridge)
-      }.onFailure { diagnosticsStore.error(it, setErrorState = false) }
+      }.onFailure {
+        diagnosticsStore.error(it, setErrorState = false)
+        if (it is ControllerRePairRequiredException) throw it
+      }
     }
   }
 
@@ -247,6 +365,7 @@ class CompanionService : Service() {
   /** A heartbeat must never race a post-command report and regress playback state. */
   private suspend fun reportControllerState(bridge: PocketBaseControllerBridge) {
     controllerStateReporter.report { bridge.reportState(sanitizedControllerState()) }
+    diagnosticsStore.controllerStateReported()
   }
 
   private inner class LoungeCommandExecutor : CommandExecutor {

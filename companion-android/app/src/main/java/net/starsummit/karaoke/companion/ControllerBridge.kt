@@ -244,6 +244,15 @@ sealed interface CommandResult {
 class AmbiguousCommandException(message: String) : IOException(message)
 class ControllerAcknowledgementException(message: String) : IOException(message)
 
+/** A controller credential/device was definitively rejected by an authenticated protocol route. */
+open class ControllerRePairRequiredException(
+  val statusCode: Int,
+  val operation: String,
+) : IOException("PocketBase controller $operation rejected ($statusCode)")
+
+/** The controller credential was definitively rejected by PocketBase's auth route. */
+class ControllerAuthenticationRejectedException(statusCode: Int) : ControllerRePairRequiredException(statusCode, "authentication")
+
 interface ControllerRealtimeTransport {
   suspend fun connect(auth: ControllerAuth): ControllerRealtimeConnection
 }
@@ -276,24 +285,45 @@ class PocketBaseControllerBridge(
     notifyDiagnostics { diagnostics.attemptStarted() }
     stateMachine.authenticating()
     notifyDiagnostics { diagnostics.phase("authenticate") }
-    val authenticated = api.authenticate(credentials)
+    val authenticated = try {
+      api.authenticate(credentials)
+    } catch (failure: ControllerHttpException) {
+      // Only authentication-route 4xx responses prove that the durable credential is
+      // invalid.  Session, command, realtime, network, and 5xx failures stay retryable.
+      if (failure.statusCode in AUTH_REJECTION_STATUS_CODES) {
+        throw ControllerAuthenticationRejectedException(failure.statusCode)
+      }
+      throw failure
+    }
     auth = authenticated
     stateMachine.connecting()
     notifyDiagnostics { diagnostics.phase("session") }
     val previous = store.load()
-    val resumeSessionId = previous.sessionId ?: sessionStore?.load()?.id
+    // Read the persisted session once. A crash after saving it but before saving progress
+    // must still preserve its generation as the same-device rollback floor.
+    val persistedSession = sessionStore?.load()
+    val resumeSessionId = previous.sessionId ?: persistedSession?.id
     var replacedExpiredSession = false
     val opened = try {
       api.startOrResumeSession(authenticated, resumeSessionId)
     } catch (failure: ControllerHttpException) {
-      if (failure.statusCode != 409 || resumeSessionId == null) throw failure
-      replacedExpiredSession = true
-      api.startOrResumeSession(authenticated, null)
+      if (failure.statusCode == 409 && resumeSessionId != null) {
+        replacedExpiredSession = true
+        try {
+          api.startOrResumeSession(authenticated, null)
+        } catch (retryFailure: ControllerHttpException) {
+          if (retryFailure.statusCode == 403) throw ControllerRePairRequiredException(403, "session")
+          throw retryFailure
+        }
+      } else if (failure.statusCode == 403) {
+        throw ControllerRePairRequiredException(403, "session")
+      } else {
+        throw failure
+      }
     }
     val old = session
-    val previousGeneration = previous.generation
-    if ((old != null && opened.generation < old.generation) ||
-      (previousGeneration != null && opened.generation < previousGeneration)) {
+    val persistedGenerationFloor = listOfNotNull(old?.generation, previous.generation, persistedSession?.generation).maxOrNull()
+    if (persistedGenerationFloor != null && opened.generation < persistedGenerationFloor) {
       stateMachine.stale()
       throw IOException("stale controller session generation")
     }
@@ -343,6 +373,13 @@ class PocketBaseControllerBridge(
       api.fetchCommands(authenticated, active, progress.lastCommandSequence).also { commands ->
         notifyDiagnostics { diagnostics.refetchSucceeded(commands.size) }
       }
+    } catch (failure: ControllerHttpException) {
+      if (failure.statusCode == 403) {
+        notifyDiagnostics { diagnostics.refetchFailed("ControllerHttp403") }
+        throw ControllerRePairRequiredException(403, "commands")
+      }
+      notifyDiagnostics { diagnostics.refetchFailed(redactDiagnosticError(failure)) }
+      throw failure
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
       throw cancelled
     } catch (failure: Throwable) {
@@ -403,6 +440,10 @@ class PocketBaseControllerBridge(
         api.acknowledge(auth, session, command, success, errorCode)
         true
       }
+    } catch (failure: ControllerHttpException) {
+      restoreInFlight(session, command, priorProgress)
+      if (failure.statusCode == 403) throw ControllerRePairRequiredException(403, "acknowledgement")
+      throw ControllerAcknowledgementException("acknowledgement failed")
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
       restoreInFlight(session, command, priorProgress)
       throw cancelled
@@ -428,7 +469,12 @@ class PocketBaseControllerBridge(
   suspend fun reportState(state: SanitizedControllerState) {
     val authenticated = auth ?: throw IOException("controller not authenticated")
     val active = session ?: throw IOException("controller session unavailable")
-    api.reportState(authenticated, active, state)
+    try {
+      api.reportState(authenticated, active, state)
+    } catch (failure: ControllerHttpException) {
+      if (failure.statusCode == 403) throw ControllerRePairRequiredException(403, "state")
+      throw failure
+    }
   }
 
   fun close() { realtimeConnection?.close(); realtimeConnection = null; realtimeClientId = null; isRealtimeAvailable = false }
@@ -436,6 +482,10 @@ class PocketBaseControllerBridge(
   private inline fun notifyDiagnostics(callback: () -> Unit) {
     // Diagnostics must never interfere with controller delivery or expose a credential-bearing error.
     runCatching(callback)
+  }
+
+  private companion object {
+    val AUTH_REJECTION_STATUS_CODES = setOf(400, 401, 403)
   }
 }
 

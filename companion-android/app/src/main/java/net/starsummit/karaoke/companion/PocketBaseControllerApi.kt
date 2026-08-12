@@ -32,7 +32,48 @@ data class SanitizedControllerState(
   val lastCommandSequence: Long = 0,
 )
 
-class ControllerHttpException(val statusCode: Int) : IOException("PocketBase controller request failed ($statusCode)")
+private val SAFE_ENROLLMENT_ERROR_CODES = setOf(
+  "enrollment_grant_invalid",
+  "enrollment_grant_wrong_server",
+  "enrollment_grant_expired",
+  "enrollment_grant_replayed",
+  "enrollment_grant_revoked",
+)
+
+class ControllerHttpException(
+  val statusCode: Int,
+  serverCode: String? = null,
+) : IOException("PocketBase controller request failed ($statusCode)") {
+  /** Safe server classification only; response bodies and messages are never retained. */
+  val serverCode: String? = serverCode?.takeIf(SAFE_ENROLLMENT_ERROR_CODES::contains)
+}
+
+/**
+ * Maps only the redacted diagnostics value to a safe operator instruction. Response bodies and
+ * server messages are intentionally ignored because they can contain enrollment material.
+ */
+fun controllerEnrollmentRecoveryMessage(errorCode: String?): String = when {
+  errorCode == null -> "No controller enrollment attempt yet."
+  errorCode.contains("enrollment_grant_wrong_server") ->
+    "This grant belongs to a different server. Select the matching production or staging server and create a new grant."
+  errorCode.contains("enrollment_grant_expired") ->
+    "This grant expired. Return to /admin and create a fresh grant."
+  errorCode.contains("enrollment_grant_replayed") ->
+    "This grant was already used. Return to /admin and create a fresh grant."
+  errorCode.contains("enrollment_grant_revoked") ->
+    "This grant was revoked. Return to /admin and create a fresh grant."
+  errorCode.contains("enrollment_grant_invalid") ->
+    "This code is not valid for controller pairing. Check the code and server, then create a fresh grant."
+  errorCode.startsWith("ControllerHttp400") || errorCode.startsWith("ControllerHttp404") ||
+    errorCode.startsWith("ControllerHttp410") -> "The code was rejected, expired, or already used. Create a new grant and try again."
+  errorCode.startsWith("ControllerHttp401") || errorCode.startsWith("ControllerHttp403") ->
+    "This controller is no longer authorized. Use Re-pair, then create a new grant."
+  errorCode.startsWith("ControllerHttp409") -> "The server could not replace this enrollment safely. Create a new grant and retry."
+  errorCode.startsWith("ControllerHttp5") -> "The pairing server is unavailable. Check the network and retry with a new grant."
+  errorCode == "IOException" -> "The pairing server could not be reached. Check the network and retry with a new grant."
+  errorCode == "ControllerStatePersistenceException" -> "The tablet could not save controller state. Use Re-pair and retry."
+  else -> "Pairing stopped at ${errorCode.removePrefix("Controller").take(48)}. Create a new grant and retry."
+}
 
 /** PocketBase binds realtime GET and POST authorization by its parsed token value. */
 internal fun pocketBaseAuthorization(token: String): String = token
@@ -128,8 +169,17 @@ class PocketBaseControllerApi(
     token?.let { builder.header("Authorization", pocketBaseAuthorization(it)) }
     body?.let { builder.method(method, it.toString().toRequestBody(JSON)) } ?: builder.method(method, null)
     val response = executeCall(client.newCall(builder.build()))
-    if (response.code !in 200..299) throw ControllerHttpException(response.code)
+    if (response.code !in 200..299) {
+      throw ControllerHttpException(response.code, safeServerErrorCode(response.body))
+    }
     return response.body
+  }
+
+  /** Parse only a tiny allowlisted error field; never retain or surface body/message text. */
+  private fun safeServerErrorCode(body: String): String? {
+    if (body.length > 4096) return null
+    return runCatching { JSONObject(body).optString("error").takeIf(SAFE_ENROLLMENT_ERROR_CODES::contains) }
+      .getOrNull()
   }
 
   private suspend fun executeCall(call: Call): HttpResponse = suspendCancellableCoroutine { continuation ->

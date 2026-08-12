@@ -42,6 +42,7 @@ server {
     # Route a separate Coolify backend through its own ingress host. Reflecting the
     # frontend host would loop this request back to the frontend application.
     proxy_set_header Host $proxy_host;
+    proxy_set_header X-Starsummit-Public-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $proxy_forwarded_proto;
@@ -59,6 +60,7 @@ server {
     proxy_read_timeout 1h;
     proxy_send_timeout 1h;
     proxy_set_header Host $proxy_host;
+    proxy_set_header X-Starsummit-Public-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Forwarded-Proto $proxy_forwarded_proto;
