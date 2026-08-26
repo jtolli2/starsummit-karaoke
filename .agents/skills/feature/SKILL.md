@@ -5,7 +5,7 @@ description: "Manage the scoped lifecycle of a Starsummit Karaoke feature or fix
 
 # Karaoke Feature Workflow
 
-Read `context/overview.md`, `context/project-overview.md`, `context/coding-standards.md`, `context/ai-interaction.md`, `context/current-feature.md`, `context/feature-history.md`, and `context/agent-workflow-feedback.md` before acting. Treat `context/overview.md` as the canonical rough draft; use the project overview as the compact reference. Apply relevant feedback before acting, and append a dated entry to the feedback log when it leads to a workflow improvement. Assume Coolify manages the initial containerized deployment at `karaoke.app.starsummit.net`.
+Read `context/overview.md`, `context/project-overview.md`, `context/coding-standards.md`, `context/ai-interaction.md`, `context/current-feature.md`, `context/feature-history.md`, and `context/agent-workflow-feedback.md` before acting. Treat `context/overview.md` as the canonical rough draft; use the project overview as the compact reference. Apply relevant feedback before acting. When a requested workflow improvement is actually applied, append a dated entry to the feedback log; loading a feature alone never edits history or feedback. Assume Coolify manages the initial containerized deployment at `karaoke.app.starsummit.net`.
 
 ## Product Guardrails
 
@@ -20,6 +20,32 @@ Read `context/overview.md`, `context/project-overview.md`, `context/coding-stand
   failover is implemented as a separately scoped enhancement. Never expose key values.
 - Account for real-time conflicts. Queue transitions must be atomic and must not silently lose concurrent guest submissions.
 - Implement only the active feature's goals. Record unresolved product choices instead of inventing behavior.
+
+## Implementation Checkpoint
+
+Before any nontrivial implementation, establish a verified baseline and record the checkpoint in
+the required `Implementation Decisions` and `Minimal Delta` sections of
+`context/current-feature.md`:
+
+- Record evidence-backed implementation decisions (source files, tests, runtime observations, or
+  other reproducible evidence), and keep unsupported choices explicitly marked as unknown.
+- Identify current consumers and boundaries for every affected contract. The inventory should cover
+  Vue component props/emits and route consumers; composables, stores, and shared TypeScript types;
+  PocketBase endpoints, hooks, collections, schema/rules, migrations, auth roles, and realtime
+  subscriptions; and companion Android services, IPC/intents, lifecycle/process-restart behavior,
+  and Keystore/persisted-state boundaries.
+- Justify every new public or shared contract against an identified consumer and the request. Record
+  why an existing contract cannot satisfy the goal before adding one.
+- Define the smallest expected delta from the verified baseline, including explicitly out-of-scope
+  behavior. Preserve existing behavior when it already satisfies the request.
+- Do not add speculative abstractions, validation, compatibility layers, or tests. Add only the
+  contracts and checks required by the active goals and their evidence. Prefer feature-local
+  composition when a contract has a single consumer; introduce shared composition only when the
+  inventory shows multiple current consumers or a required boundary.
+
+The load action initializes the decision and delta sections; the start action completes this
+checkpoint before production code. If an unresolved choice would materially change behavior or
+architecture, ask the user before proceeding.
 
 ## Actions
 

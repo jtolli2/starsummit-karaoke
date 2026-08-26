@@ -23,7 +23,13 @@
 - Final independent review approved the Android bridge-replacement lifecycle and its focused
   closure regression test.
 
-> Append-only record of completed features and fixes. Add a dated, concise entry after completion; do not edit, reorder, or remove earlier entries.
+> Append-only record of completed features and fixes. Add exactly one concise dated entry only during
+> `complete`, after the feature work and validation are done. Record important delivered behavior
+> and validation; keep small implementation details in `context/current-feature.md`. If a same-
+> feature entry was drafted or refined before delivery, update that existing entry in place instead
+> of appending a correction entry. Append genuinely new entries at the bottom in chronological
+> completion order. Never delete or rewrite prior completed entries without explicit history-cleanup
+> approval. When merging, preserve the union of meaningful entries.
 
 ## Entries
 

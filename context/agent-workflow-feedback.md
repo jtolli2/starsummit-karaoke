@@ -194,3 +194,12 @@
   collection inspection as runtime API usage rather than untyped object access.
 - **Follow-up:** Keep fixture databases non-destructive and include representative retained values
   whenever schema-repair code branches on field type, relation target, or required-state metadata.
+
+### 2026-08-26 — Keep feature plans evidence-backed and minimal
+
+- **Feedback:** Feature planning can drift into over-engineering when proposed contracts or layers
+  are not tied to verified consumers and the requested behavior.
+- **Improvement:** Require an evidence-backed baseline, explicit minimal delta, and justification for
+  every new public/shared contract; prefer feature-local composition for a single consumer.
+- **Follow-up:** Keep future plans and reviews evidence-backed, with unknowns explicit and speculative
+  abstractions, validation, compatibility, or tests out of scope.
