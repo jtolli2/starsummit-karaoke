@@ -496,3 +496,25 @@
   A post-snapshot request caused the tablet reorder action to reject stale state and refetch without
   losing the new row. A fresh move then produced the expected order: `2 Become 1`, `18`, and
   `2 Poor Kids`. No existing party, controller, playback, catalog, volume, or device state changed.
+
+## 2026-10-01 — Controller Pairing Reliability and Recovery
+
+- Repaired controller enrollment replacement and process recovery so a new controller generation
+  no longer inherits stale session progress; connected status now requires a current session and
+  fresh matching-generation state. Keystore-backed controller recovery preserves Lounge pairing
+  material, while manual and QR/deep-link enrollment share the same expiring operator-scoped grant.
+- Deployed signed product SHA `fbb9c75346c6c81867588d6d2e931bfaf41b8450` to retained staging as
+  finished deployment `u59xjep0jzvmayvycvoxbgpf`; staging frontend/API health returned HTTP 200 and
+  the external PocketBase volume was preserved. Installed APK version `0.1.0` (code `1`) has
+  SHA-256 `7b382edc7e198b3cb590f65b09ff79ce82089f575f86685dc7ab159944cfb0e7`.
+- Validation passed 78 Vue tests and production build, 96 Android JVM tests and debug assembly,
+  32 focused controller/backend contracts, pinned PocketBase 0.39.7 integration, syntax,
+  diff/secret checks, and independent integrated review. The broader backend protocol suite retains
+  three unrelated legacy catalog-contract fixture failures; controller checks passed.
+- On retained staging, an isolated party completed both normalized manual-code and Android
+  deep-link grant redemption. After the final QR redemption, force-stop/relaunch at 20:54:28 UTC
+  remained connected at 20:56:09 UTC: authoritative `/admin` showed connected status, and safe
+  diagnostics showed fresh state, controller `listen`, and Lounge `CONNECTED`. No Lounge controls
+  were activated and the external volume was preserved. QR payload decoding was local/offline;
+  physical camera scanning and Chrome's Open button remain unexercised. No cleanup or unrelated
+  catalog, queue, matcher, playback, Wi-Fi, or DNS operation was performed.

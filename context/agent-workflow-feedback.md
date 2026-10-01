@@ -203,3 +203,15 @@
   every new public/shared contract; prefer feature-local composition for a single consumer.
 - **Follow-up:** Keep future plans and reviews evidence-backed, with unknowns explicit and speculative
   abstractions, validation, compatibility, or tests out of scope.
+
+### 2026-10-01 — Separate pairing closeout evidence by proof boundary
+
+- **Feedback:** A live pairing handoff can overstate QR support or retained-secret preservation if
+  it treats local/offline payload decoding as a camera scan, a successful Android resolver as Chrome
+  button coverage, or a changed encrypted-preference file hash as loss of its logical pairing data.
+- **Improvement:** Record each observed boundary precisely, distinguish authoritative fresh-state
+  status from session existence, and describe Lounge persistence using the non-secret evidence that
+  was actually inspected.
+- **Follow-up:** Record unexercised camera/browser coverage precisely while documenting that the
+  final post-redemption restart gate passed; do not infer record identifiers or counts from
+  successful status alone.
