@@ -1200,6 +1200,15 @@ onUnmounted(() => {
         <p v-else-if="!partyExpired">
           QR unavailable after reload; create a new party to display it.
         </p>
+        <p v-if="!partyExpired">This party will remain active until it expires.</p>
+        <button
+          v-if="!partyExpired"
+          type="button"
+          @click="createActiveParty"
+          :disabled="loading || busy"
+        >
+          Create another party
+        </button>
         <button v-if="partyExpired" type="button" @click="createActiveParty" :disabled="loading">
           Create new party
         </button>
