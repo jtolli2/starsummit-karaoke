@@ -1027,10 +1027,25 @@ routerAdd('POST', '/api/karaoke/tablet/queue/reorder', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const q = globalThis.__partyQueue; const operator = q.auth(c)
   if (!q.tablet(operator)) return q.json(c, 403, 'forbidden', 'tablet_admin authentication required')
-  const input = q.body(c); const partyId = String(input.partyId || ''); const queueId = String(input.queueId || '')
-  const direction = String(input.direction || ''); const expectedRevision = Number(input.expectedRevision)
+  const input = q.body(c)
+  const partyId = String(input.partyId || '')
+  const queueId = String(input.queueId || '')
+  const direction = String(input.direction || '')
+  const targetQueueId = typeof input.targetQueueId === 'string' ? input.targetQueueId : ''
+  const expectedRevision = Number(input.expectedRevision)
   const expectedDigest = String(input.expectedDigest || '')
-  if (!partyId || !queueId || !['up', 'down'].includes(direction) || !Number.isInteger(expectedRevision) || !expectedDigest) return q.json(c, 422, 'invalid_reorder', 'Queue reorder request is invalid')
+  const hasDirection = Object.prototype.hasOwnProperty.call(input, 'direction')
+  const hasTarget = Object.prototype.hasOwnProperty.call(input, 'targetQueueId')
+  if (
+    !partyId ||
+    !queueId ||
+    hasDirection === hasTarget ||
+    (hasDirection && !['up', 'down'].includes(direction)) ||
+    (hasTarget && !targetQueueId) ||
+    !Number.isInteger(expectedRevision) ||
+    !expectedDigest
+  )
+    return q.json(c, 422, 'invalid_reorder', 'Queue reorder request is invalid')
   try {
     let result
     $app.runInTransaction((tx) => {
@@ -1040,12 +1055,47 @@ routerAdd('POST', '/api/karaoke/tablet/queue/reorder', (c) => {
       const rows = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 500, 0, { party: partyId })
       if (q.num(party, 'queue_sequence') !== expectedRevision || q.queueOrderDigest(rows) !== expectedDigest) throw new Error('stale_reorder')
       const current = rows.find((row) => q.id(row) === queueId)
-      if (!current || q.str(current, 'status') !== 'queued') throw new Error('queue_not_reorderable')
-      const queued = rows.filter((row) => q.str(row, 'status') === 'queued').sort((a, b) => q.num(a, 'sequence') - q.num(b, 'sequence'))
-      const index = queued.findIndex((row) => q.id(row) === queueId); const targetIndex = index + (direction === 'up' ? -1 : 1)
-      if (targetIndex < 0 || targetIndex >= queued.length) { result = { moved: false, revision: expectedRevision, digest: expectedDigest }; return }
-      const other = queued[targetIndex]; const temporary = q.num(party, 'queue_sequence') + 1; const currentSequence = q.num(current, 'sequence'); const otherSequence = q.num(other, 'sequence')
-      q.set(current, 'sequence', temporary); tx.save(current); q.set(other, 'sequence', currentSequence); tx.save(other); q.set(current, 'sequence', otherSequence); tx.save(current)
+      if (!current || q.str(current, 'status') !== 'queued')
+        throw new Error('queue_not_reorderable')
+      const queued = rows
+        .filter((row) => q.str(row, 'status') === 'queued')
+        .sort((a, b) => q.num(a, 'sequence') - q.num(b, 'sequence'))
+      const index = queued.findIndex((row) => q.id(row) === queueId)
+      const targetIndex = hasTarget
+        ? queued.findIndex((row) => q.id(row) === targetQueueId)
+        : index + (direction === 'up' ? -1 : 1)
+      if (targetIndex < 0 || targetIndex >= queued.length) {
+        if (hasTarget) throw new Error('queue_not_reorderable')
+        result = { moved: false, revision: expectedRevision, digest: expectedDigest }
+        return
+      }
+      if (targetIndex === index) {
+        result = { moved: false, revision: expectedRevision, digest: expectedDigest }
+        return
+      }
+      const temporary = q.num(party, 'queue_sequence') + 1
+      let vacancy = q.num(current, 'sequence')
+      q.set(current, 'sequence', temporary)
+      tx.save(current)
+      if (index < targetIndex) {
+        for (let i = index + 1; i <= targetIndex; i += 1) {
+          const crossed = queued[i]
+          const previous = q.num(crossed, 'sequence')
+          q.set(crossed, 'sequence', vacancy)
+          tx.save(crossed)
+          vacancy = previous
+        }
+      } else {
+        for (let i = index - 1; i >= targetIndex; i -= 1) {
+          const crossed = queued[i]
+          const previous = q.num(crossed, 'sequence')
+          q.set(crossed, 'sequence', vacancy)
+          tx.save(crossed)
+          vacancy = previous
+        }
+      }
+      q.set(current, 'sequence', vacancy)
+      tx.save(current)
       const updated = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 500, 0, { party: partyId })
       result = { moved: true, revision: expectedRevision, digest: q.queueOrderDigest(updated) }
     })

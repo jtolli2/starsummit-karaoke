@@ -1,8 +1,77 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import QrcodeVue from 'qrcode.vue'
 import { useTabletOperator } from '@/composables/useTabletOperator'
+import type { TabletQueueItem } from '@/services/tabletApi'
 
 const operator = useTabletOperator()
+const pointerDrag = ref<{
+  pointerId: number
+  queueId: string
+  revision: number
+  digest: string
+} | null>(null)
+const pointerDrop = ref<{ queueId: string; side: 'before' | 'after' } | null>(null)
+
+function cancelPointerDrag(pointerId?: number) {
+  if (pointerId !== undefined && pointerDrag.value?.pointerId !== pointerId) return
+  pointerDrag.value = null
+  pointerDrop.value = null
+}
+
+function beginPointerDrag(event: PointerEvent, item: TabletQueueItem) {
+  const revision = operator.status?.queueOrderRevision
+  const digest = operator.status?.queueOrderDigest
+  if (!event.isPrimary || event.button !== 0 || item.status !== 'queued' || operator.busy) return
+  if (revision === undefined || !digest) return
+  pointerDrag.value = { pointerId: event.pointerId, queueId: item.id, revision, digest }
+  pointerDrop.value = null
+  const handle = event.currentTarget as HTMLElement
+  handle.setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+
+function updatePointerDrop(event: PointerEvent) {
+  const drag = pointerDrag.value
+  if (!drag || drag.pointerId !== event.pointerId) return
+  if (
+    operator.status?.queueOrderRevision !== drag.revision ||
+    operator.status?.queueOrderDigest !== drag.digest
+  ) {
+    cancelPointerDrag(event.pointerId)
+    return
+  }
+  const element = document.elementFromPoint(event.clientX, event.clientY)
+  const row = element?.closest<HTMLElement>('[data-queue-id]')
+  const targetId = row?.dataset.queueId
+  const target = operator.queued.find((candidate) => candidate.id === targetId)
+  const movingIndex = operator.queued.findIndex((candidate) => candidate.id === drag.queueId)
+  const targetIndex = operator.queued.findIndex((candidate) => candidate.id === target?.id)
+  if (!target || movingIndex < 0 || targetIndex < 0 || target.id === drag.queueId) {
+    pointerDrop.value = null
+    return
+  }
+  pointerDrop.value = {
+    queueId: target.id,
+    side: movingIndex < targetIndex ? 'after' : 'before',
+  }
+}
+
+function finishPointerDrag(event: PointerEvent) {
+  if (pointerDrag.value?.pointerId !== event.pointerId) return
+  updatePointerDrop(event)
+  const drag = pointerDrag.value
+  const drop = pointerDrop.value
+  const item = operator.queued.find((candidate) => candidate.id === drag?.queueId)
+  cancelPointerDrag(event.pointerId)
+  if (item && drop && operator.queued.some((candidate) => candidate.id === drop.queueId))
+    void operator.moveQueueItem(item, { targetQueueId: drop.queueId })
+}
+
+watch(
+  () => [operator.status?.queueOrderRevision, operator.status?.queueOrderDigest] as const,
+  () => cancelPointerDrag(),
+)
 </script>
 
 <template>
@@ -165,7 +234,17 @@ const operator = useTabletOperator()
         </div>
         <p v-if="!operator.queue.length">No songs queued.</p>
         <ol v-else>
-          <li v-for="item in operator.queue" :key="item.id" :data-status="item.status">
+          <li
+            v-for="item in operator.queue"
+            :key="item.id"
+            :data-status="item.status"
+            :data-queue-id="item.id"
+            :class="{
+              'drop-before': pointerDrop?.queueId === item.id && pointerDrop.side === 'before',
+              'drop-after': pointerDrop?.queueId === item.id && pointerDrop.side === 'after',
+              'queued-row': item.status === 'queued',
+            }"
+          >
             <div>
               <strong>{{ item.song?.title || 'Requested song' }}</strong
               ><span>{{ item.song?.artist || 'Video requested by a guest' }}</span
@@ -212,6 +291,19 @@ const operator = useTabletOperator()
                 @click="operator.moveQueueItem(item, 'down')"
               >
                 ↓ Down
+              </button>
+              <button
+                type="button"
+                class="quiet reorder-handle"
+                :disabled="operator.busy"
+                :aria-label="`Drag ${item.song?.title || 'song'} to reorder`"
+                @pointerdown="beginPointerDrag($event, item)"
+                @pointermove="updatePointerDrop"
+                @pointerup="finishPointerDrag"
+                @pointercancel="cancelPointerDrag($event.pointerId)"
+                @lostpointercapture="cancelPointerDrag($event.pointerId)"
+              >
+                <span aria-hidden="true">⠿</span>
               </button>
             </div>
           </li>
@@ -476,6 +568,29 @@ input {
   gap: 1rem;
   padding: 1rem 0;
   border-top: 1px solid #483b5b;
+}
+.drawer li.queued-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+.queued-row .reorder-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.drawer li.drop-before {
+  border-top: 3px solid #f3c949;
+}
+.drawer li.drop-after {
+  border-bottom: 3px solid #f3c949;
+}
+.reorder-handle {
+  touch-action: none;
+  cursor: grab;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.reorder-handle:active {
+  cursor: grabbing;
 }
 .drawer span,
 .drawer small {

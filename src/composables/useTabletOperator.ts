@@ -36,6 +36,8 @@ export function useTabletOperator() {
   const failureReason = ref('Skipped by operator')
   let confirmationTrigger: HTMLButtonElement | null = null
   let refreshTimer: ReturnType<typeof setInterval> | undefined
+  let refreshPromise: Promise<boolean> | null = null
+  let refreshAfterFlight: Promise<boolean> | null = null
 
   const queue = computed(() => status.value?.queue || [])
   const playing = computed(() => queue.value.find((item) => item.status === 'playing'))
@@ -178,32 +180,72 @@ export function useTabletOperator() {
       message.value = `${pending.action === 'play' ? 'Play' : 'Pause'} requested; waiting for controller confirmation.`
   }
 
-  async function refresh() {
-    if (!token.value || !partyId.value || refreshing.value) return
-    refreshing.value = true
-    try {
-      const knownCode = partyCode.value
-      status.value = await loadTabletStatus(token.value, partyId.value)
-      if (knownCode && !status.value.party.code) status.value.party.code = knownCode
-      saveSession()
-      reconcilePending()
-      if (partyExpired.value) {
-        message.value = 'This party has expired. Create a new party to continue.'
-        error.value = true
-      } else error.value = false
-    } catch (cause) {
-      const code = (cause as { status?: number }).status
-      if (code === 401 || code === 403) {
-        token.value = null
-        partyId.value = ''
-        status.value = null
-        clearSession()
-        message.value = 'Your tablet session expired. Sign in again.'
-      } else message.value = explain(cause, 'Reconnecting to the latest party state…')
-      error.value = true
-    } finally {
-      refreshing.value = false
+  function refresh(): Promise<void> {
+    return refreshStatus().then(() => undefined)
+  }
+
+  function refreshStatus(): Promise<boolean> {
+    if (!token.value || !partyId.value) return Promise.resolve(false)
+    if (refreshAfterFlight) return refreshAfterFlight
+    if (refreshPromise) {
+      if (!refreshAfterFlight) {
+        const inFlight = refreshPromise
+        refreshAfterFlight = inFlight.then(() => {
+          refreshAfterFlight = null
+          return loadCurrentStatus()
+        })
+      }
+      return refreshAfterFlight
     }
+    return loadCurrentStatus()
+  }
+
+  function loadCurrentStatus() {
+    if (!token.value || !partyId.value) {
+      refreshing.value = false
+      return Promise.resolve(false)
+    }
+    const requestToken = token.value
+    const requestPartyId = partyId.value
+    refreshing.value = true
+    const run: Promise<boolean> = Promise.resolve().then(async () => {
+      try {
+        const knownCode = partyCode.value
+        const nextStatus = await loadTabletStatus(requestToken, requestPartyId)
+        if (token.value !== requestToken || partyId.value !== requestPartyId) return false
+        status.value = nextStatus
+        if (knownCode && !status.value.party.code) status.value.party.code = knownCode
+        saveSession()
+        reconcilePending()
+        if (partyExpired.value) {
+          message.value = 'This party has expired. Create a new party to continue.'
+          error.value = true
+          return false
+        } else {
+          error.value = false
+          return true
+        }
+      } catch (cause) {
+        if (token.value !== requestToken || partyId.value !== requestPartyId) return false
+        const code = (cause as { status?: number }).status
+        if (code === 401 || code === 403) {
+          token.value = null
+          partyId.value = ''
+          status.value = null
+          clearSession()
+          message.value = 'Your tablet session expired. Sign in again.'
+        } else message.value = explain(cause, 'Reconnecting to the latest party state…')
+        error.value = true
+        return false
+      } finally {
+        if (refreshPromise === run) {
+          refreshPromise = null
+          refreshing.value = Boolean(refreshAfterFlight)
+        }
+      }
+    })
+    refreshPromise = run
+    return run
   }
 
   async function restoreActiveParty() {
@@ -367,20 +409,32 @@ export function useTabletOperator() {
     }
   }
 
-  async function moveQueueItem(item: TabletQueueItem, direction: 'up' | 'down') {
+  async function moveQueueItem(
+    item: TabletQueueItem,
+    target: 'up' | 'down' | { targetQueueId: string },
+  ) {
     if (!token.value || !partyId.value || busy.value || item.status !== 'queued') return
     const revision = status.value?.queueOrderRevision
     const digest = status.value?.queueOrderDigest
     if (revision === undefined || !digest) return
     busy.value = true
+    error.value = false
     try {
-      await reorderTabletQueue(token.value, partyId.value, item.id, direction, revision, digest)
-      await refresh()
+      await reorderTabletQueue(token.value, partyId.value, item.id, target, revision, digest)
+      const refreshed = await refreshStatus()
+      if (!refreshed) {
+        message.value =
+          'Queue change saved, but the latest order could not be confirmed. Refresh to check.'
+        error.value = true
+        return
+      }
       message.value = 'Queue order updated.'
       error.value = false
     } catch (cause) {
-      await refresh()
-      message.value = explain(cause, 'Queue order changed elsewhere; the latest state is shown.')
+      const refreshed = await refreshStatus()
+      message.value = refreshed
+        ? explain(cause, 'Queue order changed elsewhere; the latest state is shown.')
+        : 'Queue order is uncertain because the latest state could not be loaded. Refresh to check.'
       error.value = true
     } finally {
       busy.value = false

@@ -33,13 +33,17 @@ export function reorderTabletQueue(
   token: string,
   partyId: string,
   queueId: string,
-  direction: 'up' | 'down',
+  target: 'up' | 'down' | { targetQueueId: string },
   expectedRevision: number,
   expectedDigest: string,
 ) {
+  const selector = typeof target === 'string' ? { direction: target } : target
   return request<{ moved: boolean; revision: number; digest: string }>(
     '/api/karaoke/tablet/queue/reorder',
-    { method: 'POST', body: JSON.stringify({ partyId, queueId, direction, expectedRevision, expectedDigest }) },
+    {
+      method: 'POST',
+      body: JSON.stringify({ partyId, queueId, ...selector, expectedRevision, expectedDigest }),
+    },
     token,
   )
 }

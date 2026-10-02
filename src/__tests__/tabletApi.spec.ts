@@ -22,6 +22,7 @@ import {
   updateApprovalSelection,
   bindAvailableController,
   loadControllerPairingStatus,
+  reorderTabletQueue,
 } from '@/services/tabletApi'
 
 describe('tablet API', () => {
@@ -53,6 +54,33 @@ describe('tablet API', () => {
       action: 'pause',
       idempotencyKey: 'tablet-pause-request-1',
     })
+  })
+
+  it.each([
+    ['up', { direction: 'up' }],
+    ['down', { direction: 'down' }],
+    [{ targetQueueId: 'target-queue' }, { targetQueueId: 'target-queue' }],
+  ] as const)('sends exactly one reorder selector for %j', async (target, selector) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ moved: true, revision: 8, digest: 'after' }), {
+          status: 200,
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await reorderTabletQueue('tablet-token', 'party-1', 'moving-queue', target, 7, 'before')
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/karaoke/tablet/queue/reorder')
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      partyId: 'party-1',
+      queueId: 'moving-queue',
+      ...selector,
+      expectedRevision: 7,
+      expectedDigest: 'before',
+    })
+    expect('direction' in selector && 'targetQueueId' in selector).toBe(false)
   })
 
   it('exposes backend error codes for recovery messaging', async () => {
