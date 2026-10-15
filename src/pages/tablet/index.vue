@@ -310,40 +310,40 @@ watch(
         </ol>
       </section>
     </section>
-    <div v-if="operator.confirmation" class="backdrop" @keydown.esc="operator.dismissConfirmation">
-      <section
-        class="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-heading"
-        tabindex="-1"
-      >
-        <h2 id="confirm-heading">
-          {{
-            operator.confirmation.action === 'completed' ? 'Complete this song?' : 'Skip this song?'
-          }}
-        </h2>
-        <p>
-          {{ operator.confirmation.item.song?.title || 'This song' }} will be marked
-          {{ operator.confirmation.action === 'completed' ? 'complete' : 'skipped' }}.
-        </p>
-        <label v-if="operator.confirmation.action === 'failed'" for="failure-reason">Reason</label
-        ><input
-          v-if="operator.confirmation.action === 'failed'"
-          id="failure-reason"
-          v-model="operator.failureReason"
-          maxlength="160"
-        />
-        <div>
-          <button autofocus type="button" class="quiet" @click="operator.dismissConfirmation">
-            Cancel</button
-          ><button type="button" :disabled="operator.busy" @click="operator.confirmQueueAction">
-            Confirm
-          </button>
-        </div>
-      </section>
-    </div>
   </main>
+  <div v-if="operator.confirmation" class="backdrop" @keydown.esc="operator.dismissConfirmation">
+    <section
+      class="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-heading"
+      tabindex="-1"
+    >
+      <h2 id="confirm-heading">
+        {{
+          operator.confirmation.action === 'completed' ? 'Complete this song?' : 'Skip this song?'
+        }}
+      </h2>
+      <p>
+        {{ operator.confirmation.item.song?.title || 'This song' }} will be marked
+        {{ operator.confirmation.action === 'completed' ? 'complete' : 'skipped' }}.
+      </p>
+      <label v-if="operator.confirmation.action === 'failed'" for="failure-reason">Reason</label
+      ><input
+        v-if="operator.confirmation.action === 'failed'"
+        id="failure-reason"
+        v-model="operator.failureReason"
+        maxlength="160"
+      />
+      <div>
+        <button autofocus type="button" class="quiet" @click="operator.dismissConfirmation">
+          Cancel</button
+        ><button type="button" :disabled="operator.busy" @click="operator.confirmQueueAction">
+          Confirm
+        </button>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style scoped>
@@ -611,6 +611,8 @@ input {
   place-items: center;
   padding: 1rem;
   background: #000a;
+  color: #fff;
+  font-family: system-ui, sans-serif;
 }
 .dialog {
   width: min(100%, 32rem);

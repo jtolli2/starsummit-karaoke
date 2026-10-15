@@ -221,6 +221,8 @@ describe('simplified tablet operator', () => {
     await settle()
     await wrapper.get('.item-actions button').trigger('click')
     expect(wrapper.get('[role="dialog"]').text()).toContain('Complete this song?')
+    expect(wrapper.get('main').attributes('inert')).toBeDefined()
+    expect(wrapper.get('[role="dialog"]').element.closest('[inert]')).toBeNull()
     const confirm = wrapper.get('[role="dialog"] button:not(.quiet)')
     await confirm.trigger('click')
     await confirm.trigger('click')
