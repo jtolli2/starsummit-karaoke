@@ -518,3 +518,16 @@
   were activated and the external volume was preserved. QR payload decoding was local/offline;
   physical camera scanning and Chrome's Open button remain unexercised. No cleanup or unrelated
   catalog, queue, matcher, playback, Wi-Fi, or DNS operation was performed.
+
+## 2026-10-15 — Queue Reordering Reliability and Tablet Touch Drag Handles
+
+- Added atomic target-row moves and tablet touch handles with Up/Down fallback, authoritative
+  post-move refresh, safe stale-snapshot handling, and preservation of playing rows/guest additions.
+  Fixed active-party/controller recovery queries and native confirmation dialog interactivity.
+- Signed main SHA `02c506660f2fb9c326382ef25b7473ef20a5a54c` deployed to retained staging;
+  frontend/API health returned HTTP 200. Validation passed 94 Vue tests, production build, 21 focused pinned
+  PocketBase 0.39.7 checks, and scoped independent reviews.
+- Fire ADB-injected touch verified reorder before and during matched controller-reported playback,
+  later guest addition, Cancel/Confirm, operator-marked completion and post-completion multi-row
+  reorder with refreshed-order preservation. No human-finger, direct TV visual, elapsed progression
+  or natural-end proof. Existing party/data and Lounge material retained; no cleanup.
