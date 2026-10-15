@@ -73,13 +73,13 @@ function ownedControllerIds(store, operatorId) {
     // same persisted rows are visible through the HTTP collection API. Read
     // the bounded grant set and compare the stored operator id explicitly.
     let grants = []
-    try { grants = store.findRecordsByFilter('controller_enrollment_grants', 'redeemed_device != ""', '-created', 10000, 0) || [] } catch (_) {}
+    try { grants = store.findRecordsByFilter('controller_enrollment_grants', 'redeemed_device != ""', '+id', 10000, 0) || [] } catch (_) {}
     // A 0.39.7 transaction wrapper can fail to enumerate this additive
     // collection even though the committed app store can. Fall back only for
     // that read; ownership remains an exact operator-id comparison below and
     // all party/device writes stay in the caller's transaction.
     if (!grants.length && globalThis.$app && globalThis.$app !== store) {
-      try { grants = globalThis.$app.findRecordsByFilter('controller_enrollment_grants', 'redeemed_device != ""', '-created', 10000, 0) || [] } catch (_) {}
+      try { grants = globalThis.$app.findRecordsByFilter('controller_enrollment_grants', 'redeemed_device != ""', '+id', 10000, 0) || [] } catch (_) {}
     }
     const fieldValue = (record, field) => {
       const raw = record && typeof record.get === 'function' ? record.get(field) : record?.[field]
@@ -931,10 +931,10 @@ routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
 // recoverable from their stored hash, so this returns only the safe hint.
 routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, records, id, str, now } = globalThis.__partyQueue
+  const { auth, tablet, json, records, id, str, filterDate } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
-  const active = records('karaoke_parties', 'created_by = {:operator} && status = "active" && expires_at > {:now}', '-expires_at', 1, { operator: id(operator), now: now() })[0] || null
+  const active = records('karaoke_parties', 'created_by = {:operator} && status = "active" && expires_at > {:now}', '-expires_at', 1, { operator: id(operator), now: filterDate() })[0] || null
   if (!active) return c.json(200, { party: null })
   return c.json(200, { party: { id: id(active), codeHint: str(active, 'code_hint'), expiresAt: str(active, 'expires_at'), status: str(active, 'status') } })
 })

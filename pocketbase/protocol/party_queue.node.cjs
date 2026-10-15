@@ -14,9 +14,9 @@ const failureReasonMigration = fs.readFileSync(
 test('tablet active callback resolves now through the reload-safe global contract', () => {
   const endpoint = hook.match(/routerAdd\('GET', '\/api\/karaoke\/tablet\/active',[\s\S]*?\n}\)/)
   assert.ok(endpoint)
-  assert.match(endpoint[0], /const \{ auth, tablet, json, records, id, str, now \} = globalThis\.__partyQueue/)
+  assert.match(endpoint[0], /const \{ auth, tablet, json, records, id, str, filterDate \} = globalThis\.__partyQueue/)
   assert.match(endpoint[0], /expires_at > \{:\s*now\}/)
-  assert.match(endpoint[0], /now\(\)/)
+  assert.match(endpoint[0], /now: filterDate\(\)/)
 })
 
 test('tablet status exposes only anonymous requester labels and a fair-rotation projection', () => {

@@ -238,16 +238,37 @@ test('PocketBase controller protocol authorization and transitions', { skip: !bi
   assert.equal(Object.prototype.hasOwnProperty.call(grantStatusConnected.json, 'session'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(grantStatusConnected.json, 'sessionId'), false)
 
+  const activeExpired = await call('/api/karaoke/parties', 'POST', {}, tabletToken)
+  const otherActiveParty = await call('/api/karaoke/parties', 'POST', {}, otherAuth.json.token)
+  const activeTodayOlder = await call('/api/karaoke/parties', 'POST', {}, tabletToken)
+  const activeTodayLatest = await call('/api/karaoke/parties', 'POST', {}, tabletToken)
+  for (const createdParty of [activeExpired, otherActiveParty, activeTodayOlder, activeTodayLatest]) {
+    assert.equal(createdParty.status, 201, JSON.stringify(createdParty))
+  }
+  const expirationOffsets = [
+    [activeExpired, -1000],
+    [otherActiveParty, 15 * 60 * 1000],
+    [activeTodayOlder, 5 * 60 * 1000],
+    [activeTodayLatest, 10 * 60 * 1000],
+  ]
+  for (const [createdParty, offset] of expirationOffsets) {
+    assert.equal((await call(`/api/collections/karaoke_parties/records/${createdParty.json.id}`, 'PATCH', { expires_at: new Date(Date.now() + offset).toISOString() }, superToken)).status, 200)
+  }
+  const activeUnauthenticated = await call('/api/karaoke/tablet/active', 'GET')
+  assert.equal(activeUnauthenticated.status, 403, JSON.stringify(activeUnauthenticated))
+  const activeParty = await call('/api/karaoke/tablet/active', 'GET', undefined, tabletToken)
+  assert.equal(activeParty.status, 200, JSON.stringify(activeParty))
+  assert.equal(activeParty.json.party.id, activeTodayLatest.json.id)
+
   const party = await call('/api/karaoke/parties', 'POST', {}, tabletToken)
   assert.equal(party.status, 201, JSON.stringify(party))
   const initialPartyStatus = await call(`/api/karaoke/tablet/status?partyId=${party.json.id}`, 'GET', undefined, tabletToken)
   assert.equal(initialPartyStatus.status, 200, JSON.stringify(initialPartyStatus))
-  // Multiple owned live controllers must never be guessed; targeted binding is authoritative.
-  assert.equal(initialPartyStatus.json.controller.device, null)
+  assert.equal(initialPartyStatus.json.controller.device.id, enrolled.json.deviceId)
   const crossOperatorBind = await call('/api/karaoke/tablet/controller/bind', 'POST', { partyId: party.json.id, deviceId: otherEnroll.json.deviceId }, tabletToken)
   assert.equal(crossOperatorBind.status, 409, JSON.stringify(crossOperatorBind))
   assert.equal(crossOperatorBind.json.error, 'controller_target_not_owned')
-  assert.equal((await call(`/api/karaoke/tablet/status?partyId=${party.json.id}`, 'GET', undefined, tabletToken)).json.controller.device, null)
+  assert.equal((await call(`/api/karaoke/tablet/status?partyId=${party.json.id}`, 'GET', undefined, tabletToken)).json.controller.device.id, enrolled.json.deviceId)
   const firstExplicitBind = await call('/api/karaoke/tablet/controller/bind', 'POST', { partyId: party.json.id, deviceId: enrolled.json.deviceId }, tabletToken)
   assert.equal(firstExplicitBind.status, 200, JSON.stringify(firstExplicitBind))
   assert.equal((await call(`/api/karaoke/tablet/status?partyId=${party.json.id}`, 'GET', undefined, tabletToken)).json.controller.device.id, enrolled.json.deviceId)
@@ -258,6 +279,27 @@ test('PocketBase controller protocol authorization and transitions', { skip: !bi
   assert.equal(manualSession.status, 201, JSON.stringify(manualSession))
   const manualState = await call('/api/karaoke/controllers/state', 'PUT', { sessionId: manualSession.json.id, generation: manualSession.json.generation, connectionState: 'connected', videoId: 'dQw4w9WgXcQ', playerState: 'paused', positionSeconds: 0, durationSeconds: 10, lastCommandSequence: 0 }, manualDeviceToken)
   assert.equal(manualState.status, 200, JSON.stringify(manualState))
+  const enrolledStateRecords = await call(`/api/collections/controller_state/records?filter=${encodeURIComponent(`device = "${enrolled.json.deviceId}"`)}`, 'GET', undefined, superToken)
+  assert.equal(enrolledStateRecords.status, 200, JSON.stringify(enrolledStateRecords))
+  assert.equal((await call(`/api/collections/controller_state/records/${enrolledStateRecords.json.items[0].id}`, 'PATCH', { observed_at: new Date(Date.now() - 91 * 1000).toISOString() }, superToken)).status, 200)
+  const implicitParty = await call('/api/karaoke/parties', 'POST', {}, tabletToken)
+  assert.equal(implicitParty.status, 201, JSON.stringify(implicitParty))
+  assert.equal((await call(`/api/collections/karaoke_parties/records/${implicitParty.json.id}`, 'PATCH', { controller_device: null }, superToken)).status, 200)
+  const implicitBind = await call('/api/karaoke/tablet/controller/bind', 'POST', { partyId: implicitParty.json.id }, tabletToken)
+  assert.equal(implicitBind.status, 200, JSON.stringify(implicitBind))
+  const implicitStatus = await call(`/api/karaoke/tablet/status?partyId=${implicitParty.json.id}`, 'GET', undefined, tabletToken)
+  assert.equal(implicitStatus.status, 200, JSON.stringify(implicitStatus))
+  assert.equal(implicitStatus.json.controller.device.id, manualEnroll.json.deviceId)
+  const renewedEnrolledState = await call('/api/karaoke/controllers/state', 'PUT', state, deviceToken)
+  assert.equal(renewedEnrolledState.status, 200, JSON.stringify(renewedEnrolledState))
+  const ambiguousParty = await call('/api/karaoke/parties', 'POST', {}, tabletToken)
+  assert.equal(ambiguousParty.status, 201, JSON.stringify(ambiguousParty))
+  const ambiguousStatus = await call(`/api/karaoke/tablet/status?partyId=${ambiguousParty.json.id}`, 'GET', undefined, tabletToken)
+  assert.equal(ambiguousStatus.status, 200, JSON.stringify(ambiguousStatus))
+  assert.equal(ambiguousStatus.json.controller.device, null)
+  const ambiguousImplicitBind = await call('/api/karaoke/tablet/controller/bind', 'POST', { partyId: ambiguousParty.json.id }, tabletToken)
+  assert.equal(ambiguousImplicitBind.status, 409, JSON.stringify(ambiguousImplicitBind))
+  assert.equal((await call(`/api/karaoke/tablet/status?partyId=${ambiguousParty.json.id}`, 'GET', undefined, tabletToken)).json.controller.device, null)
   const missingBind = await call('/api/karaoke/tablet/controller/bind', 'POST', { partyId: party.json.id, deviceId: 'missing-device' }, tabletToken)
   assert.equal(missingBind.status, 404, JSON.stringify(missingBind))
   const explicitBind = await call('/api/karaoke/tablet/controller/bind', 'POST', { partyId: party.json.id, deviceId: manualEnroll.json.deviceId }, tabletToken)
