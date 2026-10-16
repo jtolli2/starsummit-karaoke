@@ -79,7 +79,7 @@ In Progress — deployed baseline retained; tablet responsiveness and party iden
 
 ### Goals and Status
 
-Implemented, tested and independently reviewed. Human approved scoped commit, push, staging deployment and validation on October 16; release underway.
+Implemented, reviewed, committed, pushed and deployed with October 16 approval. Separate-tab live validation awaits the human signing in to the new tablet view.
 
 - Pick up authoritative Play, Pause, Start and Retry confirmation promptly without manual Refresh.
 - Show the current party's full code, join link and QR after Admin creation, across existing tabs, reloads and signed-in devices.
@@ -108,5 +108,12 @@ Implemented, tested and independently reviewed. Human approved scoped commit, pu
 - Retained migration fixture: `/var/folders/6x/6dxmkdxs5csd5fc3xxrxmmk80000gn/T/karaoke-party-join-code-pb-apns0N`. Android unchanged; previous evidence reused.
 - Assignment and integrated final reviews passed with no blockers. Status 401/403 clears auth but can retain dialog refs; do not claim universal auth-expiry dialog cleanup. Auth guards prevent authenticated mutations afterward.
 - Reviewed ten-file product/test patch: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-implementation.patch`, SHA-256 `90d0275d312a763a50e93dc3b40dceba3b5d25ee03870f88f5fdd6f182c6521d`. Active context is an additional release file. Eight-file unrelated workflow patch remains byte-identical.
-- No follow-up commit, push, deployment or live/device validation performed. Main remains `f29d6aa`; staging remains product `f98728e`. The human now explicitly approved the new party-code migration release and scoped staging validation.
+- Approved follow-up product commit `112a4c12775da80428deffd2871e23a9599fc44a` pushed to main. Deployment `ige6ln1g6yci9c8bbfrqky4s` finished October 16 at21:06:17Z on that exact SHA. Both API health endpoints200; app running:healthy. Live mount reverified unchanged and live schema confirms optional hidden join_code text/max8. Separate authenticated viewer is needed for the remaining live party/playback checks; no validation party or playback mutation performed yet for this release.
 - Release handoff: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-handoff-20261016.md`. Full feature remains In Progress; no completion-history entry while original physical TV observations and follow-up live validation remain pending.
+
+### Approved Follow-up Release Evidence
+
+- Exact reviewed patch reverified before staging. Only ten scoped product/test files plus active context committed; unrelated workflow patch unchanged. API used only to pin SHA (installed CLI lacks the option); deployment triggered through CLI. Raw Compose and live retained volume `xbqbuq8gvckl7r2hgi6yabws-pocketbase-data` verified before and after deployment.
+- Dedicated Starsummit Development Admin remains authenticated. Existing user party9AJJJG85 (empty queue, connected/paused controller) and guestRSYAP8R7 tab preserved. New `/tablet` tab1594097216 shows Sign in; human requested to enter existing constrained credentials directly. Creation held to measure genuine automatic discovery in an already-open tablet view.
+- Fire KFTRWI/trona reverified; companion PID18970 continues. No APK update, process restart, re-pairing or storage change needed.
+- Current release evidence: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-release-20261016.md`. Full feature remains In Progress pending live validation and the previously separate physical-TV observations.
