@@ -16,7 +16,13 @@ const storageKey = 'karaoke:tablet:session'
 const playbackStorageKey = 'karaoke:tablet:pending-playback'
 
 type StoredSession = { token: string; partyId?: string; partyCode?: string }
-type PendingPlayback = { partyId: string; queueId: string; action: 'play' | 'pause'; key: string }
+type PendingPlayback = {
+  partyId: string
+  queueId: string
+  action: 'play' | 'pause' | 'open_video'
+  key: string
+  expiresAt?: string
+}
 export type QueueConfirmation = { item: TabletQueueItem; action: 'completed' | 'failed' }
 
 export function useTabletOperator() {
@@ -81,6 +87,15 @@ export function useTabletOperator() {
     if (!playbackAction.value) return 'Playback state is still unknown.'
     return ''
   })
+  const canRecoverPlayback = computed(() =>
+    Boolean(
+      playing.value &&
+      controllerReady.value &&
+      !busy.value &&
+      !partyExpired.value &&
+      (!controllerMatchesPlaying.value || !['playing', 'paused'].includes(playerState.value)),
+    ),
+  )
   const nowPlayingTitle = computed(() => playing.value?.song?.title || 'No song playing')
   const nowPlayingArtist = computed(() => playing.value?.song?.artist || '')
   const nowPlayingThumbnailUrl = computed(() => {
@@ -156,7 +171,7 @@ export function useTabletOperator() {
       const value = JSON.parse(sessionStorage.getItem(playbackStorageKey) || '') as PendingPlayback
       if (
         value.partyId === partyId.value &&
-        ['play', 'pause'].includes(value.action) &&
+        ['play', 'pause', 'open_video'].includes(value.action) &&
         value.queueId &&
         value.key
       )
@@ -170,14 +185,21 @@ export function useTabletOperator() {
     if (pending.partyId !== partyId.value || pending.queueId !== playing.value?.id)
       return savePending(null)
     const confirmed =
+      controllerReady.value &&
       controllerMatchesPlaying.value &&
       ((pending.action === 'play' && playerState.value === 'playing') ||
-        (pending.action === 'pause' && playerState.value === 'paused'))
+        (pending.action === 'pause' && playerState.value === 'paused') ||
+        (pending.action === 'open_video' && playerState.value === 'playing'))
     if (confirmed) {
       savePending(null)
-      message.value = pending.action === 'play' ? 'Playback resumed.' : 'Playback paused.'
+      message.value =
+        pending.action === 'play'
+          ? 'Playback resumed.'
+          : pending.action === 'pause'
+            ? 'Playback paused.'
+            : 'Selected video confirmed playing.'
     } else
-      message.value = `${pending.action === 'play' ? 'Play' : 'Pause'} requested; waiting for controller confirmation.`
+      message.value = `${pending.action === 'play' ? 'Play' : pending.action === 'pause' ? 'Pause' : 'Video recovery'} requested; waiting for controller confirmation.`
   }
 
   function refresh(): Promise<void> {
@@ -316,7 +338,7 @@ export function useTabletOperator() {
       }
       await transitionQueue(token.value, next.queue.id, 'queued', 'playing')
       await refresh()
-      message.value = `${next.queue.song?.title || 'Song'} is now playing.`
+      message.value = `${next.queue.song?.title || 'Song'} started in the queue; waiting for TV confirmation.`
       error.value = false
     } catch (cause) {
       await refresh()
@@ -349,7 +371,7 @@ export function useTabletOperator() {
     restoreConfirmationFocus()
   }
 
-  function playbackKey(action: 'play' | 'pause') {
+  function playbackKey(action: 'play' | 'pause' | 'open_video') {
     const unique =
       typeof crypto?.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -361,16 +383,54 @@ export function useTabletOperator() {
     const action = playbackAction.value
     if (!token.value || !partyId.value || !action || playbackDisabledReason.value) return
     const existing = pendingPlayback.value
+    const isExpired = existing?.expiresAt && Date.parse(existing.expiresAt) <= Date.now()
     const operation =
       existing?.partyId === partyId.value &&
       existing.queueId === playing.value?.id &&
-      existing.action === action
+      existing.action === action &&
+      !isExpired
         ? existing
         : { partyId: partyId.value, queueId: playing.value!.id, action, key: playbackKey(action) }
+    await submitPlayback(operation)
+  }
+
+  async function retrySelectedPlayback() {
+    if (!token.value || !partyId.value || !playing.value || !canRecoverPlayback.value) return
+    const existing = pendingPlayback.value
+    const isExpired = existing?.expiresAt && Date.parse(existing.expiresAt) <= Date.now()
+    const operation =
+      existing?.partyId === partyId.value &&
+      existing.queueId === playing.value.id &&
+      existing.action === 'open_video' &&
+      !isExpired
+        ? existing
+        : {
+            partyId: partyId.value,
+            queueId: playing.value.id,
+            action: 'open_video' as const,
+            key: playbackKey('open_video'),
+          }
+    await submitPlayback(operation)
+  }
+
+  async function submitPlayback(operation: PendingPlayback) {
     savePending(operation)
     busy.value = true
     try {
-      await issuePlaybackCommand(token.value, partyId.value, action, operation.key)
+      const result = await issuePlaybackCommand(
+        token.value!,
+        partyId.value,
+        operation.action,
+        operation.key,
+      )
+      if (result.status !== 'pending') {
+        savePending(null)
+        message.value =
+          'The prior playback request is complete. Retry the selected video if needed.'
+        await refresh()
+        return
+      }
+      savePending({ ...operation, expiresAt: result.expiresAt })
       await refresh()
     } catch (cause) {
       await refresh()
@@ -497,6 +557,7 @@ export function useTabletOperator() {
     playerState,
     playbackAction,
     playbackDisabledReason,
+    canRecoverPlayback,
     nowPlayingTitle,
     nowPlayingArtist,
     nowPlayingThumbnailUrl,
@@ -510,6 +571,7 @@ export function useTabletOperator() {
     createActiveParty,
     startNext,
     controlPlayback,
+    retrySelectedPlayback,
     openQueueConfirmation,
     dismissConfirmation,
     confirmQueueAction,

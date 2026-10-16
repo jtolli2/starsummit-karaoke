@@ -110,6 +110,9 @@ class ControllerCommandProcessor(
     progressStore.save(progress.copy(sessionId = session.id, generation = session.generation, inFlightId = command.id, inFlightIdempotencyKey = command.idempotencyKey))
     return try {
       executeWithinExpiry(command)
+      if (command.action == ControllerAction.OPEN_VIDEO) {
+        if (!awaitOpenVideoConvergence(command)) return CommandResult.TransientFailure("playback_not_converged")
+      }
       markComplete(session, command, progress)
       CommandResult.Applied
     } catch (deadline: CommandDeadlineExceededException) {
@@ -130,6 +133,12 @@ class ControllerCommandProcessor(
     if (failure is IllegalArgumentException) return CommandResult.Failed("invalid_playback_command")
     if (command.expiresAtEpochMs <= now()) return CommandResult.TransientFailure("command_expired")
     return try {
+      if (command.action == ControllerAction.OPEN_VIDEO) {
+        return if (awaitOpenVideoConvergence(command)) {
+          markComplete(session, command, progress)
+          CommandResult.Duplicate
+        } else CommandResult.TransientFailure("playback_not_converged")
+      }
       val fresh = withRemainingExpiry(command) { executor.refreshNowPlaying() }
       if (isConverged(command, fresh)) {
         markComplete(session, command, progress)
@@ -151,6 +160,23 @@ class ControllerCommandProcessor(
     session: ControllerSession,
     progress: ControllerProgress,
   ): CommandResult {
+    if (command.action == ControllerAction.OPEN_VIDEO) {
+      val fresh = try {
+        withRemainingExpiry(command) { executor.refreshNowPlaying() }
+      } catch (deadline: CommandDeadlineExceededException) {
+        if (!deadline.ambiguous) return CommandResult.Expired
+        null
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (_: Throwable) {
+        null
+      }
+      if (fresh != null && isConverged(command, fresh)) {
+        markComplete(session, command, progress)
+        return CommandResult.Duplicate
+      }
+      return replay(command, session, progress)
+    }
     val fresh = try {
       withRemainingExpiry(command) { executor.refreshNowPlaying() }
     } catch (_: CommandDeadlineExceededException) {
@@ -169,6 +195,9 @@ class ControllerCommandProcessor(
   private suspend fun replay(command: ControllerCommand, session: ControllerSession, progress: ControllerProgress): CommandResult {
     return try {
       executeWithinExpiry(command)
+      if (command.action == ControllerAction.OPEN_VIDEO) {
+        if (!awaitOpenVideoConvergence(command)) return CommandResult.TransientFailure("playback_not_converged")
+      }
       markComplete(session, command, progress)
       CommandResult.Replayed
     } catch (deadline: CommandDeadlineExceededException) {
@@ -183,6 +212,28 @@ class ControllerCommandProcessor(
   private fun classifyFailure(failure: Throwable): CommandResult = when (failure) {
     is IllegalArgumentException -> CommandResult.Failed("invalid_playback_command")
     else -> CommandResult.TransientFailure(failure::class.simpleName ?: "playback_unavailable")
+  }
+
+  private suspend fun awaitOpenVideoConvergence(command: ControllerCommand): Boolean {
+    val initialRemaining = command.expiresAtEpochMs - now()
+    if (initialRemaining <= 0) return false
+    return withTimeoutOrNull(initialRemaining) {
+      while (command.expiresAtEpochMs > now()) {
+        try {
+          val fresh = withRemainingExpiry(command) { executor.refreshNowPlaying() }
+          if (isConverged(command, fresh)) return@withTimeoutOrNull true
+        } catch (_: CommandDeadlineExceededException) {
+          return@withTimeoutOrNull false
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+          throw cancelled
+        } catch (_: Throwable) {
+          if (command.expiresAtEpochMs <= now()) return@withTimeoutOrNull false
+        }
+        val remaining = command.expiresAtEpochMs - now()
+        if (remaining > 0) kotlinx.coroutines.delay(minOf(1_000L, remaining))
+      }
+      false
+    } ?: false
   }
 
   private suspend fun execute(command: ControllerCommand) = when (command.action) {
@@ -218,7 +269,8 @@ class ControllerCommandProcessor(
   }
 
   private fun isConverged(command: ControllerCommand, snapshot: PlaybackSnapshot): Boolean = when (command.action) {
-    ControllerAction.OPEN_VIDEO -> snapshot.videoId == command.videoId
+    ControllerAction.OPEN_VIDEO -> snapshot.videoId == command.videoId &&
+      (snapshot.state.equals("PLAYING", true) || snapshot.state == "1")
     ControllerAction.PLAY -> snapshot.state.equals("PLAYING", true) || snapshot.state == "1"
     ControllerAction.PAUSE -> snapshot.state.equals("PAUSED", true) || snapshot.state == "2"
     ControllerAction.SEEK -> snapshot.positionSeconds != null && abs(snapshot.positionSeconds - command.seekSeconds!!) <= 2.0

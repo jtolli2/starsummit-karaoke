@@ -31,6 +31,7 @@ sealed interface LoungeEvent {
     val positionSeconds: Double?,
     val durationSeconds: Double?,
     val eventId: Long? = null,
+    val videoIdPresent: Boolean = videoId != null,
   ) : LoungeEvent
 }
 
@@ -102,15 +103,18 @@ class LoungeChunkParser {
     if (name.isBlank()) return listOf(LoungeEvent.ProtocolError("missing Lounge event name", eventId))
     val payload = json.optJSONObject("payload") ?: json
     val protocolName = json.optString("c").ifBlank { name }
-    val videoId = payload.optString("videoId", payload.optString("video_id", "")).ifBlank { null }
+    val videoField = if (payload.has("videoId")) "videoId" else "video_id"
+    val videoId = if (!payload.has(videoField) || payload.isNull(videoField)) null else payload.optString(videoField).ifBlank { null }
     val state = payload.optString("state", payload.optString("playerState", "")).ifBlank { null }
-    return if (videoId != null || state != null || payload.has("positionSeconds") || payload.has("currentTime")) {
+    val videoIdPresent = payload.has("videoId") || payload.has("video_id")
+    return if (videoIdPresent || state != null || payload.has("positionSeconds") || payload.has("currentTime")) {
       listOf(LoungeEvent.NowPlaying(
         videoId = videoId,
         state = state,
         positionSeconds = payload.optDoubleOrNull("positionSeconds") ?: payload.optDoubleOrNull("currentTime"),
         durationSeconds = payload.optDoubleOrNull("durationSeconds") ?: payload.optDoubleOrNull("duration"),
         eventId = eventId,
+        videoIdPresent = videoIdPresent,
       ))
     } else {
       listOf(LoungeEvent.Raw(protocolName, payload, eventId))
@@ -161,7 +165,7 @@ class LoungeEventReducer {
   fun reduce(event: LoungeEvent): PlaybackSnapshot {
     if (event is LoungeEvent.NowPlaying) {
       snapshot = snapshot.copy(
-        videoId = event.videoId ?: snapshot.videoId,
+        videoId = if (event.videoIdPresent) event.videoId else snapshot.videoId,
         state = event.state ?: snapshot.state,
         positionSeconds = event.positionSeconds ?: snapshot.positionSeconds,
         durationSeconds = event.durationSeconds ?: snapshot.durationSeconds,

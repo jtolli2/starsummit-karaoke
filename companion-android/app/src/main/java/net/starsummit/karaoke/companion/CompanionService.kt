@@ -28,7 +28,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 
 class CompanionService : Service() {
@@ -351,9 +351,9 @@ class CompanionService : Service() {
     }
   }
 
-  private fun sanitizedControllerState(): SanitizedControllerState {
+  private fun sanitizedControllerState(playbackOverride: PlaybackSnapshot? = null): SanitizedControllerState {
     val diagnostics = diagnosticsStore.snapshot.value
-    val now = diagnostics.nowPlaying
+    val now = playbackOverride ?: diagnostics.nowPlaying
     val progress = controllerStore.loadProgress()
     return SanitizedControllerState(
       connectionState = sanitizeControllerConnectionState(diagnostics.state),
@@ -364,13 +364,32 @@ class CompanionService : Service() {
 
   /** A heartbeat must never race a post-command report and regress playback state. */
   private suspend fun reportControllerState(bridge: PocketBaseControllerBridge) {
-    controllerStateReporter.report { bridge.reportState(sanitizedControllerState()) }
+    controllerStateReporter.report {
+      val generation = sessionGeneration
+      val marker = diagnosticsStore.snapshot.value.playbackRevision
+      val playback = try {
+        (session ?: throw IOException("Lounge unavailable")).getNowPlaying()
+        val fresh = withTimeoutOrNull(CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS) {
+          diagnosticsStore.snapshot.first {
+            it.playbackRevision > marker && it.playbackSessionGeneration == generation
+          }
+        }
+        if (!SessionGenerationGuard.isCurrent(sessionGeneration, generation) ||
+          fresh?.playbackSessionGeneration != generation
+        ) PlaybackSnapshot() else fresh.authoritativeNowPlaying ?: PlaybackSnapshot()
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Throwable) {
+        PlaybackSnapshot()
+      }
+      bridge.reportState(sanitizedControllerState(playback))
+    }
     diagnosticsStore.controllerStateReported()
   }
 
   private inner class LoungeCommandExecutor : CommandExecutor {
     override fun beginCommand(commandId: String, idempotencyKey: String) {
-      commandCorrelation.begin(commandId, idempotencyKey, diagnosticsStore.snapshot.value.playbackRevision)
+      commandCorrelation.begin(diagnosticsStore.snapshot.value.playbackRevision, sessionGeneration)
     }
 
     private suspend fun active(): LoungeSession = session ?: throw IOException("Lounge unavailable")
@@ -381,17 +400,30 @@ class CompanionService : Service() {
     override suspend fun getNowPlaying() { requestNowPlaying() }
     private suspend fun requestNowPlaying() { active().getNowPlaying() }
     override suspend fun refreshNowPlaying(): PlaybackSnapshot {
-      val revision = diagnosticsStore.snapshot.value.playbackRevision
+      val before = diagnosticsStore.snapshot.value
+      val generation = sessionGeneration
+      val marker = commandCorrelation.takeMarkerFor(generation) ?: before.playbackRevision
       requestNowPlaying()
-      return try {
-        withTimeout(CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS) {
-          diagnosticsStore.snapshot.first { it.playbackRevision > revision }.nowPlaying
+      val fresh = withTimeoutOrNull(CONTROLLER_STATE_REFRESH_TIMEOUT_MILLIS) {
+        diagnosticsStore.snapshot.first {
+          it.playbackRevision > marker && it.playbackSessionGeneration == generation
         }
-      } catch (_: TimeoutCancellationException) {
-        val latest = diagnosticsStore.snapshot.value
-        commandCorrelation.accept(latest)
-          ?: throw IOException("Lounge now-playing refresh timed out")
       }
+      if (fresh != null) {
+        if (!SessionGenerationGuard.isCurrent(sessionGeneration, generation) ||
+          fresh.playbackSessionGeneration != generation
+        ) throw IOException("Lounge playback session changed during refresh")
+        return fresh.authoritativeNowPlaying ?: throw IOException("Authoritative playback state unavailable")
+      }
+      if (!SessionGenerationGuard.isCurrent(sessionGeneration, generation)) {
+        throw IOException("Lounge playback session changed during refresh")
+      }
+      val latest = diagnosticsStore.snapshot.value
+      if (latest.playbackSessionGeneration != generation) {
+        throw IOException("Lounge playback session changed during refresh")
+      }
+      return commandCorrelation.accept(latest, generation, marker)
+        ?: throw IOException("Lounge now-playing refresh timed out")
     }
   }
 
@@ -439,14 +471,21 @@ class CompanionService : Service() {
           sessionGeneration = connectionGeneration
           session = connected
           reducer = LoungeEventReducer()
+          diagnosticsStore.beginPlaybackSession(connectionGeneration)
           attempt = 0
           diagnosticsStore.state(ConnectionState.CONNECTED)
           diagnosticsStore.reconnectAttempt(0)
           coroutineScope {
             val eventJob = launch {
               connected.events.collect { event ->
+                if (!SessionGenerationGuard.isCurrent(sessionGeneration, connectionGeneration)) return@collect
                 diagnosticsStore.event(event)
-                diagnosticsStore.nowPlaying(reducer.reduce(event), event is LoungeEvent.NowPlaying)
+                val complete = isCompleteRecognizedPlaybackEvent(event)
+                val reduced = reducer.reduce(event)
+                val playback = if (complete && event is LoungeEvent.NowPlaying) {
+                  PlaybackSnapshot(event.videoId, event.state, event.positionSeconds, event.durationSeconds)
+                } else reduced
+                diagnosticsStore.nowPlaying(playback, complete, connectionGeneration)
               }
             }
             try {
@@ -545,19 +584,22 @@ internal class SerializedControllerStateReporter {
 }
 
 internal class CommandCorrelation {
-  private var identity: Pair<String, String>? = null
-  private var dispatchRevision: Long? = null
+  private var dispatchMarker: Long? = null
+  private var dispatchGeneration: Long? = null
 
-  fun begin(commandId: String, idempotencyKey: String, revision: Long) {
-    val next = commandId to idempotencyKey
-    if (identity != next) {
-      identity = next
-      dispatchRevision = revision
-    }
+  fun begin(revision: Long, generation: Long) {
+    dispatchMarker = revision
+    dispatchGeneration = generation
   }
 
-  fun accept(snapshot: DiagnosticsSnapshot): PlaybackSnapshot? {
-    val marker = dispatchRevision ?: return null
-    return snapshot.nowPlaying.takeIf { snapshot.playbackRevision > marker }
+  fun takeMarkerFor(generation: Long): Long? {
+    if (dispatchGeneration != generation) return null
+    return dispatchMarker.also { dispatchMarker = null }
+  }
+
+  fun accept(snapshot: DiagnosticsSnapshot, generation: Long, marker: Long): PlaybackSnapshot? {
+    return snapshot.authoritativeNowPlaying.takeIf {
+      dispatchGeneration == generation && snapshot.playbackSessionGeneration == generation && snapshot.playbackRevision > marker
+    }
   }
 }

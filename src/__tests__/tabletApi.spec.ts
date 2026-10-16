@@ -56,6 +56,24 @@ describe('tablet API', () => {
     })
   })
 
+  it('sends selected video recovery without a client supplied video id and exposes server expiry', async () => {
+    const expiresAt = '2026-10-15T16:00:00.000Z'
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'command-1', action: 'open_video', sequence: 8, status: 'pending', expiresAt,
+    }), { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await issuePlaybackCommand('tablet-token', 'party-1', 'open_video', 'recovery-key')
+
+    expect(result.expiresAt).toBe(expiresAt)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/karaoke/tablet/controller/playback')
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      partyId: 'party-1',
+      action: 'open_video',
+      idempotencyKey: 'recovery-key',
+    })
+  })
+
   it.each([
     ['up', { direction: 'up' }],
     ['down', { direction: 'down' }],

@@ -90,12 +90,13 @@ test('tablet playback controls are party-scoped, current, monotonic, and idempot
   assert.match(endpoint[0], /created_by'\) !== id\(operator\)/)
   assert.match(endpoint[0], /status = "playing"/)
   assert.match(endpoint[0], /controllerLiveness\(tx, deviceId\)/)
-  assert.match(endpoint[0], /video_id'\) !== str\(song, 'youtube_id'\)/)
+  assert.match(endpoint[0], /str\(controllerState, 'video_id'\) !== videoId/)
   assert.match(endpoint[0], /idempotency_key = \{:key\}/)
   assert.match(endpoint[0], /expectedKeyPrefix = `tablet:\$\{partyId\}:\$\{id\(playing\)\}:\$\{action\}:`/)
   assert.match(endpoint[0], /str\(duplicate, 'issued_by'\) !== id\(operator\)/)
+  assert.match(endpoint[0], /status = "pending"/)
   assert.match(endpoint[0], /action = \{:action\} && status = "pending"/)
-  assert.match(endpoint[0], /idempotency_key'\)\.startsWith\(expectedKeyPrefix\)/)
+  assert.match(endpoint[0], /candidateKey\.startsWith\(expectedKeyPrefix\)/)
   assert.ok(
     endpoint[0].indexOf('idempotency_key = {:key}') <
       endpoint[0].indexOf('const live = controllerLiveness'),
@@ -104,7 +105,7 @@ test('tablet playback controls are party-scoped, current, monotonic, and idempot
   assert.match(endpoint[0], /playback_state_conflict/)
   assert.match(endpoint[0], /command_sequence'\) \+ 1/)
   assert.match(endpoint[0], /set\(command, 'action', action\)/)
-  assert.match(endpoint[0], /setJson\(command, 'payload', \{\}\)/)
+  assert.match(endpoint[0], /setJson\(command, 'payload', action === 'open_video' \? \{ videoId \} : \{\}\)/)
 })
 
 test('controller liveness filter uses the PocketBase-normalized datetime representation', () => {

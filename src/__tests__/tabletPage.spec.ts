@@ -112,6 +112,8 @@ describe('simplified tablet operator', () => {
     })
     expect(wrapper.get('.transport').text()).toContain('Pause')
     expect(wrapper.text()).toContain('Playback resumed.')
+    expect(wrapper.text()).toContain('NOW PLAYING')
+    expect(wrapper.text()).not.toContain('SELECTED SONG')
   })
 
   it('shows pending separately and reuses the same idempotency key after an ambiguous request', async () => {
@@ -147,7 +149,7 @@ describe('simplified tablet operator', () => {
     expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey)
   })
 
-  it('disables transport and names video drift rather than implying controller success', async () => {
+  it('keeps transport disabled on video drift and offers an actionable recovery', async () => {
     sessionStorage.setItem(
       'karaoke:tablet:session',
       JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
@@ -172,7 +174,62 @@ describe('simplified tablet operator', () => {
     const wrapper = mountPage()
     await settle()
     expect(wrapper.text()).toContain('Video mismatch')
+    expect(wrapper.text()).toContain('SELECTED SONG')
+    expect(wrapper.text()).not.toContain('NOW PLAYING')
     expect(wrapper.get('.transport').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.recovery button').text()).toBe('Retry selected video')
+    expect(wrapper.get('.recovery button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('reuses an ambiguous recovery key, then creates a new one after server expiry', async () => {
+    sessionStorage.setItem(
+      'karaoke:tablet:session',
+      JSON.stringify({ token: 'tablet-token', partyId: 'party-1' }),
+    )
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({
+        controller: { connected: true, connectionState: 'connected', state: { playerState: 'paused', videoId: 'other-video' } },
+      })), { status: 200 }))
+      .mockRejectedValueOnce(new TypeError('lost response'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({
+        controller: { connected: true, connectionState: 'connected', state: { playerState: 'paused', videoId: 'other-video' } },
+      })), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'expired-command', action: 'open_video', status: 'pending', expiresAt: new Date(Date.now() - 1).toISOString(),
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({
+        controller: { connected: true, connectionState: 'connected', state: { playerState: 'paused', videoId: 'other-video' } },
+      })), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'new-command', action: 'open_video', status: 'pending', expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(status({
+        controller: { connected: true, connectionState: 'connected', state: { playerState: 'paused', videoId: 'other-video' } },
+      })), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await settle()
+
+    await wrapper.get('.recovery button').trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('Playback was uncertain; retry will reuse the same request.')
+    expect(wrapper.get('.recovery button').attributes('disabled')).toBeUndefined()
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))
+
+    await wrapper.get('.recovery button').trigger('click')
+    await settle()
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body))
+
+    await wrapper.get('.recovery button').trigger('click')
+    await settle()
+    const thirdBody = JSON.parse(String((fetchMock.mock.calls[5]?.[1] as RequestInit).body))
+
+    expect(firstBody).toMatchObject({ partyId: 'party-1', action: 'open_video' })
+    expect(secondBody).toMatchObject({ partyId: 'party-1', action: 'open_video' })
+    expect(secondBody.idempotencyKey).toBe(firstBody.idempotencyKey)
+    expect(thirdBody.idempotencyKey).not.toBe(firstBody.idempotencyKey)
+    expect(wrapper.text()).toContain('Video mismatch')
+    expect(wrapper.text()).not.toContain('Playback confirmed')
   })
 
   it('offers simple no-party recovery and keeps advanced administration intentional', async () => {

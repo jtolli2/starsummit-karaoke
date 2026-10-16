@@ -234,14 +234,15 @@ export function bindAvailableController(token: string, partyId: string, deviceId
 export function issuePlaybackCommand(
   token: string,
   partyId: string,
-  action: 'play' | 'pause',
+  action: 'play' | 'pause' | 'open_video',
   idempotencyKey: string,
 ) {
   return request<{
     id: string
-    action: 'play' | 'pause'
+    action: 'play' | 'pause' | 'open_video'
     sequence: number
     status: string
+    expiresAt: string
     idempotent?: boolean
   }>(
     '/api/karaoke/tablet/controller/playback',

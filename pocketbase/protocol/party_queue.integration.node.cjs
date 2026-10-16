@@ -30,12 +30,12 @@ test('party lifecycle authorization and expiry on PocketBase 0.39.7', { skip: !p
   assert.equal((await call('/api/karaoke/parties/join', 'POST', { code: expired.json.code })).status, 410)
   const joinA = await call('/api/karaoke/parties/join', 'POST', { code: created.json.code }); const joinB = await call('/api/karaoke/parties/join', 'POST', { code: created.json.code }); assert.equal(joinA.status, 201); assert.equal(joinB.status, 201)
   assert.equal((await call('/api/karaoke/parties/queue', 'GET', undefined, joinA.json.credential)).status, 200)
-  const approvedSong = { artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source' }
+  const approvedSong = { artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source', mb_match_status: 'not_attempted' }
   const songs = await Promise.all(['dQw4w9WgXcQ', '9bZkp7q19f0', 'J---aiyznGQ'].map((youtube_id, i) => call('/api/collections/karaoke_songs/records', 'POST', { ...approvedSong, youtube_id, title: `Song ${i}` }, su.json.token)))
   songs.forEach((s) => assert.equal(s.status, 200, JSON.stringify(s)))
-  const ineligible = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'Zi_XLOBDo_Y', title: 'Unapproved song', artist: 'Test', eligible: false, classification: 'karaoke', review_status: 'unreviewed', identity_status: 'verified_source' }, su.json.token)
+  const ineligible = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'Zi_XLOBDo_Y', title: 'Unapproved song', artist: 'Test', eligible: false, classification: 'karaoke', review_status: 'unreviewed', identity_status: 'verified_source', mb_match_status: 'not_attempted' }, su.json.token)
   assert.equal(ineligible.status, 200, JSON.stringify(ineligible))
-  const grant = await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 }, su.json.token); assert.equal(grant.status, 201)
+  const grant = await call('/api/karaoke/controllers/enrollment-grants', 'POST', { ttlMinutes: 5 }, tablet.json.token); assert.equal(grant.status, 201)
   const enrolled = await call('/api/karaoke/controllers/enroll', 'POST', { token: grant.json.token, deviceName: 'queue tablet' }); assert.equal(enrolled.status, 201)
   assert.equal((await call(`/api/collections/karaoke_parties/records/${created.json.id}`, 'PATCH', { controller_device: enrolled.json.deviceId }, su.json.token)).status, 200)
   const deviceAuth = await call('/api/collections/controller_devices/auth-with-password', 'POST', { identity: enrolled.json.deviceKey, password: enrolled.json.deviceSecret }); assert.equal(deviceAuth.status, 200)
@@ -73,6 +73,179 @@ test('party lifecycle authorization and expiry on PocketBase 0.39.7', { skip: !p
   assert.equal(Object.prototype.hasOwnProperty.call(tabletStatus.json.controller, 'session'), false)
   const commands = await call(`/api/karaoke/controllers/commands?sessionId=${session.json.id}&generation=${session.json.generation}&after=0`, 'GET', undefined, deviceToken); assert.equal(commands.status, 200); assert.ok(commands.json.commands.some((c) => c.idempotencyKey === `queue-start-${reqA.json.id}`))
   assert.equal((await call('/api/karaoke/queue/transition', 'POST', { queueId: reqA.json.id, from: 'queued', to: 'playing' }, tablet.json.token)).json.idempotent, true)
+  const queueStart = commands.json.commands.find((command) => command.idempotencyKey === `queue-start-${reqA.json.id}`)
+  const deviceBeforeBuriedReplay = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  const unrelatedCommands = await Promise.all(Array.from({ length: 45 }, (_, index) => call(
+    '/api/collections/controller_commands/records',
+    'POST',
+    {
+      device: enrolled.json.deviceId,
+      session_generation: session.json.generation,
+      sequence: queueStart.sequence + index + 1,
+      idempotency_key: `unrelated-open-video-${index}`,
+      action: 'open_video',
+      payload: { videoId: '9bZkp7q19f0' },
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      status: 'pending',
+      issued_by: user.json.id,
+    },
+    su.json.token,
+  )))
+  assert.ok(unrelatedCommands.every((result) => result.status === 200), JSON.stringify(unrelatedCommands.filter((result) => result.status !== 200)))
+  const newestSequence = queueStart.sequence + unrelatedCommands.length
+  const sequenceUpdate = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'PATCH', {
+    command_sequence: newestSequence,
+  }, su.json.token)
+  assert.equal(sequenceUpdate.status, 200, JSON.stringify(sequenceUpdate))
+  const partyQueueBeforeRecovery = (await call(`/api/karaoke/tablet/status?partyId=${created.json.id}`, 'GET', undefined, tablet.json.token)).json
+  const recoveryKey = `tablet:${created.json.id}:${reqA.json.id}:open_video:recover-1`
+  const recoveryBody = { partyId: created.json.id, action: 'open_video', idempotencyKey: recoveryKey }
+  const concurrentRecovery = await Promise.all([
+    call('/api/karaoke/tablet/controller/playback', 'POST', recoveryBody, tablet.json.token),
+    call('/api/karaoke/tablet/controller/playback', 'POST', recoveryBody, tablet.json.token),
+  ])
+  assert.deepEqual(concurrentRecovery.map((result) => result.status).sort(), [200, 200])
+  assert.equal(concurrentRecovery[0].json.id, queueStart.id)
+  assert.equal(concurrentRecovery[1].json.id, queueStart.id)
+  assert.equal(concurrentRecovery[0].json.idempotent, true)
+  assert.equal(concurrentRecovery[0].json.action, 'open_video')
+  const deviceAfterBuriedReplay = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  assert.equal(deviceBeforeBuriedReplay.json.command_sequence, queueStart.sequence)
+  assert.equal(deviceAfterBuriedReplay.json.command_sequence, newestSequence)
+  const secondRecoveryKey = `tablet:${created.json.id}:${reqA.json.id}:open_video:recover-2`
+  const secondRecovery = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: secondRecoveryKey,
+  }, tablet.json.token)
+  assert.equal(secondRecovery.status, 200, JSON.stringify(secondRecovery))
+  assert.equal(secondRecovery.json.id, queueStart.id)
+  const storedQueueStart = await call(`/api/collections/controller_commands/records/${queueStart.id}`, 'GET', undefined, su.json.token)
+  assert.equal(storedQueueStart.status, 200, JSON.stringify(storedQueueStart))
+  assert.equal(concurrentRecovery[0].json.expiresAt, new Date(storedQueueStart.json.expires_at).toISOString())
+  const queueStartPayload = storedQueueStart.json.payload
+  assert.equal(queueStartPayload.videoId, 'dQw4w9WgXcQ')
+  const terminalAck = await call(`/api/karaoke/controllers/commands/${queueStart.id}/ack`, 'POST', {
+    sessionId: session.json.id,
+    generation: session.json.generation,
+    status: 'succeeded',
+  }, deviceToken)
+  assert.equal(terminalAck.status, 200, JSON.stringify(terminalAck))
+  const canonicalConflictKey = `tablet:${created.json.id}:${reqA.json.id}:open_video:canonical-conflict`
+  const partyQueueAfterRecovery = (await call(`/api/karaoke/tablet/status?partyId=${created.json.id}`, 'GET', undefined, tablet.json.token)).json
+  assert.deepEqual(partyQueueAfterRecovery.queue.map((item) => [item.id, item.status]), partyQueueBeforeRecovery.queue.map((item) => [item.id, item.status]))
+  assert.equal(partyQueueAfterRecovery.party.joinCount, partyQueueBeforeRecovery.party.joinCount)
+  const wrongQueueKey = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: `tablet:${created.json.id}:${reqB.json.id}:open_video:wrong-queue`,
+  }, tablet.json.token)
+  assert.equal(wrongQueueKey.status, 409)
+  assert.equal(wrongQueueKey.json.error, 'invalid_idempotency_scope')
+  const pauseKey = `tablet:${created.json.id}:${reqA.json.id}:pause:pause-1`
+  const pause = await call('/api/karaoke/tablet/controller/playback', 'POST', { partyId: created.json.id, action: 'pause', idempotencyKey: pauseKey }, tablet.json.token)
+  const equivalentPause = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'pause',
+    idempotencyKey: `tablet:${created.json.id}:${reqA.json.id}:pause:pause-2`,
+  }, tablet.json.token)
+  assert.equal(pause.status, 201, JSON.stringify(pause))
+  assert.equal(equivalentPause.status, 200, JSON.stringify(equivalentPause))
+  assert.equal(equivalentPause.json.id, pause.json.id)
+  const replayPause = await call('/api/karaoke/tablet/controller/playback', 'POST', { partyId: created.json.id, action: 'pause', idempotencyKey: pauseKey }, tablet.json.token)
+  assert.equal(replayPause.json.id, pause.json.id)
+  assert.equal(replayPause.json.idempotent, true)
+  assert.equal((await call(`/api/collections/controller_commands/records/${queueStart.id}`, 'PATCH', { expires_at: new Date(Date.now() - 1000).toISOString() }, su.json.token)).status, 200)
+  const expiredRecovery = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: `tablet:${created.json.id}:${reqA.json.id}:open_video:recover-expired`,
+  }, tablet.json.token)
+  assert.equal(expiredRecovery.status, 201, JSON.stringify(expiredRecovery))
+  assert.notEqual(expiredRecovery.json.id, queueStart.id)
+  const deviceBeforeExactReplay = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  const exactRecoveryReplay = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: `tablet:${created.json.id}:${reqA.json.id}:open_video:recover-expired`,
+  }, tablet.json.token)
+  const deviceAfterExactReplay = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  assert.equal(exactRecoveryReplay.status, 200, JSON.stringify(exactRecoveryReplay))
+  assert.equal(exactRecoveryReplay.json.id, expiredRecovery.json.id)
+  assert.equal(exactRecoveryReplay.json.idempotent, true)
+  assert.equal(deviceAfterExactReplay.json.command_sequence, deviceBeforeExactReplay.json.command_sequence)
+  const wrongGenerationCommand = await call(`/api/collections/controller_commands/records/${expiredRecovery.json.id}`, 'PATCH', { session_generation: session.json.generation + 1 }, su.json.token)
+  assert.equal(wrongGenerationCommand.status, 200, JSON.stringify(wrongGenerationCommand))
+  const wrongGenerationRecovery = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: `tablet:${created.json.id}:${reqA.json.id}:open_video:recover-wrong-generation`,
+  }, tablet.json.token)
+  assert.equal(wrongGenerationRecovery.status, 201, JSON.stringify(wrongGenerationRecovery))
+  assert.notEqual(wrongGenerationRecovery.json.id, expiredRecovery.json.id)
+  assert.equal((await call(`/api/collections/controller_commands/records/${wrongGenerationRecovery.json.id}`, 'PATCH', { status: 'failed' }, su.json.token)).status, 200)
+  const deviceBeforeCanonicalConflict = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  const canonicalTargetConflict = await call('/api/collections/controller_commands/records', 'POST', {
+    device: enrolled.json.deviceId,
+    session_generation: session.json.generation,
+    sequence: Number(deviceBeforeCanonicalConflict.json.command_sequence) + 1,
+    action: 'open_video',
+    payload: { videoId: '9bZkp7q19f0' },
+    idempotency_key: canonicalConflictKey,
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    status: 'pending',
+    issued_by: user.json.id,
+  }, su.json.token)
+  assert.equal(canonicalTargetConflict.status, 200, JSON.stringify(canonicalTargetConflict))
+  assert.equal((await call(`/api/collections/controller_state/records/${savedStates.json.items[0].id}`, 'PATCH', { observed_at: new Date(Date.now() - 91 * 1000).toISOString() }, su.json.token)).status, 200)
+  const deviceBeforeTerminalAliases = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  const terminalAliasReplays = await Promise.all([recoveryKey, secondRecoveryKey].map((idempotencyKey) => call(
+    '/api/karaoke/tablet/controller/playback',
+    'POST',
+    { partyId: created.json.id, action: 'open_video', idempotencyKey },
+    tablet.json.token,
+  )))
+  assert.deepEqual(terminalAliasReplays.map((result) => result.status), [200, 200])
+  assert.deepEqual(terminalAliasReplays.map((result) => result.json.id), [queueStart.id, queueStart.id])
+  assert.deepEqual(terminalAliasReplays.map((result) => result.json.status), ['succeeded', 'succeeded'])
+  const deviceAfterTerminalAliases = await call(`/api/collections/controller_devices/records/${enrolled.json.deviceId}`, 'GET', undefined, su.json.token)
+  assert.equal(deviceAfterTerminalAliases.json.command_sequence, deviceBeforeTerminalAliases.json.command_sequence)
+  const genericQueueStartReplay = await call('/api/karaoke/controller-commands', 'POST', {
+    deviceId: enrolled.json.deviceId,
+    action: 'open_video',
+    payload: { videoId: 'dQw4w9WgXcQ' },
+    idempotencyKey: `queue-start-${reqA.json.id}`,
+  }, tablet.json.token)
+  assert.equal(genericQueueStartReplay.status, 200, JSON.stringify(genericQueueStartReplay))
+  assert.equal(genericQueueStartReplay.json.id, queueStart.id)
+  const targetConflictingReplay = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: canonicalConflictKey,
+  }, tablet.json.token)
+  assert.equal(targetConflictingReplay.status, 409)
+  assert.equal(targetConflictingReplay.json.error, 'idempotency_conflict')
+  const originalAfterConflict = await call(`/api/collections/controller_commands/records/${queueStart.id}`, 'GET', undefined, su.json.token)
+  assert.equal(originalAfterConflict.json.idempotency_key, `queue-start-${reqA.json.id}`)
+  assert.equal(originalAfterConflict.json.payload.videoId, 'dQw4w9WgXcQ')
+  const staleControllerRecovery = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: `tablet:${created.json.id}:${reqA.json.id}:open_video:stale-controller`,
+  }, tablet.json.token)
+  assert.equal(staleControllerRecovery.status, 409)
+  assert.equal(staleControllerRecovery.json.error, 'controller_unavailable')
+  const otherUser = await call('/api/collections/users/records', 'POST', {
+    email: 'other-tablet@test.invalid', password: 'TabletPassword123!', passwordConfirm: 'TabletPassword123!', role: 'tablet_admin',
+  }, su.json.token)
+  assert.equal(otherUser.status, 200, JSON.stringify(otherUser))
+  const otherTablet = await call('/api/collections/users/auth-with-password', 'POST', {
+    identity: 'other-tablet@test.invalid', password: 'TabletPassword123!',
+  })
+  assert.equal(otherTablet.status, 200)
+  const foreignPartyRecovery = await call('/api/karaoke/tablet/controller/playback', 'POST', recoveryBody, otherTablet.json.token)
+  assert.equal(foreignPartyRecovery.status, 404)
+  assert.equal(foreignPartyRecovery.json.error, 'party_not_found')
   const joinC = await call('/api/karaoke/parties/join', 'POST', { code: created.json.code }); const joinD = await call('/api/karaoke/parties/join', 'POST', { code: created.json.code }); assert.equal(joinC.status, 201); assert.equal(joinD.status, 201)
   const race = await Promise.all([
     call('/api/karaoke/requests', 'POST', { credential: joinC.json.credential, youtubeId: 'J---aiyznGQ' }),
@@ -82,6 +255,13 @@ test('party lifecycle authorization and expiry on PocketBase 0.39.7', { skip: !p
   assert.equal((await call(`/api/collections/karaoke_parties/records/${created.json.id}`, 'PATCH', { expires_at: new Date(Date.now() - 1000).toISOString() }, su.json.token)).status, 200)
   const expiredTransition = await call('/api/karaoke/queue/transition', 'POST', { queueId: reqA.json.id, from: 'playing', to: 'completed' }, tablet.json.token)
   assert.equal(expiredTransition.status, 410); assert.equal(expiredTransition.json.error, 'party_expired')
+  const expiredPartyRecovery = await call('/api/karaoke/tablet/controller/playback', 'POST', {
+    partyId: created.json.id,
+    action: 'open_video',
+    idempotencyKey: `tablet:${created.json.id}:${reqA.json.id}:open_video:expired-party`,
+  }, tablet.json.token)
+  assert.equal(expiredPartyRecovery.status, 410)
+  assert.equal(expiredPartyRecovery.json.error, 'party_expired')
   assert.equal((await call('/api/collections/karaoke_queue/records/' + reqA.json.id, 'GET', undefined, su.json.token)).json.status, 'playing')
 })
 
@@ -91,7 +271,7 @@ test('tablet reorder swaps manual order and rejects stale snapshots on PocketBas
   const port = 19900 + Math.floor(Math.random() * 100); const server = spawn(bin, ['serve', '--dir', dataDir, `--http=127.0.0.1:${port}`], { stdio: 'ignore' }); t.after(() => server.kill('SIGTERM')); const base = `http://127.0.0.1:${port}`; for (let i = 0; i < 50; i++) { try { if ((await fetch(`${base}/api/health`)).ok) break } catch (_) {} await new Promise((r) => setTimeout(r, 100)) }
   const call = async (url, method, payload, token) => { const response = await fetch(base + url, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: payload === undefined ? undefined : JSON.stringify(payload) }); let json = {}; try { json = await response.json() } catch (_) {} return { status: response.status, json } }
   const su = await call('/api/collections/_superusers/auth-with-password', 'POST', { identity: 'reorder@test.invalid', password: 'CorrectHorseBatteryStaple123!' }); const user = await call('/api/collections/users/records', 'POST', { email: 'reorder-tablet@test.invalid', password: 'TabletPassword123!', passwordConfirm: 'TabletPassword123!', role: 'tablet_admin' }, su.json.token); const tablet = await call('/api/collections/users/auth-with-password', 'POST', { identity: 'reorder-tablet@test.invalid', password: 'TabletPassword123!' }); assert.equal(user.status, 200); assert.equal(tablet.status, 200)
-  const party = await call('/api/karaoke/parties', 'POST', {}, tablet.json.token); const songs = await Promise.all(['dQw4w9WgXcQ', '9bZkp7q19f0', 'J---aiyznGQ'].map((youtube_id, i) => call('/api/collections/karaoke_songs/records', 'POST', { youtube_id, title: `Reorder ${i}`, artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source' }, su.json.token))); const guests = await Promise.all([1, 2, 3].map(() => call('/api/karaoke/parties/join', 'POST', { code: party.json.code }))); const requests = await Promise.all(guests.slice(0, 2).map((guest, i) => call('/api/karaoke/requests', 'POST', { youtubeId: songs[i].json.youtube_id }, guest.json.credential))); requests.forEach((request) => assert.equal(request.status, 201, JSON.stringify(request)))
+  const party = await call('/api/karaoke/parties', 'POST', {}, tablet.json.token); const songs = await Promise.all(['dQw4w9WgXcQ', '9bZkp7q19f0', 'J---aiyznGQ'].map((youtube_id, i) => call('/api/collections/karaoke_songs/records', 'POST', { youtube_id, title: `Reorder ${i}`, artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source', mb_match_status: 'not_attempted' }, su.json.token))); const guests = await Promise.all([1, 2, 3].map(() => call('/api/karaoke/parties/join', 'POST', { code: party.json.code }))); const requests = await Promise.all(guests.slice(0, 2).map((guest, i) => call('/api/karaoke/requests', 'POST', { youtubeId: songs[i].json.youtube_id }, guest.json.credential))); requests.forEach((request) => assert.equal(request.status, 201, JSON.stringify(request)))
   const snapshot = await call(`/api/karaoke/tablet/status?partyId=${party.json.id}`, 'GET', undefined, tablet.json.token); assert.equal(snapshot.status, 200); const first = snapshot.json.queue[0]; const second = snapshot.json.queue[1]
   const concurrent = await call('/api/karaoke/requests', 'POST', { youtubeId: songs[2].json.youtube_id }, guests[2].json.credential); assert.equal(concurrent.status, 201, JSON.stringify(concurrent))
   const stale = await call('/api/karaoke/tablet/queue/reorder', 'POST', { partyId: party.json.id, queueId: second.id, direction: 'up', expectedRevision: snapshot.json.queueOrderRevision, expectedDigest: snapshot.json.queueOrderDigest }, tablet.json.token); assert.equal(stale.status, 409); assert.equal(stale.json.error, 'stale_reorder')
@@ -134,7 +314,7 @@ test('guest realtime wake is party-scoped and payload-free on PocketBase 0.39.7'
   const tablet = await call('/api/collections/users/auth-with-password', 'POST', { identity: 'wake-tablet@test.invalid', password: 'TabletPassword123!' }); assert.equal(tablet.status, 200)
   const partyA = await call('/api/karaoke/parties', 'POST', {}, tablet.json.token); const partyB = await call('/api/karaoke/parties', 'POST', {}, tablet.json.token); assert.equal(partyA.status, 201); assert.equal(partyB.status, 201)
   const guestA = await call('/api/karaoke/parties/join', 'POST', { code: partyA.json.code }); const guestB = await call('/api/karaoke/parties/join', 'POST', { code: partyB.json.code }); assert.equal(guestA.status, 201); assert.equal(guestB.status, 201)
-  const song = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'dQw4w9WgXcQ', title: 'Wake song', artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source' }, su.json.token); assert.equal(song.status, 200)
+  const song = await call('/api/collections/karaoke_songs/records', 'POST', { youtube_id: 'dQw4w9WgXcQ', title: 'Wake song', artist: 'Test', eligible: true, classification: 'karaoke', review_status: 'approved', identity_status: 'verified_source', mb_match_status: 'not_attempted' }, su.json.token); assert.equal(song.status, 200)
 
   const invalid = await connect('not-a-guest-credential'); const invalidResult = await subscribe(invalid.clientId, 'not-a-guest-credential', ['karaoke_party_wake']); assert.equal(invalidResult.status, 403); invalid.abort.abort()
   const unsupported = await connect(guestA.json.credential); const unsupportedResult = await subscribe(unsupported.clientId, guestA.json.credential, ['karaoke_party_wake', 'karaoke_queue/*']); assert.equal(unsupportedResult.status, 403); unsupported.abort.abort()

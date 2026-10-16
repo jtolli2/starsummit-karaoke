@@ -373,6 +373,19 @@ class LoungeProtocolTest {
   }
 
   @Test
+  fun explicitFreshIdleEventClearsPreviouslyObservedVideoIdentity() {
+    val reducer = LoungeEventReducer()
+    reducer.reduce(LoungeEvent.NowPlaying("video", "PLAYING", 3.0, 100.0))
+
+    val idle = reducer.reduce(
+      LoungeEvent.NowPlaying(null, "IDLE", null, null, videoIdPresent = true),
+    )
+
+    assertNull(idle.videoId)
+    assertEquals("IDLE", idle.state)
+  }
+
+  @Test
   fun backoffIsExponentialAndBounded() {
     assertEquals(1_000L, ReconnectBackoff.delayMillis(0))
     assertEquals(2_000L, ReconnectBackoff.delayMillis(1))

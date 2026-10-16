@@ -944,14 +944,21 @@ routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
 // by its active party through the bound, fresh controller session.
 routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, body, str, id, set, setJson, num, future, activeParty, controllerLiveness } = globalThis.__partyQueue
+  const { auth, tablet, json, body, str, id, set, setJson, jsonValue, requiredJsonValue, num, future, filterDate, activeParty, controllerLiveness } = globalThis.__partyQueue
   const operator = auth(c)
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const input = body(c)
   const partyId = String(input.partyId || '')
   const action = String(input.action || '')
   const idempotencyKey = String(input.idempotencyKey || '')
-  if (!partyId || !['play', 'pause'].includes(action)) return json(c, 422, 'invalid_playback_action', 'Party and play or pause action are required')
+  const expiresAtUtc = (command) => {
+    const value = str(command, 'expires_at')
+    const timestamp = value.includes(' ') ? value.replace(' ', 'T') : value
+    const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`
+    const parsed = new Date(normalized)
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString()
+  }
+  if (!partyId || !['play', 'pause', 'open_video'].includes(action)) return json(c, 422, 'invalid_playback_action', 'Party and playback action are required')
   if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) return json(c, 422, 'invalid_idempotency_key', 'Playback idempotency key is invalid')
   try {
     let result
@@ -962,39 +969,111 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       let playing = null
       try { playing = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && status = "playing"', { party: partyId }) } catch (_) {}
       if (!playing) throw new Error('nothing_playing')
+      const song = tx.findRecordById('karaoke_songs', str(playing, 'song'))
+      if (!song) throw new Error('nothing_playing')
+      const videoId = str(song, 'youtube_id')
 
       const deviceId = str(party, 'controller_device')
       const expectedKeyPrefix = `tablet:${partyId}:${id(playing)}:${action}:`
       if (!idempotencyKey.startsWith(expectedKeyPrefix)) throw new Error('invalid_idempotency_scope')
       let device = null
       try { device = deviceId ? tx.findRecordById('controller_devices', deviceId) : null } catch (_) {}
+      const recoveryAliasField = (key) => {
+        if (typeof $security === 'undefined' || !$security.sha256) throw new Error('recovery_key_hash_unavailable')
+        return `k_${$security.sha256(String(key))}`
+      }
 
       // Resolve an exact durable replay before consulting volatile playback
       // state. This prevents an ambiguous client retry from creating a second
       // command merely because the first command already changed that state.
       let duplicate = null
-      try { duplicate = deviceId ? tx.findFirstRecordByFilter('controller_commands', 'device = {:device} && idempotency_key = {:key}', { device: deviceId, key: idempotencyKey }) : null } catch (_) {}
+      try {
+        if (deviceId) {
+          const exact = tx.findRecordsByFilter('controller_commands', 'device = {:device} && idempotency_key = {:key}', '+sequence', 1, 0, { device: deviceId, key: idempotencyKey })
+          duplicate = exact[0] || null
+        }
+      } catch (error) {
+        if (action === 'open_video') throw error
+      }
       if (duplicate) {
         if (str(duplicate, 'action') !== action || str(duplicate, 'issued_by') !== id(operator)) throw new Error('idempotency_conflict')
-        result = { id: id(duplicate), action, sequence: num(duplicate, 'sequence'), status: str(duplicate, 'status'), idempotent: true }
+        if (action === 'open_video') {
+          let matchesTarget = false
+          try { matchesTarget = requiredJsonValue(duplicate, 'payload').videoId === videoId } catch (_) {}
+          if (!matchesTarget) throw new Error('idempotency_conflict')
+        }
+        result = { id: id(duplicate), action, sequence: num(duplicate, 'sequence'), status: str(duplicate, 'status'), expiresAt: expiresAtUtc(duplicate), idempotent: true }
         return
+      }
+
+      if (action === 'open_video') {
+        const commands = tx.findCollectionByNameOrId('controller_commands')
+        if (!commands || !commands.fields.getByName('recovery_keys')) throw new Error('recovery_keys_unavailable')
+        const aliasKey = recoveryAliasField(idempotencyKey)
+        const aliases = tx.findRecordsByFilter(
+          'controller_commands',
+          `device = {:device} && action = "open_video" && recovery_keys.${aliasKey} = true`,
+          '-sequence', 1, 0, { device: deviceId },
+        )
+        const candidate = aliases[0] || null
+        if (candidate) {
+          const candidateKey = str(candidate, 'idempotency_key')
+          const inQueueScope = candidateKey === `queue-start-${id(playing)}` || candidateKey.startsWith(expectedKeyPrefix)
+          const payload = requiredJsonValue(candidate, 'payload')
+          if (str(candidate, 'issued_by') !== id(operator) || str(candidate, 'action') !== 'open_video' ||
+            !inQueueScope || payload.videoId !== videoId
+          ) throw new Error('idempotency_conflict')
+          result = { id: id(candidate), action: 'open_video', sequence: num(candidate, 'sequence'), status: str(candidate, 'status'), expiresAt: expiresAtUtc(candidate), idempotent: true }
+          return
+        }
       }
 
       const live = controllerLiveness(tx, deviceId)
       const controllerState = live?.state || null
       const generation = live?.generation || 0
       if (!live) throw new Error('controller_unavailable')
-      const song = tx.findRecordById('karaoke_songs', str(playing, 'song'))
-      if (!song || str(controllerState, 'video_id') !== str(song, 'youtube_id')) throw new Error('controller_state_mismatch')
-      const playerState = str(controllerState, 'player_state')
-      if ((action === 'play' && playerState !== 'paused') || (action === 'pause' && playerState !== 'playing')) throw new Error('playback_state_conflict')
+      if (action !== 'open_video') {
+        if (str(controllerState, 'video_id') !== videoId) throw new Error('controller_state_mismatch')
+        const playerState = str(controllerState, 'player_state')
+        if ((action === 'play' && playerState !== 'paused') || (action === 'pause' && playerState !== 'playing')) throw new Error('playback_state_conflict')
+      }
       let equivalentPending = null
       try {
-        const pendingCommands = tx.findRecordsByFilter('controller_commands', 'device = {:device} && issued_by = {:operator} && action = {:action} && status = "pending"', '-sequence', 20, 0, { device: deviceId, operator: id(operator), action })
-        equivalentPending = pendingCommands.find((candidate) => str(candidate, 'idempotency_key').startsWith(expectedKeyPrefix)) || null
-      } catch (_) {}
+        if (action !== 'open_video') {
+          const pendingCommands = tx.findRecordsByFilter('controller_commands', 'device = {:device} && issued_by = {:operator} && action = {:action} && status = "pending"', '-sequence', 20, 0, { device: deviceId, operator: id(operator), action })
+          equivalentPending = pendingCommands.find((candidate) => str(candidate, 'idempotency_key').startsWith(expectedKeyPrefix)) || null
+        } else {
+          const pageSize = 40
+          let offset = 0
+          const filter = 'device = {:device} && issued_by = {:operator} && action = "open_video" && status = "pending" && session_generation = {:generation} && expires_at > {:now}'
+          const params = { device: deviceId, operator: id(operator), generation, now: filterDate() }
+          while (!equivalentPending) {
+            const page = tx.findRecordsByFilter('controller_commands', filter, '-sequence', pageSize, offset, params)
+            equivalentPending = page.find((candidate) => {
+              const candidateKey = str(candidate, 'idempotency_key')
+              const payload = requiredJsonValue(candidate, 'payload')
+              return payload.videoId === videoId && (
+                candidateKey === `queue-start-${id(playing)}` ||
+                candidateKey.startsWith(expectedKeyPrefix)
+              )
+            }) || null
+            if (page.length < pageSize) break
+            offset += page.length
+          }
+        }
+      } catch (error) {
+        if (action === 'open_video') throw error
+      }
       if (equivalentPending) {
-        result = { id: id(equivalentPending), action, sequence: num(equivalentPending, 'sequence'), status: str(equivalentPending, 'status'), idempotent: true }
+        if (action === 'open_video') {
+          const rawAliases = equivalentPending.get('recovery_keys')
+          const aliases = String(rawAliases) === 'null' ? {} : requiredJsonValue(equivalentPending, 'recovery_keys')
+          if (!aliases || typeof aliases !== 'object' || Array.isArray(aliases)) throw new Error('recovery_keys_invalid')
+          aliases[recoveryAliasField(idempotencyKey)] = true
+          setJson(equivalentPending, 'recovery_keys', aliases)
+          tx.save(equivalentPending)
+        }
+        result = { id: id(equivalentPending), action: str(equivalentPending, 'action'), sequence: num(equivalentPending, 'sequence'), status: str(equivalentPending, 'status'), expiresAt: expiresAtUtc(equivalentPending), idempotent: true }
         return
       }
 
@@ -1007,12 +1086,12 @@ routerAdd('POST', '/api/karaoke/tablet/controller/playback', (c) => {
       set(command, 'sequence', sequence)
       set(command, 'idempotency_key', idempotencyKey)
       set(command, 'action', action)
-      setJson(command, 'payload', {})
+      setJson(command, 'payload', action === 'open_video' ? { videoId } : {})
       set(command, 'expires_at', future(30000))
       set(command, 'status', 'pending')
       set(command, 'issued_by', id(operator))
       tx.save(command)
-      result = { id: id(command), action, sequence, status: 'pending', idempotent: false }
+      result = { id: id(command), action, sequence, status: 'pending', expiresAt: expiresAtUtc(command), idempotent: false }
     })
     return c.json(result.idempotent ? 200 : 201, result)
   } catch (error) {

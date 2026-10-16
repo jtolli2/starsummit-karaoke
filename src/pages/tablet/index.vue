@@ -151,7 +151,15 @@ watch(
                 : undefined
             "
           >
-            <p class="eyebrow">NOW PLAYING</p>
+            <p class="eyebrow">
+              {{
+                operator.controllerReady &&
+                operator.controllerMatchesPlaying &&
+                operator.playerState === 'playing'
+                  ? 'NOW PLAYING'
+                  : 'SELECTED SONG'
+              }}
+            </p>
             <h2 id="now-heading">{{ operator.nowPlayingTitle }}</h2>
             <p v-if="operator.nowPlayingArtist">{{ operator.nowPlayingArtist }}</p>
             <p v-if="!operator.playing">Choose Start next when the queue has a song.</p>
@@ -166,8 +174,14 @@ watch(
               by the controller.
             </p>
             <p v-if="operator.pendingPlayback" class="pending">
-              {{ operator.pendingPlayback.action === 'play' ? 'Play' : 'Pause' }} requested —
-              waiting for controller confirmation.
+              {{
+                operator.pendingPlayback.action === 'play'
+                  ? 'Play'
+                  : operator.pendingPlayback.action === 'pause'
+                    ? 'Pause'
+                    : 'Selected video recovery'
+              }}
+              requested — waiting for controller confirmation.
             </p>
           </section>
           <div class="control-actions">
@@ -202,6 +216,12 @@ watch(
               <span>{{ operator.queued.length }}</span>
             </button>
           </div>
+        </section>
+        <section v-if="operator.canRecoverPlayback" class="recovery">
+          <p>The controller has not confirmed the selected video as playing.</p>
+          <button type="button" :disabled="operator.busy" @click="operator.retrySelectedPlayback">
+            {{ operator.busy ? 'Requesting…' : 'Retry selected video' }}
+          </button>
         </section>
         <section v-if="operator.partyExpired" class="recovery">
           <h2>This party has expired</h2>

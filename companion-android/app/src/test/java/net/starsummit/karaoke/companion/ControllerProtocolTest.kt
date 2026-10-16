@@ -20,6 +20,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -632,7 +633,7 @@ class ControllerProtocolTest {
       override suspend fun getNowPlaying() { calls += "now" }
       override suspend fun refreshNowPlaying(): PlaybackSnapshot {
         calls += "now"
-        return PlaybackSnapshot("dQw4w9WgXcQ")
+        return PlaybackSnapshot("dQw4w9WgXcQ", "PLAYING")
       }
     }
     val store = InMemoryProgressStore(ControllerProgress("session", 4, 2, "cmd-1", "key-1"))
@@ -640,6 +641,110 @@ class ControllerProtocolTest {
     val command = ControllerCommand("cmd-1", 1, "key-1", ControllerAction.OPEN_VIDEO, "dQw4w9WgXcQ", expiresAtEpochMs = future)
     assertEquals(CommandResult.Duplicate, processor.process(command, session, PlaybackSnapshot("dQw4w9WgXcQ")))
     assertEquals(listOf("now"), calls)
+  }
+
+  @Test
+  fun successfulOpenWaitsForFreshTargetPlayingObservation() = runTest {
+    val observations = ArrayDeque(
+      listOf(
+        PlaybackSnapshot(videoId = "different-video", state = "PLAYING"),
+        PlaybackSnapshot(state = "PLAYING"),
+        PlaybackSnapshot(videoId = "dQw4w9WgXcQ", state = "PAUSED"),
+        PlaybackSnapshot(videoId = "dQw4w9WgXcQ", state = "PLAYING"),
+      ),
+    )
+    var sends = 0
+    var refreshes = 0
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) { sends++ }
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying(): PlaybackSnapshot {
+        refreshes++
+        return observations.removeFirst()
+      }
+    }
+    val progress = InMemoryProgressStore()
+    val command = ControllerCommand(
+      "open", 1, "open-key", ControllerAction.OPEN_VIDEO, "dQw4w9WgXcQ", expiresAtEpochMs = 10_000,
+    )
+
+    val result = ControllerCommandProcessor(executor, progress, { 0 }).process(command, session, PlaybackSnapshot(
+      videoId = "dQw4w9WgXcQ", state = "PLAYING",
+    ))
+
+    assertEquals(CommandResult.Applied, result)
+    assertEquals(1, sends)
+    assertEquals(4, refreshes)
+    assertEquals(1, progress.load().lastCommandSequence)
+    assertNull(progress.load().inFlightId)
+  }
+
+  @Test
+  fun successfulOpenWithoutConvergenceExpiresWithoutCompleting() = runTest {
+    var refreshes = 0
+    var sends = 0
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) { sends++ }
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying(): PlaybackSnapshot {
+        refreshes++
+        if (refreshes == 5) throw IOException("Lounge refresh unavailable")
+        return when (refreshes % 4) {
+          1 -> PlaybackSnapshot(videoId = "other-video", state = "PLAYING")
+          2 -> PlaybackSnapshot(state = "PLAYING")
+          3 -> PlaybackSnapshot(videoId = "dQw4w9WgXcQ")
+          else -> PlaybackSnapshot(videoId = "dQw4w9WgXcQ", state = "BUFFERING")
+        }
+      }
+    }
+    val progress = InMemoryProgressStore()
+    val command = ControllerCommand(
+      "open", 1, "open-key", ControllerAction.OPEN_VIDEO, "dQw4w9WgXcQ", expiresAtEpochMs = 3_000,
+    )
+
+    val result = ControllerCommandProcessor(executor, progress, { 0 }).process(command, session, PlaybackSnapshot(
+      videoId = "dQw4w9WgXcQ", state = "PLAYING",
+    ))
+
+    assertEquals(CommandResult.TransientFailure("playback_not_converged"), result)
+    assertEquals(1, sends)
+    assertTrue(refreshes > 1)
+    assertEquals(0, progress.load().lastCommandSequence)
+    assertEquals("open", progress.load().inFlightId)
+  }
+
+  @Test
+  fun successfulOpenWithUnavailableRefreshExpiresWithoutObservation() = runTest {
+    var refreshes = 0
+    var sends = 0
+    val executor = object : CommandExecutor {
+      override suspend fun openVideo(videoId: String) { sends++ }
+      override suspend fun play() = Unit
+      override suspend fun pause() = Unit
+      override suspend fun seek(seconds: Double) = Unit
+      override suspend fun getNowPlaying() = Unit
+      override suspend fun refreshNowPlaying(): PlaybackSnapshot {
+        refreshes++
+        throw IOException("Lounge unavailable")
+      }
+    }
+    val progress = InMemoryProgressStore()
+    val command = ControllerCommand(
+      "open", 1, "open-key", ControllerAction.OPEN_VIDEO, "dQw4w9WgXcQ", expiresAtEpochMs = 3_000,
+    )
+
+    val result = ControllerCommandProcessor(executor, progress, { 0 }).process(command, session, PlaybackSnapshot())
+
+    assertEquals(CommandResult.TransientFailure("playback_not_converged"), result)
+    assertEquals(1, sends)
+    assertTrue(refreshes > 1)
+    assertEquals("open", progress.load().inFlightId)
   }
 
   @Test
@@ -1745,7 +1850,7 @@ class ControllerProtocolTest {
     var nowPlaying = PlaybackSnapshot()
     val executor = object : CommandExecutor {
       override suspend fun openVideo(videoId: String) {
-        nowPlaying = PlaybackSnapshot(videoId = videoId)
+        nowPlaying = PlaybackSnapshot(videoId = videoId, state = "PLAYING")
         throw IOException("response timeout after open")
       }
       override suspend fun play() = Unit
@@ -1767,15 +1872,25 @@ class ControllerProtocolTest {
   @Test
   fun timedOutRefreshAcceptsOnlyObservationAfterDispatchMarker() {
     val target = PlaybackSnapshot(videoId = "WEuuVs4SrSA", positionSeconds = 30.0)
-    val observed = DiagnosticsSnapshot(nowPlaying = target, playbackRevision = 8)
+    val observed = DiagnosticsSnapshot(
+      nowPlaying = target,
+      authoritativeNowPlaying = target,
+      playbackRevision = 8,
+      playbackSessionGeneration = 3,
+    )
     val correlation = CommandCorrelation()
-    assertEquals(null, correlation.accept(observed))
-    correlation.begin("cmd", "key", revision = 7)
-    assertEquals(target, correlation.accept(observed))
-    correlation.begin("cmd", "key", revision = 99)
-    assertEquals(target, correlation.accept(observed))
-    correlation.begin("next", "next-key", revision = 8)
-    assertEquals(null, correlation.accept(observed))
+    assertEquals(null, correlation.takeMarkerFor(generation = 3))
+    correlation.begin(revision = 7, generation = 3)
+    val marker = correlation.takeMarkerFor(generation = 3)
+    assertEquals(7L, marker)
+    assertEquals(target, correlation.accept(observed, generation = 3, marker = marker!!))
+    assertEquals(null, correlation.takeMarkerFor(generation = 3))
+    correlation.begin(revision = 99, generation = 3)
+    val tooNewMarker = correlation.takeMarkerFor(generation = 3)
+    assertEquals(null, correlation.accept(observed, generation = 3, marker = tooNewMarker!!))
+    correlation.begin(revision = 7, generation = 4)
+    val otherGenerationMarker = correlation.takeMarkerFor(generation = 4)
+    assertEquals(null, correlation.accept(observed, generation = 4, marker = otherGenerationMarker!!))
   }
 
   @Test
@@ -1792,7 +1907,7 @@ class ControllerProtocolTest {
     bridge.establish()
     val executor = object : CommandExecutor {
       override suspend fun openVideo(videoId: String) {
-        nowPlaying = PlaybackSnapshot(videoId = videoId)
+        nowPlaying = PlaybackSnapshot(videoId = videoId, state = "PLAYING")
         throw IOException("open response timeout")
       }
       override suspend fun play() = Unit
@@ -1831,12 +1946,14 @@ class ControllerProtocolTest {
     bridge.establish()
     fun executor() = object : CommandExecutor {
       override fun beginCommand(commandId: String, idempotencyKey: String) {
-        correlation.begin(commandId, idempotencyKey, observed.playbackRevision)
+        correlation.begin(observed.playbackRevision, session.generation)
       }
       override suspend fun openVideo(videoId: String) {
         observed = observed.copy(
-          nowPlaying = PlaybackSnapshot(videoId = videoId),
+          nowPlaying = PlaybackSnapshot(videoId = videoId, state = "PLAYING"),
+          authoritativeNowPlaying = PlaybackSnapshot(videoId = videoId, state = "PLAYING"),
           playbackRevision = observed.playbackRevision + 1,
+          playbackSessionGeneration = session.generation,
         )
         throw IOException("response timeout")
       }
@@ -1844,8 +1961,11 @@ class ControllerProtocolTest {
       override suspend fun pause() = Unit
       override suspend fun seek(seconds: Double) = Unit
       override suspend fun getNowPlaying() = Unit
-      override suspend fun refreshNowPlaying() = correlation.accept(observed)
-        ?: throw IOException("uncorrelated state")
+      override suspend fun refreshNowPlaying(): PlaybackSnapshot {
+        val marker = correlation.takeMarkerFor(session.generation) ?: throw IOException("uncorrelated state")
+        return correlation.accept(observed, session.generation, marker)
+          ?: throw IOException("uncorrelated state")
+      }
     }
     val command = ControllerCommand("open", 1, "open-key", ControllerAction.OPEN_VIDEO, "WEuuVs4SrSA", expiresAtEpochMs = future)
     assertEquals(
@@ -1854,13 +1974,15 @@ class ControllerProtocolTest {
     )
     assertEquals(1, acknowledgements)
 
-    correlation.begin("new", "new-key", observed.playbackRevision)
-    assertEquals(null, correlation.accept(observed))
-    assertEquals(null, CommandCorrelation().accept(observed))
+    correlation.begin(observed.playbackRevision, session.generation)
+    val nextMarker = correlation.takeMarkerFor(session.generation)
+    assertEquals(null, correlation.accept(observed, session.generation, nextMarker!!))
+    assertEquals(null, CommandCorrelation().takeMarkerFor(session.generation))
   }
 
   @Test
   fun cachedConvergedStateWithoutFreshEventIsNotAcknowledged() = runTest {
+    val clock = System.currentTimeMillis()
     var acknowledgements = 0
     val progress = InMemoryProgressStore(ControllerProgress("session", 4, 0, "cmd", "key"))
     val bridge = PocketBaseControllerBridge(
@@ -1868,7 +1990,7 @@ class ControllerProtocolTest {
       connectingRealtime(),
       progress,
       ControllerCredentials("https://karaoke.example", "key", "secret"),
-      now = { future - 1 },
+      now = { clock },
     )
     bridge.establish()
     val executor = object : CommandExecutor {
@@ -1878,12 +2000,14 @@ class ControllerProtocolTest {
       override suspend fun seek(seconds: Double) = Unit
       override suspend fun getNowPlaying() = throw IOException("no correlated state event")
     }
-    val command = ControllerCommand("cmd", 1, "key", ControllerAction.PLAY, expiresAtEpochMs = future)
+    val command = ControllerCommand(
+      "cmd", 1, "key", ControllerAction.OPEN_VIDEO, "dQw4w9WgXcQ", expiresAtEpochMs = clock + 25,
+    )
     try {
       bridge.processCommand(
-        ControllerCommandProcessor(executor, progress, { future - 1 }),
+        ControllerCommandProcessor(executor, progress, { clock }),
         command,
-        PlaybackSnapshot(state = "PLAYING"),
+        PlaybackSnapshot(videoId = "dQw4w9WgXcQ", state = "PLAYING"),
       )
       throw AssertionError("expected transient refresh failure")
     } catch (_: AmbiguousCommandException) {

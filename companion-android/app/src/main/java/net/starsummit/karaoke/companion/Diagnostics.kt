@@ -16,7 +16,9 @@ data class DiagnosticsSnapshot(
   val lastErrorRedacted: String? = null,
   val reconnectAttempt: Int = 0,
   val nowPlaying: PlaybackSnapshot = PlaybackSnapshot(),
+  val authoritativeNowPlaying: PlaybackSnapshot? = null,
   val playbackRevision: Long = 0,
+  val playbackSessionGeneration: Long? = null,
   val controllerAttemptCount: Int = 0,
   val controllerEndpointHost: String? = null,
   val controllerPhase: String? = null,
@@ -199,12 +201,30 @@ class DiagnosticsStore {
       state = if (value == 0) mutable.value.state else ConnectionState.RECONNECTING,
     )
   }
-  fun nowPlaying(value: PlaybackSnapshot, authoritative: Boolean = false) {
+  fun beginPlaybackSession(generation: Long) {
     mutable.value = mutable.value.copy(
-      nowPlaying = value,
-      playbackRevision = mutable.value.playbackRevision + if (authoritative) 1 else 0,
+      nowPlaying = PlaybackSnapshot(),
+      authoritativeNowPlaying = null,
+      playbackSessionGeneration = generation,
     )
   }
+  fun nowPlaying(value: PlaybackSnapshot, authoritative: Boolean = false, sessionGeneration: Long? = null) {
+    mutable.value = mutable.value.copy(
+      nowPlaying = value,
+      authoritativeNowPlaying = value.takeIf { authoritative } ?: mutable.value.authoritativeNowPlaying,
+      playbackRevision = mutable.value.playbackRevision + if (authoritative) 1 else 0,
+      playbackSessionGeneration = sessionGeneration ?: mutable.value.playbackSessionGeneration,
+    )
+  }
+}
+
+internal fun isCompleteRecognizedPlaybackEvent(event: LoungeEvent): Boolean {
+  if (event !is LoungeEvent.NowPlaying) return false
+  if (!event.videoIdPresent) return false
+  val videoId = event.videoId
+  if (videoId != null && !Regex("^[A-Za-z0-9_-]{11}$").matches(videoId)) return false
+  val state = event.state?.uppercase() ?: return false
+  return state in setOf("0", "1", "2", "3", "PLAYING", "PAUSED", "BUFFERING", "ENDED")
 }
 
 internal fun sanitizeControllerRealtimeEventName(value: String): String {
