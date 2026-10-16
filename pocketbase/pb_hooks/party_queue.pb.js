@@ -595,18 +595,19 @@ onRecordAfterUpdateSuccess((e) => {
 routerAdd('POST', '/api/karaoke/parties', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { PARTY_TTL, auth, tablet, json, find, code, hash, set, future, id, str, availableControllers } = globalThis.__partyQueue
-  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const operator = auth(c)
+  if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   let result
   try {
     $app.runInTransaction((tx) => {
       let plain; let party
       for (let i = 0; i < 8; i++) { plain = code(); if (!find('karaoke_parties', 'code_hash = {:hash}', { hash: hash(plain) })) break }
       party = new Record(tx.findCollectionByNameOrId('karaoke_parties'))
-      set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(auth(c))); set(party, 'join_count', 0)
+      set(party, 'code_hash', hash(plain)); set(party, 'code_hint', plain.slice(-4)); set(party, 'join_code', plain); set(party, 'status', 'active'); set(party, 'expires_at', future(PARTY_TTL)); set(party, 'created_by', id(operator)); set(party, 'join_count', 0)
       // Never guess between multiple enrolled devices. A single retained,
       // operator-owned controller with a current connected state can safely
       // become the party controller.
-      const controllers = availableControllers(tx, id(auth(c)))
+      const controllers = availableControllers(tx, id(operator))
       if (controllers.length === 1) set(party, 'controller_device', id(controllers[0].device))
       tx.save(party)
       result = { id: id(party), code: plain, expiresAt: str(party, 'expires_at') }
@@ -841,8 +842,9 @@ routerAdd('GET', '/api/karaoke/queue/next', (c) => {
 // rules remain locked and no controller credentials or Lounge data are sent.
 routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
-  const { auth, tablet, json, info, find, records, id, str, num, queueOrderDigest, tabletQueueView, tabletControllerView } = globalThis.__partyQueue
-  if (!tablet(auth(c))) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
+  const { auth, tablet, json, info, find, records, id, str, num, queueOrderDigest, tabletQueueView, tabletControllerView, activeParty } = globalThis.__partyQueue
+  const operator = auth(c)
+  if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const partyId = info(c).query?.partyId
   if (Array.isArray(partyId) ? !partyId[0] : !partyId) return json(c, 400, 'invalid_party', 'partyId is required')
   const party = find('karaoke_parties', 'id = {:id}', { id: Array.isArray(partyId) ? partyId[0] : partyId })
@@ -850,7 +852,7 @@ routerAdd('GET', '/api/karaoke/tablet/status', (c) => {
   const rows = records('karaoke_queue', 'party = {:party} && (status = "queued" || status = "playing")', '+sequence', 500, { party: id(party) })
   const queue = tabletQueueView(rows)
   return c.json(200, {
-    party: { id: id(party), status: str(party, 'status'), expiresAt: str(party, 'expires_at'), codeHint: str(party, 'code_hint'), joinCount: Number(party.join_count || 0) || (party.getInt ? party.getInt('join_count') : 0) },
+    party: { id: id(party), status: str(party, 'status'), expiresAt: str(party, 'expires_at'), codeHint: str(party, 'code_hint'), ...(str(party, 'created_by') === id(operator) && activeParty(party) && str(party, 'join_code') ? { code: str(party, 'join_code') } : {}), joinCount: Number(party.join_count || 0) || (party.getInt ? party.getInt('join_count') : 0) },
     queue,
     queueOrderRevision: num(party, 'queue_sequence'),
     queueOrderDigest: queueOrderDigest(rows),
@@ -927,8 +929,8 @@ routerAdd('POST', '/api/karaoke/tablet/controller/bind', (c) => {
   }
 })
 
-// Reload recovery for a tablet account.  Party codes are intentionally not
-// recoverable from their stored hash, so this returns only the safe hint.
+// Reload recovery returns the join code only for the owning operator's active,
+// unexpired party. Legacy parties without a retained code still return the hint.
 routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
   try { require(__hooks + '/party_queue.pb.js') } catch (_) {}
   const { auth, tablet, json, records, id, str, filterDate } = globalThis.__partyQueue
@@ -936,7 +938,7 @@ routerAdd('GET', '/api/karaoke/tablet/active', (c) => {
   if (!tablet(operator)) return json(c, 403, 'forbidden', 'tablet_admin authentication required')
   const active = records('karaoke_parties', 'created_by = {:operator} && status = "active" && expires_at > {:now}', '-expires_at', 1, { operator: id(operator), now: filterDate() })[0] || null
   if (!active) return c.json(200, { party: null })
-  return c.json(200, { party: { id: id(active), codeHint: str(active, 'code_hint'), expiresAt: str(active, 'expires_at'), status: str(active, 'status') } })
+  return c.json(200, { party: { id: id(active), codeHint: str(active, 'code_hint'), ...(str(active, 'created_by') === id(operator) && str(active, 'join_code') ? { code: str(active, 'join_code') } : {}), expiresAt: str(active, 'expires_at'), status: str(active, 'status') } })
 })
 
 // Party-scoped transport controls. The browser never receives a controller

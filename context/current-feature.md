@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress — deployed and device validation advanced; physical TV observations pending
+In Progress — deployed baseline retained; tablet responsiveness and party identity follow-up underway
 
 ## Goals
 
@@ -74,3 +74,39 @@ In Progress — deployed and device validation advanced; physical TV observation
 - Preserve all unrelated tracked workflow edits/untracked workflow and runbook files; retained volume, parties/guests/queues/catalog/matcher state, enrollment/Lounge material and all browser tabs. No deletion/cleanup, Wi-Fi testing, production cutover or next feature authorized.
 
 - Operational documentation independently reviewed after snapshot wording correction: pass, no findings. Pre-existing eight-file workflow patch rechecked byte-for-byte unchanged. This closeout context update changes no product behavior; staging remains pinned to reviewed product SHA `f98728e`.
+
+## October 16 Follow-up: Tablet Confirmation and Party Identity
+
+### Goals and Status
+
+Implemented, tested and independently reviewed. Human approved scoped commit, push, staging deployment and validation on October 16; release underway.
+
+- Pick up authoritative Play, Pause, Start and Retry confirmation promptly without manual Refresh.
+- Show the current party's full code, join link and QR after Admin creation, across existing tabs, reloads and signed-in devices.
+- Human chose preserving legacy links until expiry. Lost codes for old hash-only parties cannot be reconstructed; do not reset or rotate them.
+
+### Implementation Decisions
+
+- Baseline: main `f29d6aa`, Vue 96/96 passing. The user's physical observation confirms that commands act immediately and manual Refresh already sees confirmation; it does not establish the earlier natural-end goals.
+- Both operator routes previously made one immediate status read, then waited 15 seconds. Both stored party context in tab-local sessionStorage and kept loading that saved party instead of discovering the latest active one.
+- Both now retain the immediate read and run sequential background status checks about once per second, for up to 30 seconds, after accepted or ambiguous playback actions. Controls release request busy promptly, pending retries reuse their key, and only authoritative matching playback clears confirmation.
+- Mount, focus and five-second background discovery use the established latest-expiry owned-party selection. Token, party and action-generation guards reject old responses. A true party switch clears old pending operations/dialogs, cancels polling and releases only the action's own busy state. This also protects existing queue transitions and reordering during automatic switches.
+- Party creation now saves an optional hidden eight-character `karaoke_parties.join_code`. Existing active/status routes return the existing optional `party.code` only to the owner while active and unexpired. Status access otherwise stays unchanged. Old hashes, links and guest identities remain intact; missing legacy codes are omitted rather than serialized as null.
+- Parent owns integration. Explorer, planner, coder, independent Vue/backend testers, assignment review and integrated final review completed. All unrelated workflow changes remain untouched.
+
+### Minimal Delta and Contracts
+
+- Current consumers: `/tablet` through `useTabletOperator`, and Advanced Admin through its existing page logic and `tabletApi`. No new props, emits, shared lifecycle abstraction, endpoint, realtime topic, collection, role or Android contract.
+- Only new persistence is `join_code`, required because a hash cannot recover the code on another device or after local state is lost. Migration `1785002000_party_join_code.js` is additive, optional, hidden, add-if-absent and has a no-op rollback. Direct collection rules remain locked.
+- Preserve guest validation, queue fairness/order, no automatic advancement, pairing/enrollment, Lounge material, volume bindings, catalog and YouTube quota. No code rotation, backfill, reset, cleanup or production change.
+
+### Validation and Readiness
+
+- Independent seven-file Vue suite: 110/110. Includes delayed confirmation without ACK optimism, bounded polling and cleanup, actionable ambiguous retry, fresh code/link/QR recovery, active-party switching, held-response races, dialog dismissal and the existing 13 reorder regressions.
+- `bun run build` passed typecheck and Vite build; targeted Prettier and whitespace checks passed.
+- Pinned PocketBase 0.39.7 focused manifest: 24/24, no skips. Includes existing controller/freshness/party checks and `party_join_code.integration.node.cjs`: actual pre-field fixture migration preservation and repeat application; owner/foreign/guest/expiry disclosure boundaries; recovery after reauthentication; latest-party selection; legacy link joins before expiry and rejection afterward.
+- Retained migration fixture: `/var/folders/6x/6dxmkdxs5csd5fc3xxrxmmk80000gn/T/karaoke-party-join-code-pb-apns0N`. Android unchanged; previous evidence reused.
+- Assignment and integrated final reviews passed with no blockers. Status 401/403 clears auth but can retain dialog refs; do not claim universal auth-expiry dialog cleanup. Auth guards prevent authenticated mutations afterward.
+- Reviewed ten-file product/test patch: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-implementation.patch`, SHA-256 `90d0275d312a763a50e93dc3b40dceba3b5d25ee03870f88f5fdd6f182c6521d`. Active context is an additional release file. Eight-file unrelated workflow patch remains byte-identical.
+- No follow-up commit, push, deployment or live/device validation performed. Main remains `f29d6aa`; staging remains product `f98728e`. The human now explicitly approved the new party-code migration release and scoped staging validation.
+- Release handoff: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-handoff-20261016.md`. Full feature remains In Progress; no completion-history entry while original physical TV observations and follow-up live validation remain pending.

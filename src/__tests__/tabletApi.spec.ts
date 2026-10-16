@@ -141,11 +141,23 @@ describe('tablet API', () => {
   })
 
   it('uses the tablet-scoped active-party recovery route', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ party: null }), { status: 200 }))
+    const party = {
+      id: 'party-new',
+      code: 'NEW12345',
+      codeHint: '2345',
+      status: 'active',
+      expiresAt: '2099-01-01T00:00:00Z',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ party }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    await loadActiveParty('tablet-token')
+    const result = await loadActiveParty('tablet-token')
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/karaoke/tablet/active')
-    expect(new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('authorization')).toBe('Bearer tablet-token')
+    expect(
+      new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('authorization'),
+    ).toBe('Bearer tablet-token')
+    expect(result.party).toEqual(party)
   })
 
   it('uses the catalog review contract and pagination response fields', async () => {

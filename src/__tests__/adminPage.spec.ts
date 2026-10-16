@@ -17,6 +17,7 @@ describe('advanced administration route', () => {
     for (const stage of ['identity', 'page', 'digest', 'ids', 'dates']) expect(source).toContain(`playlist_import_snapshot_${stage}_save_failed`)
   })
   afterEach(() => {
+    vi.useRealTimers()
     sessionStorage.clear()
     vi.restoreAllMocks()
   })
@@ -67,6 +68,400 @@ describe('advanced administration route', () => {
     expect(wrapper.text()).toContain('Catalog review')
     expect(wrapper.text()).toContain('Review song')
     expect(fetchMock.mock.calls[2]?.[0]).toContain('/api/karaoke/tablet/catalog?review=unreviewed')
+  })
+
+  it('keeps queue acceptance separate from confirmed Now Playing state', async () => {
+    const party = {
+      id: 'party-start',
+      code: 'START123',
+      status: 'active',
+      expiresAt: '2099-01-01T00:00:00Z',
+    }
+    const item = {
+      id: 'queue-start',
+      sequence: 1,
+      status: 'queued',
+      song: { id: 'song-start', youtubeId: 'dQw4w9WgXcQ', title: 'Start Song', artist: 'Artist' },
+    }
+    let statusReads = 0
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/auth-with-password'))
+        return new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 })
+      if (url.endsWith('/tablet/active'))
+        return new Response(JSON.stringify({ party }), { status: 200 })
+      if (url.includes('/queue/next'))
+        return new Response(JSON.stringify({ queue: item }), { status: 200 })
+      if (url.endsWith('/queue/transition'))
+        return new Response(JSON.stringify({ id: item.id, status: 'playing' }), { status: 200 })
+      if (url.includes('/tablet/status')) {
+        statusReads++
+        const playing = { ...item, status: 'playing' }
+        const controller =
+          statusReads < 5
+            ? {
+                connected: true,
+                connectionState: 'connected',
+                state: { playerState: 'IDLE', videoId: '' },
+              }
+            : {
+                connected: true,
+                connectionState: 'connected',
+                state: { playerState: 'playing', videoId: item.song.youtubeId },
+              }
+        return new Response(
+          JSON.stringify({ party, queue: statusReads === 1 ? [item] : [playing], controller }),
+          { status: 200 },
+        )
+      }
+      if (url.endsWith('/controller/pairing'))
+        return new Response(JSON.stringify({ state: 'none' }), { status: 200 })
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Play next')!
+      .trigger('click')
+    await settle()
+
+    expect(wrapper.text()).toContain('Waiting for controller playback confirmation…')
+    expect(wrapper.text()).not.toContain('Start Song is now playing.')
+    expect(wrapper.text()).toContain('Start Song started in the queue; waiting for TV confirmation.')
+    wrapper.unmount()
+  })
+
+  it('does not transition a party-A preview that resolves after discovery switches to party B', async () => {
+    const parties: Record<string, { id: string; code: string; status: string; expiresAt: string }> = {
+      'party-a': {
+        id: 'party-a',
+        code: 'PARTYA01',
+        status: 'active',
+        expiresAt: '2099-01-01T00:00:00Z',
+      },
+      'party-b': {
+        id: 'party-b',
+        code: 'PARTYB02',
+        status: 'active',
+        expiresAt: '2099-01-02T00:00:00Z',
+      },
+    }
+    const queueA = {
+      id: 'queue-a',
+      sequence: 1,
+      status: 'queued',
+      song: { id: 'song-a', youtubeId: 'video-a', title: 'Party A song', artist: 'Artist' },
+    }
+    let activePartyId = 'party-a'
+    let resolvePartyAPreview: ((value: Response) => void) | undefined
+    const transitions: Record<string, unknown>[] = []
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/auth-with-password'))
+        return new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 })
+      if (url.endsWith('/tablet/active'))
+        return new Response(JSON.stringify({ party: parties[activePartyId] }), { status: 200 })
+      if (url.includes('/tablet/status')) {
+        const partyId = new URL(url, 'http://localhost').searchParams.get('partyId') || ''
+        const party = parties[partyId]
+        const queue =
+          partyId === 'party-a'
+            ? [queueA]
+            : [
+                {
+                  ...queueA,
+                  id: 'queue-b',
+                  status: 'playing',
+                  song: { ...queueA.song, id: 'song-b', youtubeId: 'video-b', title: 'Party B song' },
+                },
+              ]
+        return new Response(
+          JSON.stringify({
+            party,
+            queue,
+            controller: {
+              connected: true,
+              connectionState: 'connected',
+              state: {
+                playerState: 'paused',
+                videoId: partyId === 'party-a' ? 'video-a' : 'video-b',
+              },
+            },
+          }),
+          { status: 200 },
+        )
+      }
+      if (url.includes('/queue/next'))
+        return new Promise<Response>((resolve) => {
+          resolvePartyAPreview = resolve
+        })
+      if (url.endsWith('/queue/transition')) {
+        transitions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return new Response(JSON.stringify({ id: 'queue-a', status: 'playing' }), { status: 200 })
+      }
+      if (url.endsWith('/controller/pairing'))
+        return new Response(JSON.stringify({ state: 'none' }), { status: 200 })
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    try {
+      await wrapper.get('#identity').setValue('tablet@example.test')
+      await wrapper.get('#password').setValue('secret')
+      await wrapper.get('form').trigger('submit')
+      await settle()
+      expect(wrapper.text()).toContain('PARTYA01')
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === 'Play next')!
+        .trigger('click')
+      await settle()
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/queue/next'))).toBe(
+        true,
+      )
+      expect(transitions).toHaveLength(0)
+
+      activePartyId = 'party-b'
+      window.dispatchEvent(new Event('focus'))
+      await settle()
+      expect(wrapper.text()).toContain('PARTYB02')
+      expect(wrapper.text()).not.toContain('PARTYA01')
+
+      resolvePartyAPreview!(new Response(JSON.stringify({ queue: queueA }), { status: 200 }))
+      await settle()
+      expect(transitions).toHaveLength(0)
+      expect(wrapper.text()).toContain('PARTYB02')
+      expect(wrapper.text()).not.toContain('Party A song is now playing.')
+    } finally {
+      resolvePartyAPreview?.(new Response(JSON.stringify({ queue: queueA }), { status: 200 }))
+      wrapper.unmount()
+    }
+  })
+
+  it('clears an A-party failure confirmation when active-party discovery switches to B', async () => {
+    const parties: Record<string, { id: string; code: string; status: string; expiresAt: string }> = {
+      'party-a': {
+        id: 'party-a',
+        code: 'PARTYA01',
+        status: 'active',
+        expiresAt: '2099-01-01T00:00:00Z',
+      },
+      'party-b': {
+        id: 'party-b',
+        code: 'PARTYB02',
+        status: 'active',
+        expiresAt: '2099-01-02T00:00:00Z',
+      },
+    }
+    let activePartyId = 'party-a'
+    const transitions: string[] = []
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/auth-with-password'))
+        return new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 })
+      if (url.endsWith('/tablet/active'))
+        return new Response(JSON.stringify({ party: parties[activePartyId] }), { status: 200 })
+      if (url.includes('/tablet/status')) {
+        const partyId = new URL(url, 'http://localhost').searchParams.get('partyId') || ''
+        const party = parties[partyId]
+        const queue = {
+          id: `${partyId}-queue`,
+          sequence: 1,
+          status: 'playing',
+          song: { id: `${partyId}-song`, youtubeId: 'video-a', title: 'Current song', artist: 'Artist' },
+        }
+        return new Response(
+          JSON.stringify({
+            party,
+            queue: [queue],
+            controller: { connected: true, connectionState: 'connected', state: { playerState: 'paused', videoId: 'video-a' } },
+          }),
+          { status: 200 },
+        )
+      }
+      if (url.endsWith('/queue/transition')) {
+        transitions.push(JSON.parse(String(init?.body)).queueId as string)
+        return new Response(JSON.stringify({ status: 'failed' }), { status: 200 })
+      }
+      if (url.endsWith('/controller/pairing'))
+        return new Response(JSON.stringify({ state: 'none' }), { status: 200 })
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    try {
+      await wrapper.get('#identity').setValue('tablet@example.test')
+      await wrapper.get('#password').setValue('secret')
+      await wrapper.get('form').trigger('submit')
+      await settle()
+      expect(wrapper.text()).toContain('PARTYA01')
+      await wrapper
+        .findAll('button')
+        .find((button) => button.text() === 'Skip / fail')!
+        .trigger('click')
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Skip this song?')
+
+      activePartyId = 'party-b'
+      window.dispatchEvent(new Event('focus'))
+      await settle()
+      expect(wrapper.text()).toContain('PARTYB02')
+      expect(wrapper.text()).not.toContain('PARTYA01')
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(transitions).toHaveLength(0)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('polls for authoritative Pause confirmation promptly after the command is accepted', async () => {
+    vi.useFakeTimers()
+    const party = {
+      id: 'party-pause',
+      code: 'PAUSE123',
+      status: 'active',
+      expiresAt: '2099-01-01T00:00:00Z',
+    }
+    const item = {
+      id: 'queue-pause',
+      sequence: 1,
+      status: 'playing',
+      song: { id: 'song-pause', youtubeId: 'dQw4w9WgXcQ', title: 'Pause Song', artist: 'Artist' },
+    }
+    let statusReads = 0
+    let pauseAccepted = false
+    let readsAfterPause = 0
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/auth-with-password'))
+        return new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 })
+      if (url.endsWith('/tablet/active'))
+        return new Response(JSON.stringify({ party }), { status: 200 })
+      if (url.includes('/controller/playback')) {
+        pauseAccepted = true
+        return new Response(
+          JSON.stringify({ id: 'pause-command', action: 'pause', status: 'pending' }),
+          { status: 201 },
+        )
+      }
+      if (url.includes('/tablet/status')) {
+        statusReads++
+        if (pauseAccepted) readsAfterPause++
+        const paused = pauseAccepted && readsAfterPause > 1
+        const controller = {
+          connected: true,
+          connectionState: 'connected',
+          state: { playerState: paused ? 'paused' : 'playing', videoId: item.song.youtubeId },
+        }
+        return new Response(JSON.stringify({ party, queue: [item], controller }), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    await wrapper
+      .findAll('.playback-controls button')
+      .find((button) => button.text() === 'Pause')!
+      .trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(wrapper.text()).toContain('Pause request pending.')
+    const readsAfterAcceptance = statusReads
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await nextTick()
+    expect(statusReads).toBeGreaterThan(readsAfterAcceptance)
+    expect(wrapper.text()).not.toContain('Pause request pending.')
+    expect(wrapper.text()).toContain('Controllerconnected · paused')
+    wrapper.unmount()
+  })
+
+  it('keeps the newest created party through a late discovery response and restores its code on a fresh sign-in', async () => {
+    const parties = [
+      { id: 'party-one', code: 'PARTY001', status: 'active', expiresAt: '2099-01-01T00:00:00Z' },
+      { id: 'party-two', code: 'PARTY002', status: 'active', expiresAt: '2099-01-02T00:00:00Z' },
+    ]
+    const staleParty = { ...parties[0] }
+    let currentParty: (typeof parties)[number] | null = null
+    let activeReads = 0
+    let releaseStale: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/auth-with-password'))
+        return new Response(JSON.stringify({ token: 'tablet-token' }), { status: 200 })
+      if (url.endsWith('/tablet/active')) {
+        activeReads++
+        if (activeReads === 2)
+          return new Promise<Response>((resolve) => {
+            releaseStale = resolve
+          })
+        return new Response(JSON.stringify({ party: currentParty }), { status: 200 })
+      }
+      if (url.endsWith('/api/karaoke/parties') && init?.method === 'POST') {
+        currentParty = parties.shift() || null
+        return new Response(JSON.stringify(currentParty), { status: 201 })
+      }
+      if (url.includes('/tablet/status') && currentParty) {
+        return new Response(JSON.stringify({ party: currentParty, queue: [], controller: null }), {
+          status: 200,
+        })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await wrapper.get('#identity').setValue('tablet@example.test')
+    await wrapper.get('#password').setValue('secret')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Create party')!
+      .trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('PARTY001')
+
+    window.dispatchEvent(new Event('focus'))
+    await nextTick()
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Create another party')!
+      .trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('PARTY002')
+    releaseStale!(new Response(JSON.stringify({ party: staleParty }), { status: 200 }))
+    await settle()
+    expect(wrapper.text()).toContain('PARTY002')
+    expect(wrapper.text()).not.toContain('PARTY001')
+    expect(wrapper.findAllComponents(QrcodeVue).length).toBeGreaterThan(0)
+    expect(wrapper.findComponent(QrcodeVue).props('value')).toContain('/party/PARTY002')
+    wrapper.unmount()
+
+    sessionStorage.clear()
+    currentParty = {
+      id: 'party-two',
+      code: 'PARTY002',
+      status: 'active',
+      expiresAt: '2099-01-02T00:00:00Z',
+    }
+    activeReads = 2
+    const reload = mount(AdminPage, { global: { stubs: { QrcodeVue: true } } })
+    await reload.get('#identity').setValue('tablet@example.test')
+    await reload.get('#password').setValue('secret')
+    await reload.get('form').trigger('submit')
+    await settle()
+    expect(reload.text()).toContain('PARTY002')
+    expect(reload.findAllComponents(QrcodeVue).length).toBeGreaterThan(0)
+    expect(reload.findComponent(QrcodeVue).props('value')).toContain('/party/PARTY002')
   })
 
   it('searches YouTube titles while retaining review filters and shows a title-aware empty state', async () => {

@@ -53,7 +53,9 @@ test('manual sequence is authoritative for next-song selection', () => {
 test('party creation binds exactly one active controller without guessing between devices', () => {
   const endpoint = hook.match(/routerAdd\('POST', '\/api\/karaoke\/parties',[\s\S]*?\n}\)/)
   assert.ok(endpoint)
-  assert.match(endpoint[0], /availableControllers\(tx, id\(auth\(c\)\)\)/)
+  assert.match(endpoint[0], /const operator = auth\(c\)/)
+  assert.match(endpoint[0], /if \(!tablet\(operator\)\)/)
+  assert.match(endpoint[0], /availableControllers\(tx, id\(operator\)\)/)
   assert.match(hook, /function ownedControllerIds\(store, operatorId\)/)
   assert.match(hook, /function controllerLiveness\(store, deviceId\)/)
   assert.match(hook, /freshObservedAt\(str\(state, 'observed_at'\)\)/)

@@ -49,6 +49,17 @@ function snapshot(reordered = false) {
 function response(value: unknown) {
   return new Response(JSON.stringify(value), { status: 200 })
 }
+function withActivePartyDiscovery(fetchMock: typeof fetch) {
+  const activePartyFetch = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async () => response({ party: snapshot().party }))
+  const routedFetch = vi.fn<typeof fetch>((input, init) =>
+    String(input).endsWith('/tablet/active')
+      ? activePartyFetch(input, init)
+      : fetchMock(input, init),
+  )
+  return { routedFetch, activePartyFetch }
+}
 async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await nextTick()
@@ -84,10 +95,12 @@ it('waits for an authoritative order after a reorder overlaps an older status re
     .mockReturnValueOnce(oldRead)
     .mockResolvedValueOnce(response({ moved: true, revision: 3, digest: 'new-digest' }))
     .mockReturnValueOnce(freshRead)
-  vi.stubGlobal('fetch', fetchMock)
+  const { routedFetch, activePartyFetch } = withActivePartyDiscovery(fetchMock)
+  vi.stubGlobal('fetch', routedFetch)
   const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
   try {
     await settle()
+    expect(activePartyFetch).toHaveBeenCalledTimes(1)
     window.dispatchEvent(new Event('focus'))
     await settle()
     await wrapper.get('[aria-label="Move First song down"]').trigger('click')
@@ -132,14 +145,16 @@ function queueSnapshot(ids: string[], revision = 4, digest = 'order-before') {
   }
 }
 
-async function mountReorderPage(fetchMock: ReturnType<typeof vi.fn>) {
+async function mountReorderPage(fetchMock: typeof fetch) {
   sessionStorage.setItem(
     'karaoke:tablet:session',
     JSON.stringify({ token: 'local-fixture', partyId: 'party-1' }),
   )
-  vi.stubGlobal('fetch', fetchMock)
+  const { routedFetch, activePartyFetch } = withActivePartyDiscovery(fetchMock)
+  vi.stubGlobal('fetch', routedFetch)
   const wrapper = mount(TabletPage, { global: { stubs: { QrcodeVue: true } } })
   await settle()
+  expect(activePartyFetch).toHaveBeenCalledTimes(1)
   return wrapper
 }
 

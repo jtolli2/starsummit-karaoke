@@ -44,6 +44,13 @@ export function useTabletOperator() {
   let refreshTimer: ReturnType<typeof setInterval> | undefined
   let refreshPromise: Promise<boolean> | null = null
   let refreshAfterFlight: Promise<boolean> | null = null
+  let discoveryPromise: Promise<void> | null = null
+  let discoveryGeneration = 0
+  let actionGeneration = 0
+  let confirmationRun = 0
+  let confirmationTimer: ReturnType<typeof setTimeout> | undefined
+  let mounted = true
+  let creatingParty = false
 
   const queue = computed(() => status.value?.queue || [])
   const playing = computed(() => queue.value.find((item) => item.status === 'playing'))
@@ -128,6 +135,11 @@ export function useTabletOperator() {
     )
   }
 
+  function actionMayHaveApplied(cause: unknown) {
+    const status = (cause as { status?: number })?.status
+    return status === undefined || status >= 500
+  }
+
   function savedSession(): StoredSession | null {
     try {
       const value = JSON.parse(sessionStorage.getItem(storageKey) || '') as StoredSession
@@ -207,7 +219,7 @@ export function useTabletOperator() {
   }
 
   function refreshStatus(): Promise<boolean> {
-    if (!token.value || !partyId.value) return Promise.resolve(false)
+    if (!mounted || !token.value || !partyId.value) return Promise.resolve(false)
     if (refreshAfterFlight) return refreshAfterFlight
     if (refreshPromise) {
       if (!refreshAfterFlight) {
@@ -234,7 +246,8 @@ export function useTabletOperator() {
       try {
         const knownCode = partyCode.value
         const nextStatus = await loadTabletStatus(requestToken, requestPartyId)
-        if (token.value !== requestToken || partyId.value !== requestPartyId) return false
+        if (!mounted || token.value !== requestToken || partyId.value !== requestPartyId)
+          return false
         status.value = nextStatus
         if (knownCode && !status.value.party.code) status.value.party.code = knownCode
         saveSession()
@@ -248,7 +261,8 @@ export function useTabletOperator() {
           return true
         }
       } catch (cause) {
-        if (token.value !== requestToken || partyId.value !== requestPartyId) return false
+        if (!mounted || token.value !== requestToken || partyId.value !== requestPartyId)
+          return false
         const code = (cause as { status?: number }).status
         if (code === 401 || code === 403) {
           token.value = null
@@ -271,17 +285,105 @@ export function useTabletOperator() {
   }
 
   async function restoreActiveParty() {
-    if (!token.value) return
+    if (!mounted || !token.value || discoveryPromise || creatingParty) return discoveryPromise
+    const requestToken = token.value
+    const generation = ++discoveryGeneration
+    const run = (async () => {
+      try {
+        const result = await loadActiveParty(requestToken)
+        if (!mounted || token.value !== requestToken || generation !== discoveryGeneration) return
+        const nextPartyId = result.party?.id || ''
+        if (partyId.value !== nextPartyId) {
+          invalidateAction()
+          confirmation.value = null
+          partyId.value = nextPartyId
+          status.value = result.party ? { party: result.party, queue: [], controller: null } : null
+          savePending(null)
+        }
+        if (nextPartyId) await refresh()
+        else saveSession()
+      } catch (cause) {
+        if (mounted && token.value === requestToken && generation === discoveryGeneration) {
+          message.value = explain(cause, 'Could not restore the active party. Try again.')
+          error.value = true
+          if (partyId.value) await refresh()
+        }
+      }
+    })()
+    discoveryPromise = run
     try {
-      const result = await loadActiveParty(token.value)
-      partyId.value = result.party?.id || ''
-      status.value = null
-      if (partyId.value) await refresh()
-      saveSession()
-    } catch (cause) {
-      message.value = explain(cause, 'Could not restore the active party. Try again.')
-      error.value = true
+      await run
+    } finally {
+      if (discoveryPromise === run) discoveryPromise = null
     }
+  }
+
+  function cancelConfirmationBurst() {
+    confirmationRun++
+    if (confirmationTimer) clearTimeout(confirmationTimer)
+    confirmationTimer = undefined
+  }
+
+  function invalidateAction() {
+    actionGeneration++
+    busy.value = false
+    cancelConfirmationBurst()
+  }
+
+  function isActionCurrent(run: number, requestToken: string, requestPartyId: string) {
+    return Boolean(
+      mounted &&
+      actionGeneration === run &&
+      token.value === requestToken &&
+      partyId.value === requestPartyId,
+    )
+  }
+
+  function playbackConfirmed(queueId: string, expectedPlayerState: 'playing' | 'paused') {
+    const item = queue.value.find((entry) => entry.id === queueId && entry.status === 'playing')
+    return Boolean(
+      item?.song?.youtubeId &&
+      controllerReady.value &&
+      status.value?.controller?.state?.videoId === item.song.youtubeId &&
+      playerState.value === expectedPlayerState,
+    )
+  }
+
+  function scheduleConfirmationBurst(
+    queueId: string,
+    expectedPlayerState: 'playing' | 'paused',
+    onConfirmed?: () => void,
+  ) {
+    cancelConfirmationBurst()
+    const run = confirmationRun
+    const requestToken = token.value
+    const requestPartyId = partyId.value
+    const deadline = Date.now() + 30000
+    const poll = async () => {
+      if (
+        run !== confirmationRun ||
+        !mounted ||
+        token.value !== requestToken ||
+        partyId.value !== requestPartyId ||
+        Date.now() >= deadline
+      )
+        return
+      const refreshed = await refreshStatus()
+      if (
+        run !== confirmationRun ||
+        !mounted ||
+        token.value !== requestToken ||
+        partyId.value !== requestPartyId
+      )
+        return
+      if (refreshed && playbackConfirmed(queueId, expectedPlayerState)) {
+        onConfirmed?.()
+        return
+      }
+      if (partyExpired.value || !token.value || Date.now() >= deadline) return
+      confirmationTimer = setTimeout(() => void poll(), Math.min(1000, deadline - Date.now()))
+    }
+    confirmationTimer = setTimeout(() => void poll(), 1000)
   }
 
   async function signIn() {
@@ -301,21 +403,32 @@ export function useTabletOperator() {
 
   async function createActiveParty() {
     if (!token.value || loading.value) return
+    const requestToken = token.value
     loading.value = true
+    creatingParty = true
     try {
-      const party = await createParty(token.value)
+      invalidateAction()
+      confirmation.value = null
+      discoveryGeneration++
+      const party = await createParty(requestToken)
+      if (!mounted || token.value !== requestToken) return
+      discoveryGeneration++
       partyId.value = party.id
       status.value = { party: { ...party, status: 'active' }, queue: [], controller: null }
       await refresh()
+      if (!mounted || token.value !== requestToken || partyId.value !== party.id) return
       if (status.value && !status.value.party.code) status.value.party.code = party.code
       saveSession()
       message.value = 'Party ready. Guests can scan the QR code.'
       error.value = false
     } catch (cause) {
-      message.value = explain(cause, 'Could not create a party.')
-      error.value = true
+      if (mounted && token.value === requestToken) {
+        message.value = explain(cause, 'Could not create a party.')
+        error.value = true
+      }
     } finally {
-      loading.value = false
+      creatingParty = false
+      if (mounted) loading.value = false
     }
   }
 
@@ -329,23 +442,58 @@ export function useTabletOperator() {
       playing.value
     )
       return
+    invalidateAction()
+    const requestToken = token.value
+    const requestPartyId = partyId.value
+    const run = ++actionGeneration
     busy.value = true
+    let startedQueueId = ''
+    let startedSongTitle = 'Song'
     try {
-      const next = await loadNext(token.value, partyId.value)
+      const next = await loadNext(requestToken, requestPartyId)
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       if (!next.queue) {
         message.value = 'No queued songs are waiting.'
         return
       }
-      await transitionQueue(token.value, next.queue.id, 'queued', 'playing')
-      await refresh()
-      message.value = `${next.queue.song?.title || 'Song'} started in the queue; waiting for TV confirmation.`
+      startedQueueId = next.queue.id
+      startedSongTitle = next.queue.song?.title || 'Song'
+      await transitionQueue(requestToken, next.queue.id, 'queued', 'playing')
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
+      const refreshed = await refreshStatus()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
+      const confirmed = refreshed && playbackConfirmed(next.queue.id, 'playing')
+      message.value = confirmed
+        ? `${next.queue.song?.title || 'Song'} is now playing.`
+        : `${next.queue.song?.title || 'Song'} started in the queue; waiting for TV confirmation.`
       error.value = false
+      if (!confirmed)
+        scheduleConfirmationBurst(next.queue.id, 'playing', () => {
+          message.value = `${startedSongTitle} is now playing.`
+          error.value = false
+        })
     } catch (cause) {
-      await refresh()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
+      const refreshed = await refreshStatus()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
+      if (startedQueueId && actionMayHaveApplied(cause)) {
+        if (refreshed && playbackConfirmed(startedQueueId, 'playing')) {
+          message.value = `${startedSongTitle} is now playing.`
+          error.value = false
+          return
+        }
+        message.value = explain(cause, 'Start was uncertain; the latest state is shown.')
+        error.value = true
+        scheduleConfirmationBurst(startedQueueId, 'playing', () => {
+          message.value = `${startedSongTitle} is now playing.`
+          error.value = false
+        })
+        return
+      }
       message.value = explain(cause, 'Start was uncertain; the latest state is shown.')
       error.value = true
     } finally {
-      busy.value = false
+      if (actionGeneration === run) busy.value = false
     }
   }
 
@@ -414,58 +562,93 @@ export function useTabletOperator() {
   }
 
   async function submitPlayback(operation: PendingPlayback) {
+    cancelConfirmationBurst()
+    if (!token.value || !partyId.value || operation.partyId !== partyId.value) return
+    const requestToken = token.value
+    const requestPartyId = partyId.value
+    const run = ++actionGeneration
     savePending(operation)
     busy.value = true
     try {
       const result = await issuePlaybackCommand(
-        token.value!,
-        partyId.value,
+        requestToken,
+        requestPartyId,
         operation.action,
         operation.key,
       )
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       if (result.status !== 'pending') {
         savePending(null)
         message.value =
           'The prior playback request is complete. Retry the selected video if needed.'
         await refresh()
+        if (!isActionCurrent(run, requestToken, requestPartyId)) return
         return
       }
       savePending({ ...operation, expiresAt: result.expiresAt })
-      await refresh()
+      const refreshed = await refreshStatus()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
+      const target = operation.action === 'pause' ? 'paused' : 'playing'
+      if (refreshed && playbackConfirmed(operation.queueId, target)) return
+      scheduleConfirmationBurst(operation.queueId, target)
     } catch (cause) {
-      await refresh()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
+      await refreshStatus()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       if (pendingPlayback.value) {
         message.value = explain(cause, 'Playback was uncertain; retry will reuse the same request.')
         error.value = true
+        if (actionMayHaveApplied(cause))
+          scheduleConfirmationBurst(
+            operation.queueId,
+            operation.action === 'pause' ? 'paused' : 'playing',
+          )
       }
     } finally {
-      busy.value = false
+      if (actionGeneration === run) busy.value = false
     }
   }
 
   async function confirmQueueAction() {
     const value = confirmation.value
-    if (!token.value || !value || busy.value) return
+    const requestToken = token.value
+    const requestPartyId = partyId.value
+    if (
+      !requestToken ||
+      !requestPartyId ||
+      !value ||
+      busy.value ||
+      status.value?.party?.id !== requestPartyId
+    )
+      return
+    invalidateAction()
+    const run = ++actionGeneration
     busy.value = true
     try {
       await transitionQueue(
-        token.value,
+        requestToken,
         value.item.id,
         value.item.status,
         value.action,
         value.action === 'failed' ? failureReason.value : undefined,
       )
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       confirmation.value = null
       await refresh()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       message.value = value.action === 'completed' ? 'Song marked complete.' : 'Song skipped.'
       error.value = false
     } catch (cause) {
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       await refresh()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       message.value = explain(cause, 'That change was uncertain; the latest state is shown.')
       error.value = true
     } finally {
-      busy.value = false
-      restoreConfirmationFocus()
+      if (actionGeneration === run) {
+        busy.value = false
+        restoreConfirmationFocus()
+      }
     }
   }
 
@@ -473,15 +656,28 @@ export function useTabletOperator() {
     item: TabletQueueItem,
     target: 'up' | 'down' | { targetQueueId: string },
   ) {
-    if (!token.value || !partyId.value || busy.value || item.status !== 'queued') return
+    const requestToken = token.value
+    const requestPartyId = partyId.value
+    if (
+      !requestToken ||
+      !requestPartyId ||
+      busy.value ||
+      item.status !== 'queued' ||
+      status.value?.party?.id !== requestPartyId
+    )
+      return
     const revision = status.value?.queueOrderRevision
     const digest = status.value?.queueOrderDigest
     if (revision === undefined || !digest) return
+    invalidateAction()
+    const run = ++actionGeneration
     busy.value = true
     error.value = false
     try {
-      await reorderTabletQueue(token.value, partyId.value, item.id, target, revision, digest)
+      await reorderTabletQueue(requestToken, requestPartyId, item.id, target, revision, digest)
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       const refreshed = await refreshStatus()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       if (!refreshed) {
         message.value =
           'Queue change saved, but the latest order could not be confirmed. Refresh to check.'
@@ -491,17 +687,22 @@ export function useTabletOperator() {
       message.value = 'Queue order updated.'
       error.value = false
     } catch (cause) {
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       const refreshed = await refreshStatus()
+      if (!isActionCurrent(run, requestToken, requestPartyId)) return
       message.value = refreshed
         ? explain(cause, 'Queue order changed elsewhere; the latest state is shown.')
         : 'Queue order is uncertain because the latest state could not be loaded. Refresh to check.'
       error.value = true
     } finally {
-      busy.value = false
+      if (actionGeneration === run) busy.value = false
     }
   }
 
   function signOut() {
+    invalidateAction()
+    discoveryGeneration++
+    confirmation.value = null
     token.value = null
     partyId.value = ''
     status.value = null
@@ -525,15 +726,22 @@ export function useTabletOperator() {
           controller: null,
         }
         restorePending()
-        await refresh()
+        await restoreActiveParty()
       } else await restoreActiveParty()
     }
-    refreshTimer = setInterval(refresh, 15000)
-    window.addEventListener('focus', refresh)
+    if (!mounted) return
+    refreshTimer = setInterval(() => {
+      void restoreActiveParty()
+    }, 5000)
+    window.addEventListener('focus', restoreActiveParty)
   })
   onUnmounted(() => {
+    mounted = false
     if (refreshTimer) clearInterval(refreshTimer)
-    window.removeEventListener('focus', refresh)
+    window.removeEventListener('focus', restoreActiveParty)
+    invalidateAction()
+    confirmation.value = null
+    discoveryGeneration++
   })
 
   return proxyRefs({
