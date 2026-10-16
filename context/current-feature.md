@@ -79,7 +79,7 @@ In Progress — deployed baseline retained; tablet responsiveness and party iden
 
 ### Goals and Status
 
-Implemented, reviewed, committed, pushed and deployed with October 16 approval. Separate-tab live validation awaits the human signing in to the new tablet view.
+Implemented, reviewed, committed, pushed and deployed with October 16 approval. Live cross-tab discovery and automatic playback feedback verified; a small Fire-tablet URL wrapping correction is reviewed and ready for release.
 
 - Pick up authoritative Play, Pause, Start and Retry confirmation promptly without manual Refresh.
 - Show the current party's full code, join link and QR after Admin creation, across existing tabs, reloads and signed-in devices.
@@ -108,12 +108,21 @@ Implemented, reviewed, committed, pushed and deployed with October 16 approval. 
 - Retained migration fixture: `/var/folders/6x/6dxmkdxs5csd5fc3xxrxmmk80000gn/T/karaoke-party-join-code-pb-apns0N`. Android unchanged; previous evidence reused.
 - Assignment and integrated final reviews passed with no blockers. Status 401/403 clears auth but can retain dialog refs; do not claim universal auth-expiry dialog cleanup. Auth guards prevent authenticated mutations afterward.
 - Reviewed ten-file product/test patch: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-implementation.patch`, SHA-256 `90d0275d312a763a50e93dc3b40dceba3b5d25ee03870f88f5fdd6f182c6521d`. Active context is an additional release file. Eight-file unrelated workflow patch remains byte-identical.
-- Approved follow-up product commit `112a4c12775da80428deffd2871e23a9599fc44a` pushed to main. Deployment `ige6ln1g6yci9c8bbfrqky4s` finished October 16 at21:06:17Z on that exact SHA. Both API health endpoints200; app running:healthy. Live mount reverified unchanged and live schema confirms optional hidden join_code text/max8. Separate authenticated viewer is needed for the remaining live party/playback checks; no validation party or playback mutation performed yet for this release.
+- Approved follow-up product commit `112a4c12775da80428deffd2871e23a9599fc44a` pushed to main. Deployment `ige6ln1g6yci9c8bbfrqky4s` finished October 16 at21:06:17Z on that exact SHA. Both API health endpoints200; app running:healthy. Live mount reverified unchanged and live schema confirms optional hidden join_code text/max8. Separate-viewer and physical Fire checks subsequently completed as recorded below.
 - Release handoff: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-handoff-20261016.md`. Full feature remains In Progress; no completion-history entry while original physical TV observations and follow-up live validation remain pending.
 
 ### Approved Follow-up Release Evidence
 
 - Exact reviewed patch reverified before staging. Only ten scoped product/test files plus active context committed; unrelated workflow patch unchanged. API used only to pin SHA (installed CLI lacks the option); deployment triggered through CLI. Raw Compose and live retained volume `xbqbuq8gvckl7r2hgi6yabws-pocketbase-data` verified before and after deployment.
-- Dedicated Starsummit Development Admin remains authenticated. Existing user party9AJJJG85 (empty queue, connected/paused controller) and guestRSYAP8R7 tab preserved. New `/tablet` tab1594097216 shows Sign in; human requested to enter existing constrained credentials directly. Creation held to measure genuine automatic discovery in an already-open tablet view.
+- Dedicated Starsummit Development Admin and separate viewer verified authenticated after human sign-in. Existing user party9AJJJG85 preserved. The human later closed a prior guest tab; no agent deletion performed. First isolated partyHSVAJMCG proved full code/link/QR recovery after loading current code. Second isolated partyKGSH3B7Y proved automatic discovery in a current-code viewer within4.062seconds, without Refresh/navigation/focus triggers; all parties retained.
 - Fire KFTRWI/trona reverified; companion PID18970 continues. No APK update, process restart, re-pairing or storage change needed.
 - Current release evidence: `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/tablet-followup-release-20261016.md`. Full feature remains In Progress pending live validation and the previously separate physical-TV observations.
+
+### Live Follow-up Validation and Scoped Visual Correction
+
+- Current-code automatic party switch: Admin created KGSH3B7Y at21:52:31.311Z; already-open viewer showed its full code, correct join URL and QR by21:52:35.373Z. First trial on old loaded JavaScript is not claimed as new-code evidence. Existing tabs require one reload to load a deployment.
+- Physical Fire Chrome reloaded once and showed KGSH3B7Y full code and QR. The long join URL clipped at the party-card edge; scoped correction adds only `.party p { max-width: 100%; overflow-wrap: anywhere; }` in `src/pages/tablet/index.vue`. Production build/typecheck and independent task review passed; no behavior/API change or additional mirroring unit tests. Visual recheck follows deployment.
+- Guest queued exactly one approved34+35/ArianaGrande/Yykv6iCQMZY; rowmxuinezzvyoijb4. Start21:53:43.136Z, request busy released by+2.845s, first automatic matched-playing UI+14.301s. Durable command sequence25 succeeded/ACK21:53:56.266Z, so observed UI confirmation followed ACK by~1.17s.
+- Pause once21:53:59.757Z, sequence26 succeeded/ACK21:54:00.667Z; UI paused atfirstsample+2.498s. Play once21:54:05.389Z, sequence27 succeeded/ACK21:54:05.975Z; UI playing atfirstsample+2.515s. No manual Refresh/navigation/focus during measurements. Times are sampling bounds, not exact rendering latency. No Complete/Fail/reorder/extra commands; queue row retained.
+- Global routing update requested by human: SUBAGENTS.md and agents/commit-pusher.toml now require approved scoped staging/commit/push delegation; parent owns deployment/live validation. Backups at `/Users/chefjeff/.codex/backups/20261016T215115Z-required-commit-pusher`; TOML parsed and independent review passed. No model/effort/security changes; definitions not claimed reloaded before fresh session. Subsequent Git release delegated to commit-pusher.
+- Full original feature remains In Progress because physical TV identity/progression/natural-end/continuity observations remain separate and unverified; no completion-history entry. These follow-up checks validate actual browser/Fire UI and controller state, not direct TV imagery.

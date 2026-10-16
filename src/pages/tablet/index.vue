@@ -474,6 +474,10 @@ input {
 .now p {
   margin: 0;
 }
+.party p {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 .party canvas {
   max-width: 100%;
   height: auto;
