@@ -537,3 +537,9 @@
 - Delivered fresh target-video-plus-playing confirmation, safe idempotent recovery, prompt automatic tablet/Admin feedback, and full party code/link/QR recovery across tabs and reloads. Existing legacy links are preserved; full tablet join URLs wrap on Fire.
 - Reviewed releases deployed to retained staging on October 16, ending at product `3937a48671a15284aa45b7debb8fa8448eb4e701`. Validation includes 110 Vue tests/build, 24 focused PocketBase 0.39.7 checks, earlier 100 Android JVM tests/debug build, and live browser/Fire/controller checks.
 - Completed under the October 20 user clarification: direct physical-TV identity, progression, natural completion and restart continuity remain explicitly unverified, non-blocking manual follow-ups.
+
+## 2026-10-20 — Guest Request Confirmation Reliability
+
+- Confirmed guest requests retain truthful feedback across later queue/session/realtime failures. Catalog requests reuse existing request-key storage for safe replay; catalog and fallback retries preserve original identity and remain accessible when search results change. Unknown outcomes retain uncertainty, with bounded rejoin and host verification for expired original sessions.
+- Reviewed local implementation passed 119 Vue tests, production type-check/build, four PocketBase 0.39.7 runtime checks and 16 queue structural checks. Independent assignment and integrated final review passed after corrections. Three broader catalog structural failures reproduce unchanged on baseline and remain separately recorded.
+- Complete locally; implementation remains uncommitted on main at c606dab. Commit/push/deployment require separate approval. Live guest validation is unperformed; manual rehearsal is non-blocking. No schema, permission, Android, remote, device or cleanup change.

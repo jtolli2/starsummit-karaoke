@@ -23,11 +23,39 @@ const fallbackResultCount = ref(0)
 const message = ref('')
 const errorKind = ref('')
 const pendingSongs = ref(new Set<string>())
+const requestMessage = ref('')
+const requestErrorKind = ref('')
+const refreshMessage = ref('')
+const refreshErrorKind = ref('')
+type PendingAttempt = {
+  credential: string
+  key: string
+  source: 'catalog' | 'youtube'
+  youtubeId: string
+  title: string
+  uncertain: boolean
+  rejoined: boolean
+}
+const pendingAttempts = ref(new Map<string, PendingAttempt>())
+const unresolvedAttempts = computed(() => Array.from(pendingAttempts.value.values()))
 let stopWake: () => void = () => undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
-let rejoining = false
+let rejoining: Promise<string> | null = null
+let backgroundRejoinAttempted = false
 let fuse: Fuse<LibrarySong> | null = null
-async function rejoinOnce() { if (rejoining) return false; rejoining = true; try { clearPartyCredential(code.value); credential.value = (await joinParty(code.value)).credential; stopWake(); stopWake = await startQueueWakeHint(credential.value, reconcile); return true } catch { return false } finally { rejoining = false } }
+async function rejoinOnce() {
+  if (!rejoining) {
+    clearPartyCredential(code.value)
+    rejoining = (async () => {
+      const nextCredential = (await joinParty(code.value)).credential
+      credential.value = nextCredential
+      stopWake()
+      stopWake = await startQueueWakeHint(nextCredential, reconcile)
+      return nextCredential
+    })()
+  }
+  try { return await rejoining } finally { rejoining = null }
+}
 
 function setCatalogIndex(nextSongs: LibrarySong[]) {
   indexSongs.value = nextSongs
@@ -56,7 +84,6 @@ function localMatches(normalized: string) {
 
 const explain = (error: unknown, fallback: string) => {
   const e = error as { code?: string; status?: number }
-  errorKind.value = e.code || ''
   return ({
     duplicate_song: 'That song is already queued or playing.',
     rate_limited: 'Please wait a moment before trying again.',
@@ -75,11 +102,25 @@ async function reconcile() {
   if (!credential.value) return
   try {
     queue.value = (await loadQueue(credential.value)).queue
-    message.value = ''
-    errorKind.value = ''
+    refreshMessage.value = ''
+    refreshErrorKind.value = ''
   } catch (error) {
-    if ((error as { code?: string }).code === 'guest_credential_expired' && await rejoinOnce()) return reconcile()
-    message.value = explain(error, 'Queue could not be loaded.')
+    if ((error as { code?: string }).code === 'guest_credential_expired' && !backgroundRejoinAttempted) {
+      backgroundRejoinAttempted = true
+      try {
+        const nextCredential = await rejoinOnce()
+        queue.value = (await loadQueue(nextCredential)).queue
+        refreshMessage.value = ''
+        refreshErrorKind.value = ''
+        return
+      } catch (rejoinError) {
+        refreshMessage.value = explain(rejoinError, 'Queue could not be loaded.')
+        refreshErrorKind.value = (rejoinError as { code?: string }).code || ''
+        return
+      }
+    }
+    refreshMessage.value = explain(error, 'Queue could not be loaded.')
+    refreshErrorKind.value = (error as { code?: string }).code || ''
   }
 }
 
@@ -101,8 +142,8 @@ async function search() {
     // catches genuinely poor matches while retaining ordinary multi-character typos.
     fallbackSuggested.value = local.weak
   } catch (error) {
-    if ((error as { code?: string }).code === 'guest_credential_expired' && await rejoinOnce()) return search()
     message.value = explain(error, 'Songs could not be loaded.')
+    errorKind.value = (error as { code?: string }).code || ''
   } finally {
     searching.value = false
   }
@@ -169,6 +210,7 @@ async function searchFallback() {
     if (response.cached || response.replay) message.value = 'Showing a cached YouTube search.'
   } catch (error) {
     message.value = explain(error, 'Songs could not be loaded.')
+    errorKind.value = (error as { code?: string }).code || ''
   } finally {
     searching.value = false
     fallbackSearching.value = false
@@ -183,27 +225,113 @@ function scheduleSearch() {
   searchTimer = setTimeout(search, 300)
 }
 
-async function add(song: LibrarySong, idempotencyKey = `guest-${song.youtubeId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`) {
+function setPendingAttempt(youtubeId: string, attempt: PendingAttempt | null) {
+  const next = new Map(pendingAttempts.value)
+  if (attempt) next.set(youtubeId, attempt)
+  else next.delete(youtubeId)
+  pendingAttempts.value = next
+}
+
+function attemptError(error: unknown, fallback: string) {
+  const code = (error as { code?: string }).code || ''
+  return { code, message: explain(error, fallback) }
+}
+
+function showUncertainRequest(attempt: PendingAttempt, error: unknown) {
+  const detail = attemptError(error, 'The request could not be confirmed.')
+  requestMessage.value = detail.code === 'guest_credential_expired'
+    ? `${attempt.title} may already be in the queue. The original party session expired and cannot verify the outcome. Ask the host to check the queue before trying again.`
+    : `${attempt.title} may already be in the queue. Retry this same request to check safely. ${detail.message}`
+  requestErrorKind.value = detail.code || 'request_outcome_uncertain'
+}
+
+async function submitAttempt(attempt: PendingAttempt) {
+  if (attempt.source === 'youtube') return requestFallbackSong(attempt.credential, attempt.youtubeId, attempt.key)
+  return requestSong(attempt.credential, attempt.youtubeId, attempt.key)
+}
+
+async function add(song: LibrarySong) {
   if (!credential.value) return
   if (pendingSongs.value.has(song.youtubeId)) return
+  let attempt = pendingAttempts.value.get(song.youtubeId)
+  if (!attempt) {
+    attempt = {
+      credential: credential.value,
+      key: `guest-${song.youtubeId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      source: song.source === 'youtube' ? 'youtube' : 'catalog',
+      youtubeId: song.youtubeId,
+      title: song.title,
+      uncertain: false,
+      rejoined: false,
+    }
+    setPendingAttempt(song.youtubeId, attempt)
+  }
   pendingSongs.value = new Set(pendingSongs.value).add(song.youtubeId)
   try {
-    if (song.source === 'youtube') await requestFallbackSong(credential.value, song.youtubeId, idempotencyKey)
-    else await requestSong(credential.value, song.youtubeId)
-    await reconcile()
-    message.value = `${song.title} was added to the queue.`
-    errorKind.value = ''
-  } catch (error) {
-    if ((error as { code?: string }).code === 'guest_credential_expired') {
-      const next = new Set(pendingSongs.value); next.delete(song.youtubeId); pendingSongs.value = next
-      if (await rejoinOnce()) return add(song, idempotencyKey)
+    let firstError: unknown
+    try { await submitAttempt(attempt) } catch (error) { firstError = error }
+    if (firstError && (firstError as { ambiguous?: boolean }).ambiguous) {
+      attempt.uncertain = true
+      try { await submitAttempt(attempt) } catch (retryError) {
+        showUncertainRequest(attempt, retryError)
+        return
+      }
+    } else if (
+      firstError &&
+      (firstError as { code?: string }).code === 'guest_credential_expired' &&
+      !attempt.uncertain &&
+      !attempt.rejoined
+    ) {
+      attempt.rejoined = true
+      try {
+        attempt.credential = await rejoinOnce()
+        try { await submitAttempt(attempt) } catch (retryError) {
+          if (!(retryError as { ambiguous?: boolean }).ambiguous) throw retryError
+          attempt.uncertain = true
+          try { await submitAttempt(attempt) } catch (ambiguousError) {
+            showUncertainRequest(attempt, ambiguousError)
+            return
+          }
+        }
+      } catch (retryError) {
+        if (attempt.uncertain) throw retryError
+        const detail = attemptError(retryError, 'We could not rejoin this party.')
+        requestMessage.value = detail.message
+        requestErrorKind.value = detail.code
+        setPendingAttempt(song.youtubeId, null)
+        return
+      }
+    } else if (firstError) {
+      throw firstError
     }
-    message.value = explain(error, 'That song could not be requested.')
+    setPendingAttempt(song.youtubeId, null)
+    requestMessage.value = `${attempt.title} was added to the queue.`
+    requestErrorKind.value = ''
+    void reconcile()
+  } catch (error) {
+    if (attempt.uncertain) {
+      showUncertainRequest(attempt, error)
+    } else {
+      setPendingAttempt(song.youtubeId, null)
+      const detail = attemptError(error, 'That song could not be requested.')
+      requestMessage.value = detail.message
+      requestErrorKind.value = detail.code
+    }
   } finally {
     const next = new Set(pendingSongs.value)
     next.delete(song.youtubeId)
     pendingSongs.value = next
   }
+}
+
+function retryPending(attempt: PendingAttempt) {
+  return add({
+    id: attempt.youtubeId,
+    youtubeId: attempt.youtubeId,
+    title: attempt.title,
+    artist: '',
+    source: attempt.source === 'youtube' ? 'youtube' : 'local',
+  })
 }
 
 onMounted(async () => {
@@ -220,6 +348,7 @@ onMounted(async () => {
     stopWake = await startQueueWakeHint(credential.value, reconcile)
   } catch (error) {
     message.value = explain(error, 'We could not join this party. Check the QR code and try again.')
+    errorKind.value = (error as { code?: string }).code || ''
   } finally {
     loading.value = false
   }
@@ -236,8 +365,21 @@ onUnmounted(() => {
     <header><p class="eyebrow">Starsummit Karaoke</p><h1 id="party-title">Request a song</h1><p>Party <strong>{{ code }}</strong></p></header>
     <p v-if="loading" role="status">Joining party…</p>
     <section v-else>
+      <p v-if="requestMessage" class="message" :data-error="Boolean(requestErrorKind)" role="status">{{ requestMessage }}</p>
+      <p v-if="refreshMessage" class="message" :data-error="Boolean(refreshErrorKind)" role="alert">{{ refreshMessage }}</p>
       <p v-if="message" class="message" :data-error="Boolean(errorKind)" role="alert">{{ message }}</p>
-      <section aria-labelledby="search-title"><h2 id="search-title">Browse songs</h2><label for="song-search">Search title or artist</label><input id="song-search" v-model="query" role="combobox" aria-controls="song-suggestions" aria-autocomplete="list" type="search" autocomplete="off" placeholder="Try a song or artist" @input="scheduleSearch" @keyup.enter="searchFallback" /><button v-if="fallbackSuggested && !searching" type="button" @click="searchFallback">Search YouTube for this song</button><p v-if="searching" role="status">{{ fallbackSearching ? 'Searching YouTube…' : 'Searching catalog…' }}</p><p v-else-if="fallbackSearched" class="search-status" role="status">{{ fallbackResultCount ? `YouTube search completed: ${fallbackResultCount} eligible result${fallbackResultCount === 1 ? '' : 's'} ${catalogResultCount ? 'added below. Catalog matches remain first.' : 'shown below.'}` : `YouTube search completed, but no eligible YouTube results were found.${catalogResultCount ? ' The catalog matches below are still shown.' : ''}` }}</p><ul v-if="!searching && songs.length" id="song-suggestions" role="listbox"><li v-for="song in songs" :key="song.id" role="option"><span><strong>{{ song.title }}</strong><small>{{ song.source === 'youtube' ? (song.channelTitle ? `${song.channelTitle} · YouTube fallback` : 'YouTube fallback') : `${song.artist} · Catalog` }}</small></span><button type="button" :disabled="song.requestable === false || pendingSongs.has(song.youtubeId)" @click="add(song)">{{ song.requestable === false ? 'Unavailable' : pendingSongs.has(song.youtubeId) ? 'Adding…' : 'Queue' }}</button></li></ul><p v-else-if="!searching">No eligible songs found. Try a different spelling.</p></section>
+      <section v-if="unresolvedAttempts.length" aria-labelledby="pending-requests-title">
+        <h2 id="pending-requests-title">Requests needing confirmation</h2>
+        <ul>
+          <li v-for="attempt in unresolvedAttempts" :key="attempt.youtubeId">
+            <span>{{ attempt.title }}</span>
+            <button type="button" :disabled="pendingSongs.has(attempt.youtubeId)" @click="retryPending(attempt)">
+              {{ pendingSongs.has(attempt.youtubeId) ? 'Checking…' : 'Retry same request' }}
+            </button>
+          </li>
+        </ul>
+      </section>
+      <section aria-labelledby="search-title"><h2 id="search-title">Browse songs</h2><label for="song-search">Search title or artist</label><input id="song-search" v-model="query" role="combobox" aria-controls="song-suggestions" aria-autocomplete="list" type="search" autocomplete="off" placeholder="Try a song or artist" @input="scheduleSearch" @keyup.enter="searchFallback" /><button v-if="fallbackSuggested && !searching" type="button" @click="searchFallback">Search YouTube for this song</button><p v-if="searching" role="status">{{ fallbackSearching ? 'Searching YouTube…' : 'Searching catalog…' }}</p><p v-else-if="fallbackSearched" class="search-status" role="status">{{ fallbackResultCount ? `YouTube search completed: ${fallbackResultCount} eligible result${fallbackResultCount === 1 ? '' : 's'} ${catalogResultCount ? 'added below. Catalog matches remain first.' : 'shown below.'}` : `YouTube search completed, but no eligible YouTube results were found.${catalogResultCount ? ' The catalog matches below are still shown.' : ''}` }}</p><ul v-if="!searching && songs.length" id="song-suggestions" role="listbox"><li v-for="song in songs" :key="song.id" role="option"><span><strong>{{ song.title }}</strong><small>{{ song.source === 'youtube' ? (song.channelTitle ? `${song.channelTitle} · YouTube fallback` : 'YouTube fallback') : `${song.artist} · Catalog` }}</small></span><button type="button" :disabled="song.requestable === false || pendingSongs.has(song.youtubeId)" @click="add(song)">{{ song.requestable === false ? 'Unavailable' : pendingSongs.has(song.youtubeId) ? 'Adding…' : pendingAttempts.has(song.youtubeId) ? 'Retry same request' : 'Queue' }}</button></li></ul><p v-else-if="!searching">No eligible songs found. Try a different spelling.</p></section>
       <section aria-labelledby="queue-title"><h2 id="queue-title">Queue</h2><ul v-if="queue.length"><li v-for="item in queue" :key="item.id"><span><strong>{{ item.song.title }}</strong><small>{{ item.song.artist }}</small></span><em>{{ item.status === 'playing' ? 'Playing now' : 'Queued' }}</em></li></ul><p v-else>The queue is empty. Be the first to request a song!</p></section>
     </section>
   </main>

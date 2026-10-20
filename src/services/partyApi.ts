@@ -16,12 +16,24 @@ async function request<T>(url: string, init: RequestInit = {}, credential?: stri
   headers.set('accept', 'application/json')
   if (init.body) headers.set('content-type', 'application/json')
   if (credential) headers.set('authorization', `Bearer ${credential}`)
-  const response = await fetch(url, { ...init, headers })
-  const payload = await response.json().catch(() => ({}))
+  let response: Response
+  try {
+    response = await fetch(url, { ...init, headers })
+  } catch (cause) {
+    const error = new Error('The request response was not received') as Error & { ambiguous?: boolean }
+    error.ambiguous = true
+    ;(error as Error & { cause?: unknown }).cause = cause
+    throw error
+  }
+  const responsePayload = await response.json().catch(() => ({}))
+  const payload = responsePayload && typeof responsePayload === 'object'
+    ? responsePayload as { message?: string; error?: string }
+    : {}
   if (!response.ok) {
     const error = new Error(payload.message || 'Request failed') as Error & { code?: string; status?: number }
     error.code = payload.error
     error.status = response.status
+    ;(error as Error & { ambiguous?: boolean }).ambiguous = response.status >= 500
     throw error
   }
   return payload as T
@@ -118,11 +130,20 @@ export function fallbackSearchSongs(credential: string, query: string) {
   return request<{ songs?: LibrarySong[]; candidates?: LibrarySong[]; quota?: 'cached' | 'live' | 'unavailable'; cached?: boolean; replay?: boolean }>('/api/karaoke/parties/songs/fallback', { method: 'POST', body: JSON.stringify({ query: query.trim().slice(0, 100) }) }, credential).then((result) => ({ ...result, songs: (result.songs || result.candidates || []).map((song) => ({ ...song, source: 'youtube' as const })) }))
 }
 
-export function requestSong(credential: string, youtubeId: string) {
+function validateRequestAcknowledgement(result: QueueSong, youtubeId: string) {
+  if (!result || typeof result.id !== 'string' || !result.id || result.song?.youtubeId !== youtubeId) {
+    const error = new Error('The server response did not confirm this song request') as Error & { ambiguous?: boolean }
+    error.ambiguous = true
+    throw error
+  }
+  return result
+}
+
+export function requestSong(credential: string, youtubeId: string, idempotencyKey?: string) {
   return request<QueueSong>('/api/karaoke/requests', {
     method: 'POST',
-    body: JSON.stringify({ youtubeId }),
-  }, credential)
+    body: JSON.stringify({ youtubeId, ...(idempotencyKey ? { idempotencyKey } : {}) }),
+  }, credential).then((result) => validateRequestAcknowledgement(result, youtubeId))
 }
 
 /** Request a high-confidence cached fallback candidate through its audited party path. */
@@ -130,7 +151,7 @@ export function requestFallbackSong(credential: string, youtubeId: string, idemp
   return request<QueueSong>('/api/karaoke/parties/songs/fallback/request', {
     method: 'POST',
     body: JSON.stringify({ youtubeId, idempotencyKey }),
-  }, credential)
+  }, credential).then((result) => validateRequestAcknowledgement(result, youtubeId))
 }
 
 /** Custom sanitized wake topic; every event is followed by an authoritative HTTPS read. */

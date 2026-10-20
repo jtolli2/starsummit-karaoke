@@ -750,7 +750,7 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
     let result; let replayed = false
     $app.runInTransaction((tx) => {
       const party = tx.findRecordById('karaoke_parties', q.id(access.party)); const guest = tx.findRecordById('karaoke_guest_identities', q.id(access.guest)); if (!q.activeParty(party)) throw new Error('party_expired')
-      let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }) } catch (_) {} if (prior) { result = q.songView(prior, tx.findRecordById('karaoke_songs', q.str(prior, 'song'))); replayed = true; return }
+      let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }) } catch (_) {} if (prior) { const priorSong = tx.findRecordById('karaoke_songs', q.str(prior, 'song')); if (q.str(priorSong, 'youtube_id') !== youtubeId) throw new Error('request_key_mismatch'); result = q.songView(prior, priorSong); replayed = true; return }
       const grants = tx.findRecordsByFilter('karaoke_youtube_search_access', 'party = {:party} && guest = {:guest} && expires_at > {:now}', '-expires_at', 100, 0, { party: q.id(party), guest: q.id(guest), now: q.filterDate() }); let candidate = null; for (const grant of grants) { const claim = tx.findRecordById('karaoke_youtube_search_claims', q.str(grant, 'claim')); const payload = claim ? q.jsonValue(claim, 'payload_json', []) : []; if (Array.isArray(payload)) { candidate = payload.find((item) => String(item.youtubeId) === youtubeId && item.classification === 'karaoke' && Number(item.confidence) >= 0.8); if (candidate) break } } if (!candidate) throw new Error('fallback_candidate_unavailable')
       if (q.str(guest, 'last_request_at') && Date.now() - new Date(q.str(guest, 'last_request_at')).getTime() < q.REQUEST_GAP) throw new Error('rate_limited'); const recent = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && requested_at >= {:cutoff}', '', q.PARTY_REQUEST_LIMIT + 1, 0, { party: q.id(party), cutoff: new Date(Date.now() - q.REQUEST_GAP).toISOString() }); if (recent.length >= q.PARTY_REQUEST_LIMIT) throw new Error('rate_limited')
       let song = null; try { song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }) } catch (_) {}
@@ -764,15 +764,15 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
     if (reason.toLowerCase().includes('unique')) {
       try {
         let replay = null
-        $app.runInTransaction((tx) => { const queue = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(access.party), requester: q.id(access.guest), key: requestKey }); replay = q.songView(queue, tx.findRecordById('karaoke_songs', q.str(queue, 'song'))) })
+        $app.runInTransaction((tx) => { const queue = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(access.party), requester: q.id(access.guest), key: requestKey }); const song = tx.findRecordById('karaoke_songs', q.str(queue, 'song')); if (q.str(song, 'youtube_id') !== youtubeId) throw new Error('request_key_mismatch'); replay = q.songView(queue, song) })
         if (replay) return c.json(200, replay)
-      } catch (_) {}
+      } catch (error) { if (error.message === 'request_key_mismatch') return q.json(c, 409, 'request_key_mismatch', 'Idempotency key belongs to a different song') }
       let retryError = null
       try {
         let retry = null; let replayed = false
         $app.runInTransaction((tx) => {
           const party = tx.findRecordById('karaoke_parties', q.id(access.party)); const guest = tx.findRecordById('karaoke_guest_identities', q.id(access.guest)); if (!q.activeParty(party)) throw new Error('party_expired')
-          let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }) } catch (_) {} if (prior) { retry = q.songView(prior, tx.findRecordById('karaoke_songs', q.str(prior, 'song'))); replayed = true; return }
+          let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: q.id(party), requester: q.id(guest), key: requestKey }) } catch (_) {} if (prior) { const priorSong = tx.findRecordById('karaoke_songs', q.str(prior, 'song')); if (q.str(priorSong, 'youtube_id') !== youtubeId) throw new Error('request_key_mismatch'); retry = q.songView(prior, priorSong); replayed = true; return }
           const grants = tx.findRecordsByFilter('karaoke_youtube_search_access', 'party = {:party} && guest = {:guest} && expires_at > {:now}', '-expires_at', 100, 0, { party: q.id(party), guest: q.id(guest), now: q.filterDate() }); let candidate = null; for (const grant of grants) { const claim = tx.findRecordById('karaoke_youtube_search_claims', q.str(grant, 'claim')); const payload = claim ? q.jsonValue(claim, 'payload_json', []) : []; if (Array.isArray(payload)) { candidate = payload.find((item) => String(item.youtubeId) === youtubeId && item.classification === 'karaoke' && Number(item.confidence) >= 0.8); if (candidate) break } } if (!candidate) throw new Error('fallback_candidate_unavailable')
           if (q.str(guest, 'last_request_at') && Date.now() - new Date(q.str(guest, 'last_request_at')).getTime() < q.REQUEST_GAP) throw new Error('rate_limited'); const recent = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && requested_at >= {:cutoff}', '', q.PARTY_REQUEST_LIMIT + 1, 0, { party: q.id(party), cutoff: new Date(Date.now() - q.REQUEST_GAP).toISOString() }); if (recent.length >= q.PARTY_REQUEST_LIMIT) throw new Error('rate_limited')
           const song = tx.findFirstRecordByFilter('karaoke_songs', 'youtube_id = {:youtubeId}', { youtubeId }); if (q.str(song, 'provenance') === 'youtube_fallback' && (q.str(song, 'identity_status') || 'missing') === 'missing') { if (!q.str(song, 'video_title') && candidate.title) q.set(song, 'video_title', String(candidate.title).slice(0, 500)); if (!q.str(song, 'video_channel_title') && candidate.channelTitle) q.set(song, 'video_channel_title', String(candidate.channelTitle).slice(0, 240)); if (!q.str(song, 'video_channel_id') && candidate.channelId) q.set(song, 'video_channel_id', String(candidate.channelId).slice(0, 120)); tx.save(song) } let duplicate = null; try { duplicate = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && active_song_key = {:key}', { party: q.id(party), key: youtubeId }) } catch (_) {} if (duplicate) throw new Error('duplicate_song')
@@ -781,10 +781,10 @@ routerAdd('POST', '/api/karaoke/parties/songs/fallback/request', (c) => {
         if (retry) return c.json(replayed ? 200 : 201, retry)
       } catch (error) { retryError = error }
       const retryReason = String(retryError && retryError.message || '')
-      if (['party_expired', 'fallback_candidate_unavailable', 'rate_limited', 'duplicate_song'].includes(retryReason)) return q.json(c, { party_expired: 410, fallback_candidate_unavailable: 422, rate_limited: 429, duplicate_song: 409 }[retryReason], retryReason, retryReason === 'duplicate_song' ? 'Song is already queued' : 'Fallback request rejected')
+      if (['party_expired', 'fallback_candidate_unavailable', 'rate_limited', 'duplicate_song', 'request_key_mismatch'].includes(retryReason)) return q.json(c, { party_expired: 410, fallback_candidate_unavailable: 422, rate_limited: 429, duplicate_song: 409, request_key_mismatch: 409 }[retryReason], retryReason, retryReason === 'duplicate_song' ? 'Song is already queued' : retryReason === 'request_key_mismatch' ? 'Idempotency key belongs to a different song' : 'Fallback request rejected')
       return q.json(c, 503, 'fallback_persistence_unavailable', 'Fallback request could not be saved; retry shortly')
     }
-    const known = { party_expired: [410, 'Fallback request rejected'], duplicate_song: [409, 'Song is already queued'], fallback_candidate_unavailable: [422, 'Fallback candidate is no longer available'], rate_limited: [429, 'Fallback request rate limit reached'] }
+    const known = { party_expired: [410, 'Fallback request rejected'], duplicate_song: [409, 'Song is already queued'], request_key_mismatch: [409, 'Idempotency key belongs to a different song'], fallback_candidate_unavailable: [422, 'Fallback candidate is no longer available'], rate_limited: [429, 'Fallback request rate limit reached'] }
     if (known[reason]) return q.json(c, known[reason][0], reason, known[reason][1])
     // Do not expose PocketBase/SQLite validation details to guests. Keep the
     // server-side error available in logs while returning a stable retryable
@@ -799,12 +799,18 @@ routerAdd('POST', '/api/karaoke/requests', (c) => {
   const { YOUTUBE_ID, REQUEST_GAP, PARTY_REQUEST_LIMIT, body, requireGuest, json, id, activeParty, str, find, num, set, now, songView } = globalThis.__partyQueue
   const input = body(c)
   try {
-    const access = requireGuest(c, input); const youtubeId = input.youtubeId || input.songId
+    const access = requireGuest(c, input); const youtubeId = input.youtubeId || input.songId; const requestKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : ''
     if (typeof youtubeId !== 'string' || !YOUTUBE_ID.test(youtubeId)) return json(c, 422, 'invalid_song', 'A valid YouTube song id is required')
+    if (input.idempotencyKey !== undefined && (!requestKey || requestKey.length > 96)) return json(c, 422, 'invalid_idempotency_key', 'A valid idempotency key is required')
     let result
+    let replayed = false
     $app.runInTransaction((tx) => {
       const guest = tx.findRecordById('karaoke_guest_identities', id(access.guest)); const party = tx.findRecordById('karaoke_parties', id(access.party))
       if (!activeParty(party)) throw new Error('party_expired')
+      if (requestKey) {
+        let prior = null; try { prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: id(party), requester: id(guest), key: requestKey }) } catch (_) {}
+        if (prior) { const priorSong = tx.findRecordById('karaoke_songs', str(prior, 'song')); if (str(priorSong, 'youtube_id') !== youtubeId) throw new Error('request_key_mismatch'); result = songView(prior, priorSong); replayed = true; return }
+      }
       if (str(guest, 'last_request_at') && Date.now() - new Date(str(guest, 'last_request_at')).getTime() < REQUEST_GAP) throw new Error('rate_limited')
       const recent = tx.findRecordsByFilter('karaoke_queue', 'party = {:party} && requested_at >= {:cutoff}', '', PARTY_REQUEST_LIMIT + 1, 0, { party: id(party), cutoff: new Date(Date.now() - REQUEST_GAP).toISOString() })
       if (recent.length >= PARTY_REQUEST_LIMIT) throw new Error('rate_limited')
@@ -813,12 +819,23 @@ routerAdd('POST', '/api/karaoke/requests', (c) => {
       let duplicate = null; try { duplicate = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && active_song_key = {:key}', { party: id(party), key: str(song, 'youtube_id') }) } catch (_) {}
       if (duplicate) throw new Error('duplicate_song')
       const sequence = num(party, 'queue_sequence') + 1; set(party, 'queue_sequence', sequence); tx.save(party)
-      const queue = new Record(tx.findCollectionByNameOrId('karaoke_queue')); set(queue, 'party', id(party)); set(queue, 'song', id(song)); set(queue, 'requester', id(guest)); set(queue, 'status', 'queued'); set(queue, 'active_song_key', str(song, 'youtube_id')); set(queue, 'sequence', sequence); set(queue, 'requested_at', now()); tx.save(queue)
+      const queue = new Record(tx.findCollectionByNameOrId('karaoke_queue')); set(queue, 'party', id(party)); set(queue, 'song', id(song)); set(queue, 'requester', id(guest)); set(queue, 'status', 'queued'); set(queue, 'active_song_key', str(song, 'youtube_id')); if (requestKey) set(queue, 'request_key', requestKey); set(queue, 'sequence', sequence); set(queue, 'requested_at', now()); tx.save(queue)
       set(guest, 'last_request_at', now()); set(guest, 'request_count', num(guest, 'request_count') + 1); tx.save(guest); result = songView(queue, song)
     })
-    return c.json(201, result)
+    return c.json(replayed ? 200 : 201, result)
   } catch (error) {
-    if (String(error && error.message || error).toLowerCase().includes('unique')) return json(c, 409, 'duplicate_song', 'Song is already queued')
+    if (String(error && error.message || error).toLowerCase().includes('unique')) {
+      const inputKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : ''
+      if (inputKey) {
+        try {
+          const access = requireGuest(c, input); let replay = null
+          $app.runInTransaction((tx) => { const prior = tx.findFirstRecordByFilter('karaoke_queue', 'party = {:party} && requester = {:requester} && request_key = {:key}', { party: id(access.party), requester: id(access.guest), key: inputKey }); if (prior) { const priorSong = tx.findRecordById('karaoke_songs', str(prior, 'song')); if (str(priorSong, 'youtube_id') !== String(input.youtubeId || input.songId || '')) throw new Error('request_key_mismatch'); replay = songView(prior, priorSong) } })
+          if (replay) return c.json(200, replay)
+        } catch (replayError) { if (replayError.message === 'request_key_mismatch') return json(c, 409, 'request_key_mismatch', 'Idempotency key belongs to a different song') }
+      }
+      return json(c, 409, 'duplicate_song', 'Song is already queued')
+    }
+    if (error.message === 'request_key_mismatch') return json(c, 409, 'request_key_mismatch', 'Idempotency key belongs to a different song')
     const status = { rate_limited: 429, duplicate_song: 409, song_unavailable: 422, party_expired: 410, guest_credential_expired: 410, guest_credential_required: 403 }[error.message] || 500
     return json(c, status, error.message, 'Song request rejected')
   }

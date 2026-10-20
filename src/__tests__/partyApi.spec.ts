@@ -15,14 +15,44 @@ describe('party API', () => {
   })
 
   it('sends requests with bearer credentials and the YouTube id', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'q' }), { status: 201 }))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'q', song: { youtubeId: 'abcdefghijk' } }), { status: 201 }))
     vi.stubGlobal('fetch', fetchMock)
-    await requestSong('temporary-credential-123456', 'abcdefghijk')
+    await requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1')
     const call = fetchMock.mock.calls[0]
     expect(call).toBeDefined()
     const init = call?.[1] as RequestInit
     expect(new Headers(init.headers).get('authorization')).toBe('Bearer temporary-credential-123456')
-    expect(JSON.parse(String(init.body))).toEqual({ youtubeId: 'abcdefghijk' })
+    expect(JSON.parse(String(init.body))).toEqual({ youtubeId: 'abcdefghijk', idempotencyKey: 'request-key-1' })
+  })
+
+  it('classifies server and malformed acknowledgements as ambiguous while preserving definitive rejections', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'temporary' }), { status: 503 }))
+      .mockResolvedValueOnce(new Response('null', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'q', song: { youtubeId: 'different123' } }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ song: { youtubeId: 'abcdefghijk' } }), { status: 201 }))
+      .mockResolvedValueOnce(new Response('{', { status: 200 }))
+      .mockResolvedValueOnce(new Response('', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'guest_credential_expired' }), { status: 410 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'rate_limited' }), { status: 429 }))
+      .mockResolvedValueOnce(new Response('null', { status: 429 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1'))
+      .rejects.toMatchObject({ ambiguous: true })
+    await expect(requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1'))
+      .rejects.toMatchObject({ status: 503, ambiguous: true })
+    for (let index = 0; index < 5; index++) {
+      await expect(requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1'))
+        .rejects.toMatchObject({ ambiguous: true })
+    }
+    await expect(requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1'))
+      .rejects.toMatchObject({ code: 'guest_credential_expired', ambiguous: false })
+    await expect(requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1'))
+      .rejects.toMatchObject({ code: 'rate_limited', ambiguous: false })
+    await expect(requestSong('temporary-credential-123456', 'abcdefghijk', 'request-key-1'))
+      .rejects.toMatchObject({ status: 429, ambiguous: false })
   })
 
   it('normalizes accents and punctuation for deterministic local matching', () => {
@@ -67,7 +97,7 @@ describe('party API', () => {
   })
 
   it('uses the audited fallback request path with an idempotency key', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'q' }), { status: 201 }))
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'q', song: { youtubeId: 'abcdefghijk' } }), { status: 201 }))
     vi.stubGlobal('fetch', fetchMock)
     await requestFallbackSong('temporary-credential-123456', 'abcdefghijk', 'guest-key-1')
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/karaoke/parties/songs/fallback/request')
