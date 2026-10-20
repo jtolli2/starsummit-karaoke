@@ -1,6 +1,8 @@
 # Load Action
 
-1. Read the project context files and inspect the request. Do not edit
+1. Read `context/current-feature.md`, `context/project-overview.md`, and the applicable project
+   rules; inspect the request. Load only the canonical architecture, history, and feedback relevant
+   to the active boundary, and reuse unchanged context from earlier stages. Do not edit
    `context/feature-history.md` or any other history file during load.
 2. Interpret the text after `load`:
    - For a single filename, read `context/features/<name>.md` first, then `context/fixes/<name>.md` if it exists.

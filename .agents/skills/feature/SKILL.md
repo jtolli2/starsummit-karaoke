@@ -5,7 +5,15 @@ description: "Manage the scoped lifecycle of a Starsummit Karaoke feature or fix
 
 # Karaoke Feature Workflow
 
-Read `context/overview.md`, `context/project-overview.md`, `context/coding-standards.md`, `context/ai-interaction.md`, `context/current-feature.md`, `context/feature-history.md`, and `context/agent-workflow-feedback.md` before acting. Treat `context/overview.md` as the canonical rough draft; use the project overview as the compact reference. Apply relevant feedback before acting. When a requested workflow improvement is actually applied, append a dated entry to the feedback log; loading a feature alone never edits history or feedback. Assume Coolify manages the initial containerized deployment at `karaoke.app.starsummit.net`.
+Begin with `context/current-feature.md`, `context/project-overview.md`, and the applicable rules in
+`context/coding-standards.md` and `context/ai-interaction.md`. Treat `context/overview.md` as canonical
+architecture when the active boundary needs it; consult targeted history and feedback entries that
+bear on the behavior in `context/feature-history.md` and `context/agent-workflow-feedback.md`. Reuse
+unchanged context across workflow stages and retrieve additional canonical detail only when needed.
+Apply relevant feedback before acting. When a requested workflow improvement
+is actually applied, append a dated entry to the feedback log; loading a feature alone never edits
+history or feedback. Assume Coolify manages the initial containerized deployment at
+`karaoke.app.starsummit.net`.
 
 ## Product Guardrails
 
@@ -43,11 +51,41 @@ the required `Implementation Decisions` and `Minimal Delta` sections of
   composition when a contract has a single consumer; introduce shared composition only when the
   inventory shows multiple current consumers or a required boundary.
 
-The load action initializes the decision and delta sections; the start action completes this
-checkpoint before production code. If an unresolved choice would materially change behavior or
-architecture, ask the user before proceeding.
+For nontrivial product work, the load action initializes the decision and delta sections and the
+start action completes this checkpoint before implementation. For small, low-risk follow-ups, keep
+the evidence and delta proportionate as described in the start action. If an unresolved choice would
+materially change behavior or architecture, ask the user before proceeding.
+
+## Workflow and Validation
+
+- For nontrivial product work, use the full sequence: `planner` -> bounded `coder` assignments ->
+  `tester` -> `task_reviewer` for each assignment -> one integrated `final_reviewer`. The parent
+  owns integration and names one integrated validation owner.
+- For a small, low-risk follow-up, use implementation, checks attributable to the changed behavior,
+  and one independent review. Involve `tester` only for an identified verification gap. Repeat a
+  broad final review when the change affects contracts, authorization, shared behavior, or substantial
+  integration.
+- Reviewers should reuse current evidence tied to the reviewed revision or working-tree diff. They
+  should request checks for specific evidence gaps instead of repeating unrelated validation. Reuse
+  the assigned implementer for corrections within the same bounded assignment.
+- Documentation and configuration follow-ups do not require unrelated product tests or builds.
+  Product changes retain the relevant unit, production build, backend, Android, and PocketBase checks
+  required by their affected behavior and active goals.
 
 ## Actions
+
+For a scoped feature implementation request, run the lifecycle continuously by default. `load`
+continues directly into `start`, then proceed through `test`, `review`, `explain`, and `complete`
+without waiting for a new prompt at stage boundaries. An explicit request to perform only one stage,
+including a read-only review or pause, limits the run accordingly. If the feature scope is missing,
+ask for its spec or description rather than inventing one.
+
+Stop goal work only for a legitimate blocker: an unresolved material behavior or architecture
+decision; missing required access or dependency, or impossible required verification; or an action
+that requires explicit approval which is absent. Ordinary implementation, test, or review failures
+are work to resolve within scope, not blockers by themselves. Continue independent authorized work
+while waiting on a blocked dependency. When blocked, state the exact blocker, work completed, evidence,
+and what will unblock it.
 
 Execute the requested action: `$ARGUMENTS`.
 
@@ -58,6 +96,10 @@ Execute the requested action: `$ARGUMENTS`.
 | `test` | Add proportionate tests and run the project validation commands. |
 | `review` | Assess goals, quality, scope, and karaoke-specific risks. |
 | `explain` | Summarize changed files and how the feature works. |
-| `complete` | Prepare a tested feature for approved delivery and archive its context. |
+| `complete` | Record achieved feature goals and prepare the implementation closeout handoff. |
+| `closeout` | Prepare or continue the operational closeout handoff. |
 
-Read the matching file in `actions/` for the action's detailed procedure. If no action is supplied, list these options. Do not create a branch, commit, push, merge, delete, or deploy unless the applicable action and explicit user approval allow it.
+Read the matching file in `actions/` for the action's detailed procedure. If no action is supplied
+and there is no scoped feature request to continue, list these options. Do not create a branch,
+commit, push, merge, delete, or deploy unless the applicable action and explicit user approval allow
+it.

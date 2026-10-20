@@ -34,4 +34,9 @@
 - Test observable behavior and important error cases.
 - Protect documented API, security, persistence, and runtime behavior rather than hypothetical
   states or implementation details.
-- Run `bun test:unit --run` and `bun run build` before delivery.
+- For product changes, run `bun test:unit --run` with relevant selectors and `bun run build` when
+  required by the changed behavior; run backend, Android, and
+  pinned PocketBase checks when affected or required by the active goals. Documentation and
+  configuration follow-ups do not require unrelated product tests or builds.
+- Keep substantial feature validation requirements. Report commands and selectors, results, and
+  remaining gaps against the reviewed revision or working-tree diff.

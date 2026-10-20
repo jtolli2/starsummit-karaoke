@@ -204,6 +204,12 @@
 - **Follow-up:** Keep future plans and reviews evidence-backed, with unknowns explicit and speculative
   abstractions, validation, compatibility, or tests out of scope.
 
+### 2026-10-01 — Pilot compact orchestration handoffs
+
+- **Feedback:** The orchestration workflow benefits from compact, role-specific handoffs, proportional follow-up review, and one named owner for integrated validation evidence.
+- **Improvement:** Applied the updated workflow with a planner, two coders, a tester, assignment review, and an integrated review now in progress. Every actual spawn used `fork_turns="none"` with no model overrides; parent-verified models were planner Luna xhigh and coders/tester Luna high. Role TOML model and effort settings remain unchanged. Independent scenario review found no blockers; reviewers caught wording ambiguities that the original workers corrected. Added the project closeout skill.
+- **Follow-up:** Product-story pilot and comparable credit-usage measurement remain pending. No savings claim is made. The standard validator could not run because PyYAML is missing; alternate YAML parsing passed.
+
 ### 2026-10-01 — Separate pairing closeout evidence by proof boundary
 
 - **Feedback:** A live pairing handoff can overstate QR support or retained-secret preservation if
@@ -215,3 +221,54 @@
 - **Follow-up:** Record unexercised camera/browser coverage precisely while documenting that the
   final post-redemption restart gate passed; do not infer record identifiers or counts from
   successful status alone.
+
+### 2026-10-01 — Separate delegated live-validation setup from authorization
+
+- **Feedback:** Browser/tablet validation needs reusable setup guidance without implying that a
+  local profile exists, that an old authenticated session is still valid, or that a prior approval
+  authorizes new remote actions.
+- **Improvement:** Added a standalone browser/tablet runbook with per-run tab, auth, role, and Fire
+  identity checks; explicit approval boundaries; precise pairing evidence phases; and a compact
+  delegation/report template. The feature test action now points to it.
+- **Follow-up:** Verify the dedicated Chrome profile and extension in the correct profile when the
+  desktop is available; reuse an authenticated session only while it remains valid.
+
+### 2026-10-01 — Carry feature workflows through closeout readiness
+
+- **Feedback:** A feature workflow should continue from load through complete without requiring
+  another prompt at each stage, stopping only for a legitimate blocker.
+- **Improvement:** Made lifecycle continuation explicit in global and project guidance. Ordinary
+  test failures and review findings require correction and revalidation; completion requires a
+  reviewed implementation, current evidence, and a concrete closeout handoff. Preserve explicit
+  user scope limits and report unmet required goals and approval boundaries truthfully.
+- **Follow-up:** Apply this default to the next scoped feature; pending operational work remains
+  explicit in the closeout handoff and does not acquire authorization from workflow continuation.
+
+### 2026-10-19 — Load context progressively and report bounded usage evidence
+
+- **Feedback:** Re-reading every architecture and history document at each stage and returning
+  unfiltered tool/thread output adds context without improving the active decision. Duplicate records
+  or cumulative snapshots can double-count usage; distinct child responses are separate usage, while
+  cached-input and reasoning fields are subsets.
+- **Improvement:** Applied progressive context loading, compact filtered handoffs, focused editing
+  checks with one integrated validation owner, and a closeout evidence bundle for exact revisions,
+  deployment/volume identity, local preservation, device/APK identity, and proof boundaries. Added
+  optional usage-comparison guidance that deduplicates response trees and separates estimates from
+  billed usage. No tool or product behavior was implemented.
+- **Follow-up:** Pilot lightweight usage measurement on one next feature: phase (implementation, ops,
+  or new fix); parent/child model and effort; unique response IDs and input/output/cached/reasoning
+  token counts; full validation runs and rerun reasons; unchanged waits/status calls; visual captures
+  and discovery retries; outcomes and required proof. Keep normalized estimates separate from billed
+  usage; log no secrets or raw transcripts. Deferred tooling (evidence verifier, closeout manifest,
+  device snapshot, handoff renderer) needs separate scope and authorization.
+
+### 2026-10-20 — Route closeout work through the local evidence collectors
+
+- **Feedback:** Closeout tooling was available in the repository, but operational and test guidance
+  did not explain when to prefer it or how its records differ from live and execution proof.
+- **Improvement:** Added the local README route, scope-proportional capture guidance, and boundaries
+  for release, device, tablet-status, manifest reuse, and handoff approval context. Global guidance
+  was sufficient; no global edits were needed.
+- **Follow-up:** Use collectors only when their evidence fits the active task. Their timestamped
+  records do not create authorization or establish indefinitely current state; do not store stale
+  live identifiers or artifact paths as durable guidance.
