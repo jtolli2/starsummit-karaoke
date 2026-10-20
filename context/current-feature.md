@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress — deployed baseline retained; tablet responsiveness and party identity follow-up underway
+Complete — implementation, release, and agent-executable validation finished; manual TV checks retained as non-blocking follow-up notes (October 20 user clarification)
 
 ## Goals
 
@@ -134,3 +134,8 @@ Follow-up implemented, reviewed, released and live-validated with October 16 app
 - Physical Fire Chrome after reload shows full KGSH3B7Y code, full join URL wrapped within the card, and QR. Screenshot `/Users/chefjeff/.codex/artifacts/starsummit-playback-20261015/fire-tablet-join-link-wrap-20261016.png`. Separate current-code desktop viewer also retains full code/link/QR after reload. Initial already-loaded tabs needed one reload to load the new release; subsequent new-party discovery was automatic.
 - No additional playback commands after the measured Start/Pause/Play. Selected row remains retained; later controller/video mismatch is surfaced accurately, without claiming natural completion or advancing the queue.
 - Follow-up goals validated; original full feature remains In Progress only for its separately unverified physical TV identity/progression/natural-end/continuity observations. No completion-history entry, cleanup, data deletion, volume changes, enrollment replacement, Wi-Fi or production actions.
+
+## October 20 Completion Clarification
+
+- Complete under the user's clarified completion policy. This supersedes earlier In Progress and no-history statements that treated human TV observations as completion blockers. Implementation and follow-up fixes were reviewed, released and validated as recorded above. No further implementation is currently identified.
+- Non-blocking manual end-to-end notes for the user: observe the selected video on the physical TV, continued playback, natural completion, and continuity through a companion restart. These direct observations remain unverified; controller/UI evidence is not a substitute. No new playback or restart action was performed for this clarification.

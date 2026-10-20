@@ -272,3 +272,9 @@
 - **Follow-up:** Use collectors only when their evidence fits the active task. Their timestamped
   records do not create authorization or establish indefinitely current state; do not store stale
   live identifiers or artifact paths as durable guidance.
+
+### 2026-10-20 — Explicit completion status and non-blocking manual checks
+
+- **Feedback:** Delivery messages left completion unclear, and human-only TV checks unnecessarily held the feature open.
+- **Improvement:** Updated interaction, completion and closeout guidance to lead with clear completion status and treat manual end-to-end checks requiring the user as non-blocking notes unless explicitly gated by the user. Marked this feature complete while preserving its unverified TV observations.
+- **Follow-up:** Always distinguish agent work still owed from optional human validation; never represent an unperformed check as passed.

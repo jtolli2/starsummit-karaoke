@@ -29,6 +29,11 @@
 - Keep implementation readiness distinct from full user-goal completion and live validation. Prepare
   the implementation closeout handoff even when operational work remains; see
   `.agents/skills/closeout/SKILL.md`.
+- End each delivery with an explicit completion status and distinguish remaining agent work from
+  checks requiring the user. Manual end-to-end checks requiring human observation (such as watching
+  the TV) are non-blocking follow-up notes by default. Record exactly what remains unverified; do
+  not imply it passed or hold feature completion open for it unless the user explicitly requires
+  that check as a release/completion gate.
 - Tests should protect observable or documented API, security, persistence, and runtime behavior,
   not hypothetical states or implementation details.
 - Ask for explicit approval before committing, pushing, merging, deploying, or deleting files or branches.

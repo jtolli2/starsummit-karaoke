@@ -531,3 +531,9 @@
   later guest addition, Cancel/Confirm, operator-marked completion and post-completion multi-row
   reorder with refreshed-order preservation. No human-finger, direct TV visual, elapsed progression
   or natural-end proof. Existing party/data and Lounge material retained; no cleanup.
+
+## 2026-10-20 — SmartTube Playback Convergence, Recovery, and Tablet Feedback
+
+- Delivered fresh target-video-plus-playing confirmation, safe idempotent recovery, prompt automatic tablet/Admin feedback, and full party code/link/QR recovery across tabs and reloads. Existing legacy links are preserved; full tablet join URLs wrap on Fire.
+- Reviewed releases deployed to retained staging on October 16, ending at product `3937a48671a15284aa45b7debb8fa8448eb4e701`. Validation includes 110 Vue tests/build, 24 focused PocketBase 0.39.7 checks, earlier 100 Android JVM tests/debug build, and live browser/Fire/controller checks.
+- Completed under the October 20 user clarification: direct physical-TV identity, progression, natural completion and restart continuity remain explicitly unverified, non-blocking manual follow-ups.

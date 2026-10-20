@@ -49,8 +49,11 @@ For corrections within the same bounded assignment, reuse its implementer. Match
 to the affected scope, use current evidence tied to the reviewed revision or working-tree diff, and
 request targeted checks for identified gaps. A small low-risk follow-up uses one independent review;
 contract, authorization, shared-behavior, or substantial integration changes need broad final review.
-Leave pending operational work clearly pending and do not mark the full feature complete until all
-active goals are met.
+Leave pending operational work clearly pending. Manual end-to-end checks requiring the user,
+such as direct TV observation, are non-blocking follow-up notes unless the user explicitly makes
+them a release/completion gate. State exactly what remains unverified without claiming it passed.
+Once other active goals are met, mark the feature complete and retain these notes. Lead the final
+response with explicit completion status and separate manual follow-ups from agent work still owed.
 
 ## Local closeout evidence tools
 

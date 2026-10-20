@@ -5,7 +5,10 @@
    applicable checks are current for that diff, and no blocking implementation findings remain.
    Keep the decision, minimal delta, and active feature record current. Separate this readiness from
    completion of the user's full goal and any live operational validation.
-2. If user goals or required live validation remain, prepare the closeout handoff with the pending
+2. Manual end-to-end checks requiring the user (for example, direct TV observation) are
+   non-blocking follow-up notes unless the user explicitly makes them a release/completion gate.
+   Record their unverified status and requested observations without holding completion open.
+   If other user goals or required agent-executable live validation remain, prepare the closeout handoff with the pending
    work and leave the feature status incomplete. Do not present implementation readiness as full
    goal completion.
 3. When all active goals are actually met, update `context/current-feature.md`: set status to
@@ -30,5 +33,7 @@
    unclear.
 7. After approval, perform only the approved actions. If merging is approved, use the repository's
    default branch; if deleting a branch is approved, identify its exact local or remote name first.
-8. Report the resulting commit, branch, validation status, changed files, and any remaining
+8. Lead the final response with an explicit status: complete, or incomplete with the concrete
+   blocker and next action. Separate non-blocking manual checks from work still owed by the agent.
+   Report the resulting commit, branch, validation status, changed files, and any remaining
    uncertainty. Never reset the working file or delete a branch by default.
